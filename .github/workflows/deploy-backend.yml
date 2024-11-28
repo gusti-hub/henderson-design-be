@@ -1,0 +1,37 @@
+name: Deploy Backend
+
+on:
+ push:
+   branches: [ main ]
+
+jobs:
+ deploy:
+   runs-on: ubuntu-latest
+   steps:
+     - uses: actions/checkout@v2
+     
+     - name: Install doctl
+       uses: digitalocean/action-doctl@v2
+       with:
+         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+         
+     - name: Log in to DO Container Registry
+       run: doctl registry login --expiry-seconds 600
+     
+     - name: Build container image
+       run: docker build -t registry.digitalocean.com/hale-project-container-registry/portal-be:$(echo $GITHUB_SHA | head -c7) .
+     
+     - name: Push image to DO Container Registry
+       run: docker push registry.digitalocean.com/hale-project-container-registry/portal-be:$(echo $GITHUB_SHA | head -c7)
+     
+     - name: Deploy to Digital Ocean droplet
+       uses: appleboy/ssh-action@master
+       with:
+         host: ${{ secrets.DROPLET_HOST }}
+         username: ${{ secrets.DROPLET_USERNAME }}
+         password: ${{ secrets.DROPLET_PASSWORD }}
+         script: |
+           docker pull registry.digitalocean.com/hale-project-container-registry/portal-be:$(echo $GITHUB_SHA | head -c7)
+           docker stop backend || true
+           docker rm backend || true
+           docker run -d --name backend -p 3000:3000 registry.digitalocean.com/hale-project-container-registry/portal-be:$(echo $GITHUB_SHA | head -c7)
