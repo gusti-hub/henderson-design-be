@@ -6,7 +6,8 @@ const {
   getClient,
   createClient,
   updateClient,
-  deleteClient
+  deleteClient,
+  getFloorPlans
 } = require('../controllers/clientController');
 
 // Protected routes
@@ -16,6 +17,10 @@ router.use(protect);
 router.route('/')
   .get(getClients)
   .post(createClient);
+
+// Floor Plan
+router.route('/floor-plans')
+.get(getFloorPlans);
 
 router.route('/:id')
   .get(getClient)

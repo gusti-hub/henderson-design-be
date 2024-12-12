@@ -30,6 +30,17 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: [false, 'Please add a unit number']
   },
+  floorPlan: {
+    type: String,
+    required: true,
+    enum: [
+      "Residence 00A", "Residence 01B", "Residence 03A",
+      "Residence 05A", "Residence 08", "Residence 10A/12A",
+      "Residence 03B", "Residence 05B", "Residence 07B",
+      "Residence 09B", "Residence 10/12", "Residence 11B",
+      "Residence 13A"
+    ]
+  },
   createdAt: {
     type: Date,
     default: Date.now

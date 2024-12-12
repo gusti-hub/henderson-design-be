@@ -14,7 +14,8 @@ const getClients = async (req, res) => {
       $or: [
         { name: { $regex: search, $options: 'i' } },
         { email: { $regex: search, $options: 'i' } },
-        { unitNumber: { $regex: search, $options: 'i' } }
+        { unitNumber: { $regex: search, $options: 'i' } },
+        { floorPlan: { $regex: search, $options: 'i' } }  // Add search by floor plan
       ]
     };
 
@@ -53,7 +54,14 @@ const getClient = async (req, res) => {
 // Create client
 const createClient = async (req, res) => {
   try {
-    const { name, email, password, unitNumber } = req.body;
+    const { name, email, password, unitNumber, floorPlan } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !password || !unitNumber || !floorPlan) {
+      return res.status(400).json({ 
+        message: 'Please provide all required fields (name, email, password, unit number, and floor plan)' 
+      });
+    }
 
     const userExists = await User.findOne({ email });
     if (userExists) {
@@ -65,6 +73,7 @@ const createClient = async (req, res) => {
       email,
       password,
       unitNumber,
+      floorPlan,
       role: 'user'
     });
 
@@ -73,9 +82,11 @@ const createClient = async (req, res) => {
       name: client.name,
       email: client.email,
       unitNumber: client.unitNumber,
+      floorPlan: client.floorPlan,
       role: client.role
     });
   } catch (error) {
+    console.error('Error in createClient:', error);
     res.status(500).json({ message: 'Error creating client' });
   }
 };
@@ -83,11 +94,16 @@ const createClient = async (req, res) => {
 // Update client
 const updateClient = async (req, res) => {
   try {
-    const { name, email, password, unitNumber } = req.body;
+    const { name, email, password, unitNumber, floorPlan } = req.body;
     const client = await User.findById(req.params.id);
 
     if (!client) {
       return res.status(404).json({ message: 'Client not found' });
+    }
+
+    // Check if at least one field is provided for update
+    if (!name && !email && !password && !unitNumber && !floorPlan) {
+      return res.status(400).json({ message: 'Please provide at least one field to update' });
     }
 
     if (email && email !== client.email) {
@@ -97,33 +113,25 @@ const updateClient = async (req, res) => {
       }
     }
 
-    client.name = name || client.name;
-    client.email = email || client.email;
-    client.unitNumber = unitNumber || client.unitNumber;
+    // Create update object
+    const updateData = {
+      name: name || client.name,
+      email: email || client.email,
+      unitNumber: unitNumber || client.unitNumber,
+      floorPlan: floorPlan || client.floorPlan
+    };
 
     // Handle password update if provided
     if (password) {
-        // Directly hash the password using bcrypt
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        
-        // Update user with new hashed password
-        await User.findByIdAndUpdate(client._id, {
-          name: name || client.name,
-          email: email || client.email,
-          unitNumber: unitNumber || client.unitNumber,
-          password: hashedPassword
-        });
-    } else {
-        // Update without changing password
-        await User.findByIdAndUpdate(client._id, {
-          name: name || client.name,
-          email: email || client.email,
-          unitNumber: unitNumber || client.unitNumber
-        });
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(password, salt);
+      updateData.password = hashedPassword;
     }
-  
-      // Fetch updated user (without password)
+
+    // Update client with new data
+    await User.findByIdAndUpdate(client._id, updateData);
+
+    // Fetch updated user (without password)
     const updatedClient = await User.findById(client._id).select('-password');
 
     res.json({
@@ -131,9 +139,11 @@ const updateClient = async (req, res) => {
       name: updatedClient.name,
       email: updatedClient.email,
       unitNumber: updatedClient.unitNumber,
+      floorPlan: updatedClient.floorPlan,
       role: updatedClient.role
     });
   } catch (error) {
+    console.error('Error in updateClient:', error);
     res.status(500).json({ message: 'Error updating client' });
   }
 };
@@ -149,7 +159,26 @@ const deleteClient = async (req, res) => {
     await User.deleteOne({ _id: req.params.id });
     res.json({ message: 'Client deleted successfully' });
   } catch (error) {
+    console.error('Error in deleteClient:', error);
     res.status(500).json({ message: 'Error deleting client' });
+  }
+};
+
+// Get floor plans
+const getFloorPlans = async (req, res) => {
+  try {
+    const floorPlans = [
+      "Residence 00A", "Residence 01B", "Residence 03A",
+      "Residence 05A", "Residence 08", "Residence 10A/12A",
+      "Residence 03B", "Residence 05B", "Residence 07B",
+      "Residence 09B", "Residence 10/12", "Residence 11B",
+      "Residence 13A"
+    ];
+    
+    res.json(floorPlans);
+  } catch (error) {
+    console.error('Error in getFloorPlans:', error);
+    res.status(500).json({ message: 'Error fetching floor plans' });
   }
 };
 
@@ -158,5 +187,6 @@ module.exports = {
   getClient,
   createClient,
   updateClient,
-  deleteClient
+  deleteClient,
+  getFloorPlans
 };

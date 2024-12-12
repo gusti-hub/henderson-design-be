@@ -1,37 +1,43 @@
-name: Deploy Backend
+name: Deploy Backend to Digital Ocean
 
 on:
- push:
-   branches: [ main ]
+  push:
+    branches: [ main ]
+
+env:
+  REGISTRY: "registry.digitalocean.com/your-registry"
+  IMAGE_NAME: "backend-app"
 
 jobs:
- deploy:
-   runs-on: ubuntu-latest
-   steps:
-     - uses: actions/checkout@v2
-     
-     - name: Install doctl
-       uses: digitalocean/action-doctl@v2
-       with:
-         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-         
-     - name: Log in to DO Container Registry
-       run: doctl registry login --expiry-seconds 600
-     
-     - name: Build container image
-       run: docker build -t registry.digitalocean.com/hale-project-container-registry/portal-be:$(echo $GITHUB_SHA | head -c7) .
-     
-     - name: Push image to DO Container Registry
-       run: docker push registry.digitalocean.com/hale-project-container-registry/portal-be:$(echo $GITHUB_SHA | head -c7)
-     
-     - name: Deploy to Digital Ocean droplet
-       uses: appleboy/ssh-action@master
-       with:
-         host: ${{ secrets.DROPLET_HOST }}
-         username: ${{ secrets.DROPLET_USERNAME }}
-         password: ${{ secrets.DROPLET_PASSWORD }}
-         script: |
-           docker pull registry.digitalocean.com/hale-project-container-registry/portal-be:$(echo $GITHUB_SHA | head -c7)
-           docker stop backend || true
-           docker rm backend || true
-           docker run -d --name backend -p 3000:3000 registry.digitalocean.com/hale-project-container-registry/portal-be:$(echo $GITHUB_SHA | head -c7)
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Build container image
+        run: docker build -t $IMAGE_NAME:latest .
+      
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      
+      - name: Log in to DO Container Registry
+        run: doctl registry login --expiry-seconds 600
+      
+      - name: Push image to DO Container Registry
+        run: |
+          docker tag $IMAGE_NAME:latest $REGISTRY/$IMAGE_NAME:latest
+          docker push $REGISTRY/$IMAGE_NAME:latest
+      
+      - name: Execute deployment commands
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USERNAME }}
+          password: ${{ secrets.DROPLET_PASSWORD }}
+          script: |
+            cd /app
+            docker-compose pull
+            docker-compose up -d

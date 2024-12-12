@@ -23,6 +23,8 @@ app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/clients', require('./routes/clientRoutes'));
+app.use('/api/products', require('./routes/productRoutes'));
+app.use('/api/location-mappings', require('./routes/locationMappingsRoutes'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
