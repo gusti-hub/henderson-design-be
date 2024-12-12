@@ -5,7 +5,7 @@ on:
     branches: [ main ]
 
 env:
-  REGISTRY: "registry.digitalocean.com/your-registry"
+  REGISTRY: "registry.digitalocean.com/hale-project"
   IMAGE_NAME: "backend-app"
 
 jobs:
