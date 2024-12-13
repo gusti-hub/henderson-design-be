@@ -149,9 +149,12 @@ const getLocationProducts = async (req, res) => {
     const { floorPlanId, locationId } = req.query;
     
     const mapping = await LocationMapping.findOne({
-      floorPlanId,
+      //floorPlanId,
       locationId
-    }).populate('allowedProductIds');
+    }).populate({
+      path: 'allowedProductIds',
+      select: 'name product_id basePrice image' // Include necessary fields
+    });
 
     if (!mapping) {
       return res.json({ products: [] });

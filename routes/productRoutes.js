@@ -9,7 +9,8 @@ const {
   createProduct,
   updateProduct,
   deleteProduct,
-  getProductsBasicInfo
+  getProductsBasicInfo,
+  getProductVariants
 } = require('../controllers/productController');
 
 // Configure multer for memory storage (for MongoDB blob storage)
@@ -37,6 +38,9 @@ const handleUpload = (req, res, next) => {
 };
 
 router.get('/basic-info', protect, getProductsBasicInfo);
+
+// Product variants - for customization modal
+router.get('/:id/variants', protect, getProductVariants);
 
 // Product routes
 router.route('/')
