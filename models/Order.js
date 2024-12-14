@@ -6,46 +6,74 @@ const orderSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  unitNumber: {
-    type: String,
-    required: true
-  },
-  floorPlan: {
-    type: String,
-    enum: ['investor', 'custom'],
-    required: true
-  },
-  selections: {
-    type: Map,
-    of: {
-      area: String,
-      furniture: [{
-        type: {
-          type: String,
-          required: true
-        },
-        material: String,
-        color: String,
-        style: String
-      }]
+  selectedPlan: {
+    id: String,
+    title: String,
+    description: String,
+    image: String,
+    details: [String],
+    clientInfo: {
+      name: String,
+      unitNumber: String,
+      floorPlan: String
     }
+  },
+  clientInfo: {
+    name: String,
+    unitNumber: String,
+    floorPlan: String
+  },
+  designSelections: mongoose.Schema.Types.Mixed,
+  selectedProducts: [{
+    id: String,
+    name: String,
+    spotId: String,
+    spotName: String,
+    finalPrice: Number,
+    selectedOptions: {
+      finish: String,
+      fabric: String
+    },
+    coordinates: Object,
+    variants: Array
+  }],
+  occupiedSpots: {
+    type: Map,
+    of: String
+  },
+  step: {
+    type: Number,
+    default: 1
   },
   status: {
     type: String,
-    enum: ['pending', 'processing', 'completed', 'cancelled'],
-    default: 'pending'
+    enum: ['in_progress', 'completed', 'cancelled', 'confirmed'],
+    default: 'in_progress'
   },
-  paymentStatus: {
-    type: String,
-    enum: ['unpaid', 'pending', 'paid', 'rejected'],
-    default: 'unpaid'
-  },
-  paymentProof: String,
-  totalItems: Number,
-  createdAt: {
-    type: Date,
-    default: Date.now
+  paymentDetails: {
+    method: {
+      type: String,
+      enum: ['bank_transfer', 'wire_transfer', 'cheque', '']
+    },
+    installments: [{
+      percent: Number,
+      dueDate: Date,
+      amount: Number,
+      status: {
+        type: String,
+        enum: ['pending', 'uploaded', 'verified', 'rejected'],
+        default: 'pending'
+      },
+      proofOfPayment: {
+        filename: String,
+        url: String,
+        uploadDate: Date
+      }
+    }]
   }
+}, {
+  timestamps: true
 });
 
-module.exports = mongoose.model('Order', orderSchema);
+const Order = mongoose.model('Order', orderSchema);
+module.exports = Order;

@@ -11,8 +11,24 @@ const {
   updatePaymentStatus,
   generateOrderPDF
 } = require('../controllers/orderController');
+const orderController = require('../controllers/orderController');
+const multer = require('multer');
 
 router.use(protect);
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/') // Make sure this directory exists
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + '-' + file.originalname)
+  }
+});
+const upload = multer({ storage: storage });
+
+router.post('/:id/payment-proof', protect, upload.single('paymentProof'), orderController.uploadPaymentProof);
+
+router.get('/user-order', protect, orderController.getCurrentUserOrder);
 
 router.route('/')
   .get(getOrders)

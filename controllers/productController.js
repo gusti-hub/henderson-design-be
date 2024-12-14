@@ -1,5 +1,7 @@
-// controllers/productController.js
 const Product = require('../models/Product');
+const { upload } = require('../config/s3');
+const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { s3Client } = require('../config/s3');
 
 // Get all products with pagination and search
 const getProducts = async (req, res) => {
@@ -37,37 +39,48 @@ const getProducts = async (req, res) => {
 // controllers/productController.js
 const createProduct = async (req, res) => {
   try {
-    console.log('Received body:', req.body); // Debug log
-    console.log('Received files:', req.files); // Debug log
+    console.log('Create product request received');
+    console.log('Files:', req.files);
+    console.log('Body:', req.body);
 
     const { product_id, name, basePrice } = req.body;
-    let variants;
+    let variants = JSON.parse(req.body.variants);
 
-    try {
-      // Parse variants if it's a string, otherwise use it directly
-      variants = typeof req.body.variants === 'string' 
-        ? JSON.parse(req.body.variants) 
-        : req.body.variants;
-    } catch (error) {
-      console.error('Error parsing variants:', error);
-      return res.status(400).json({ message: 'Invalid variants data' });
-    }
-
-    // Map variants with images
-    const processedVariants = variants.map((variant, index) => {
-      const variantImage = req.files?.[index];
-      return {
-        finish: variant.finish || '',
-        fabric: variant.fabric || '',
-        price: parseFloat(variant.price),
-        image: variantImage ? {
-          data: variantImage.buffer,
-          contentType: variantImage.mimetype
-        } : null
-      };
+    // Process variants and match with uploaded files
+    const processedVariants = variants.map(variant => {
+      // If variant has an imageIndex, use the corresponding uploaded file
+      if ('imageIndex' in variant && req.files[variant.imageIndex]) {
+        const file = req.files[variant.imageIndex];
+        return {
+          finish: variant.finish || '',
+          fabric: variant.fabric || '',
+          price: parseFloat(variant.price),
+          image: {
+            url: file.location,
+            key: file.key
+          }
+        };
+      }
+      // If variant has existing image data, keep it
+      else if (variant.image) {
+        return {
+          finish: variant.finish || '',
+          fabric: variant.fabric || '',
+          price: parseFloat(variant.price),
+          image: variant.image
+        };
+      }
+      // No image case
+      else {
+        return {
+          finish: variant.finish || '',
+          fabric: variant.fabric || '',
+          price: parseFloat(variant.price),
+          image: null
+        };
+      }
     });
 
-    // Create new product
     const product = await Product.create({
       product_id,
       name,
@@ -82,39 +95,66 @@ const createProduct = async (req, res) => {
   }
 };
 
-// Update product
+// controllers/productController.js
 const updateProduct = async (req, res) => {
   try {
-    console.log('Update request body:', req.body); // Debug log
-    console.log('Update files:', req.files); // Debug log
+    console.log('Update product request received');
+    console.log('Files received:', req.files);
+    console.log('Body received:', {
+      ...req.body,
+      variants: JSON.parse(req.body.variants)
+    });
 
-    const { product_id, name, basePrice, variants } = req.body;
     const productId = req.params.id;
+    const { product_id, name, basePrice } = req.body;
+    let variants = JSON.parse(req.body.variants);
 
-    // Find the product first
-    const product = await Product.findById(productId);
-    if (!product) {
+    // Find existing product
+    const existingProduct = await Product.findById(productId);
+    if (!existingProduct) {
       return res.status(404).json({ message: 'Product not found' });
     }
 
-    // Parse variants data
-    const variantsData = JSON.parse(variants || '[]');
-    
-    // Process variants with images
-    const processedVariants = variantsData.map((variant, index) => {
-      const variantImage = req.files?.[index];
-      return {
-        finish: variant.finish || '',
-        fabric: variant.fabric || '',
-        price: parseFloat(variant.price),
-        image: variantImage ? {
-          data: variantImage.buffer,
-          contentType: variantImage.mimetype
-        } : variant.image // Keep existing image if no new one uploaded
-      };
+    // Process variants and match with uploaded files
+    const processedVariants = variants.map((variant, index) => {
+      // Case 1: New file upload for this variant
+      if ('imageIndex' in variant && req.files?.[variant.imageIndex]) {
+        const file = req.files[variant.imageIndex];
+        console.log(`Processing new file upload for variant ${index}:`, file);
+        return {
+          finish: variant.finish || '',
+          fabric: variant.fabric || '',
+          price: parseFloat(variant.price),
+          image: {
+            url: file.location,
+            key: file.key
+          }
+        };
+      }
+      // Case 2: Keeping existing image
+      else if (variant.image?.url && variant.image?.key) {
+        console.log(`Keeping existing image for variant ${index}:`, variant.image);
+        return {
+          finish: variant.finish || '',
+          fabric: variant.fabric || '',
+          price: parseFloat(variant.price),
+          image: variant.image
+        };
+      }
+      // Case 3: No image (either deleted or never had one)
+      else {
+        console.log(`No image for variant ${index}`);
+        return {
+          finish: variant.finish || '',
+          fabric: variant.fabric || '',
+          price: parseFloat(variant.price),
+          image: null
+        };
+      }
     });
 
-    // Update the product
+    console.log('Processed variants:', processedVariants);
+
     const updatedProduct = await Product.findByIdAndUpdate(
       productId,
       {
@@ -123,23 +163,42 @@ const updateProduct = async (req, res) => {
         basePrice: parseFloat(basePrice),
         variants: processedVariants
       },
-      { new: true } // Return updated document
+      { new: true }
     );
 
+    console.log('Product updated successfully:', updatedProduct);
     res.json(updatedProduct);
+
   } catch (error) {
-    console.error('Error in updateProduct:', error); // Debug log
-    res.status(500).json({ message: 'Error updating product' });
+    console.error('Error in updateProduct:', error);
+    res.status(500).json({ 
+      message: 'Error updating product', 
+      error: error.message,
+      stack: error.stack 
+    });
   }
 };
 
-// Delete product
 const deleteProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ message: 'Product not found' });
     }
+
+    // Delete all variant images from S3
+    await Promise.all(product.variants.map(async (variant) => {
+      if (variant.image?.key) {
+        try {
+          await s3Client.send(new DeleteObjectCommand({
+            Bucket: process.env.SPACES_BUCKET,
+            Key: variant.image.key
+          }));
+        } catch (error) {
+          console.error('Error deleting image:', error);
+        }
+      }
+    }));
 
     await Product.deleteOne({ _id: req.params.id });
     res.json({ message: 'Product deleted successfully' });

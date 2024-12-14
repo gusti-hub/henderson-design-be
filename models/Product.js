@@ -1,16 +1,14 @@
-// models/Product.js
 const mongoose = require('mongoose');
 
-// models/Product.js
 const variantSchema = new mongoose.Schema({
   finish: {
     type: String,
-    enum: ['Light', 'Dark', ''], // Add empty string as valid option
+    enum: ['Light', 'Dark', ''],
     default: ''
   },
   fabric: {
     type: String,
-    enum: ['Cream', 'Tan', 'Beige', 'Blue', ''], // Add empty string as valid option
+    enum: ['Cream', 'Tan', 'Beige', 'Blue', ''],
     default: ''
   },
   price: {
@@ -18,8 +16,8 @@ const variantSchema = new mongoose.Schema({
     required: true
   },
   image: {
-    data: Buffer,
-    contentType: String
+    url: String,
+    key: String // Store the S3 object key
   }
 });
 
@@ -58,7 +56,6 @@ const productSchema = new mongoose.Schema({
   }
 });
 
-// Update the updatedAt timestamp before saving
 productSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();

@@ -2,12 +2,60 @@ const Order = require('../models/Order');
 
 const createOrder = async (req, res) => {
   try {
-    const order = await Order.create({
+    // Clean up the payment details to match the schema
+    const paymentDetails = {
+      method: req.body.paymentDetails?.method?.method || req.body.paymentDetails?.method,
+      installments: req.body.paymentDetails?.installments?.map(installment => ({
+        percent: installment.percent,
+        dueDate: installment.dueDate,
+        status: installment.status,
+        amount: installment.amount,
+        proofOfPayment: installment.proofOfPayment
+      }))
+    };
+
+    // Create the order with cleaned data
+    const orderData = {
       user: req.user.id,
-      ...req.body
-    });
+      selectedPlan: req.body.selectedPlan,
+      clientInfo: req.body.clientInfo,
+      designSelections: req.body.designSelections,
+      step: req.body.step,
+      status: req.body.status,
+      paymentDetails: paymentDetails
+    };
+
+    const order = await Order.create(orderData);
     res.status(201).json(order);
   } catch (error) {
+    console.error('Error creating order:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const updateOrder = async (req, res) => {
+  try {
+    // Check if this is a floor plan change
+    const existingOrder = await Order.findById(req.params.id);
+    if (existingOrder && existingOrder.selectedPlan?.id !== req.body.selectedPlan?.id) {
+      // If floor plan changed, ensure products are reset
+      req.body.selectedProducts = [];
+      req.body.occupiedSpots = {};
+      req.body.designSelections = null;
+    }
+
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, user: req.user.id },
+      req.body,
+      { new: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+    res.json(order);
+  } catch (error) {
+    console.error('Error updating order:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -65,35 +113,26 @@ const getOrderById = async (req, res) => {
   }
 };
 
-const updateOrder = async (req, res) => {
-  try {
-    const order = await Order.findOneAndUpdate(
-      { _id: req.params.id, user: req.user.id },
-      req.body,
-      { new: true }
-    );
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
-    }
-    res.json(order);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
 const uploadPaymentProof = async (req, res) => {
   try {
-    const order = await Order.findOneAndUpdate(
-      { _id: req.params.id, user: req.user.id },
-      { 
-        paymentStatus: 'pending',
-        paymentProof: req.file.path 
-      },
-      { new: true }
-    );
+    const { id } = req.params;
+    const { installmentIndex } = req.body;
+    const file = req.file;
+
+    const order = await Order.findById(id);
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
+
+    // Update the specific installment
+    order.paymentDetails.installments[installmentIndex].status = 'uploaded';
+    order.paymentDetails.installments[installmentIndex].proofOfPayment = {
+      filename: file.filename,
+      url: file.path,
+      uploadDate: new Date()
+    };
+
+    await order.save();
     res.json(order);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -175,6 +214,25 @@ const updatePaymentStatus = async (req, res) => {
     }
 };
 
+const getCurrentUserOrder = async (req, res) => {
+  try {
+    // Find the most recent order for the current user
+    const order = await Order.findOne({
+      user: req.user.id,
+      //status: { $in: ['in_progress', 'pending', 'confirmed'] } // Added 'confirmed' status
+    }).sort({ createdAt: -1 });
+
+    if (!order) {
+      return res.status(404).json({ message: 'No active order found' });
+    }
+
+    res.json(order);
+  } catch (error) {
+    console.error('Error fetching user order:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   createOrder,
   getOrders,
@@ -182,5 +240,6 @@ module.exports = {
   updateOrder,
   uploadPaymentProof,
   updatePaymentStatus,
-  generateOrderPDF
+  generateOrderPDF,
+  getCurrentUserOrder
 };
