@@ -14,7 +14,8 @@ const getProducts = async (req, res) => {
     const searchQuery = {
       $or: [
         { product_id: { $regex: search, $options: 'i' } },
-        { name: { $regex: search, $options: 'i' } }
+        { name: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
       ]
     };
 
@@ -43,7 +44,7 @@ const createProduct = async (req, res) => {
     console.log('Files:', req.files);
     console.log('Body:', req.body);
 
-    const { product_id, name, basePrice } = req.body;
+    const { product_id, name, description, basePrice } = req.body;
     let variants = JSON.parse(req.body.variants);
 
     // Process variants and match with uploaded files
@@ -84,6 +85,7 @@ const createProduct = async (req, res) => {
     const product = await Product.create({
       product_id,
       name,
+      description,
       basePrice: parseFloat(basePrice),
       variants: processedVariants
     });
@@ -106,7 +108,7 @@ const updateProduct = async (req, res) => {
     });
 
     const productId = req.params.id;
-    const { product_id, name, basePrice } = req.body;
+    const { product_id, name, description, basePrice } = req.body;
     let variants = JSON.parse(req.body.variants);
 
     // Find existing product
@@ -160,6 +162,7 @@ const updateProduct = async (req, res) => {
       {
         product_id,
         name,
+        description,
         basePrice: parseFloat(basePrice),
         variants: processedVariants
       },
@@ -247,7 +250,8 @@ const getProductVariants = async (req, res) => {
     
     res.json({
       variants,
-      basePrice: product.basePrice
+      basePrice: product.basePrice,
+      description: product.description,
     });
   } catch (error) {
     console.error('Error in getProductVariants:', error);

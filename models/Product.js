@@ -31,6 +31,10 @@ const productSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  description: {
+    type: String,
+    required: false
+  },
   basePrice: {
     type: Number,
     required: true

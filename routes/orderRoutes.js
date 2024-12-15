@@ -9,7 +9,9 @@ const {
   updateOrder,
   uploadPaymentProof,
   updatePaymentStatus,
-  generateOrderPDF
+  generateOrderPDF,
+  generateProposal,
+  generateOrderSummary
 } = require('../controllers/orderController');
 const orderController = require('../controllers/orderController');
 const multer = require('multer');
@@ -31,6 +33,9 @@ router.post('/:id/payment-proof', protect, handlePaymentProofUpload, orderContro
 
 router.get('/user-order', protect, orderController.getCurrentUserOrder);
 
+router.get('/:id/proposal', protect, generateProposal);
+router.get('/:id/summary', protect, generateOrderSummary);
+
 router.route('/')
   .get(getOrders)
   .post(createOrder);
@@ -44,7 +49,7 @@ router.route('/:id/payment')
   .put(updatePaymentStatus);
 
 router.get('/:id/pdf', generateOrderPDF);
-router.put('/orders/:id/payment-status', protect, orderController.updatePaymentStatus);
+router.put('/:id/payment-status', protect, orderController.updatePaymentStatus)
 
 
 module.exports = router;
