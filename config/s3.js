@@ -100,4 +100,77 @@ const handleUpload = (req, res, next) => {
   });
 };
 
-module.exports = { s3Client, handleUpload };
+const paymentProofStorageConfig = multerS3({
+  s3: s3Client,
+  bucket: process.env.SPACES_BUCKET,
+  acl: 'public-read',
+  key: function (req, file, cb) {
+    const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '-');
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    // Use only payment-proofs folder
+    const key = `payment-proofs/${uniqueSuffix}-${sanitizedName}`;
+    console.log('Generated payment proof key:', key);
+    cb(null, key);
+  },
+  metadata: function (req, file, cb) {
+    cb(null, { 
+      fieldName: file.fieldname,
+      orderId: req.params.id,
+      installmentIndex: req.body.installmentIndex
+    });
+  }
+});
+
+// Create separate upload middleware for payment proofs
+const uploadPaymentProof = multer({
+  storage: paymentProofStorageConfig,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+    files: 1 // Only one file per upload
+  }
+}).single('paymentProof');
+
+// Wrap payment proof upload in promise
+const handlePaymentProofUpload = (req, res, next) => {
+  uploadPaymentProof(req, res, function(err) {
+    console.log('Payment proof upload attempt started');
+    
+    if (err) {
+      console.error('Upload error details:', {
+        name: err.name,
+        message: err.message,
+        stack: err.stack,
+        code: err.code
+      });
+
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({
+          message: 'File upload error',
+          error: err.message,
+          code: err.code
+        });
+      }
+
+      return res.status(500).json({
+        message: 'Error uploading to Digital Ocean Spaces',
+        error: err.message,
+        details: err.stack
+      });
+    }
+
+    if (!req.file) {
+      console.log('No payment proof was uploaded');
+    } else {
+      console.log('Payment proof uploaded successfully:', {
+        fieldname: req.file.fieldname,
+        key: req.file.key,
+        location: req.file.location
+      });
+    }
+
+    next();
+  });
+};
+
+
+module.exports = { s3Client, handleUpload, handlePaymentProofUpload };

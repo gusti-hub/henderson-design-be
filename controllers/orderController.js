@@ -1,4 +1,6 @@
 const Order = require('../models/Order');
+const { s3Client } = require('../config/s3');
+const { PutObjectCommand } = require('@aws-sdk/client-s3');
 
 const createOrder = async (req, res) => {
   try {
@@ -102,7 +104,7 @@ const getOrderById = async (req, res) => {
   try {
     const order = await Order.findOne({
       _id: req.params.id,
-      user: req.user.id
+      //user: req.user.id
     });
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
@@ -117,50 +119,65 @@ const uploadPaymentProof = async (req, res) => {
   try {
     const { id } = req.params;
     const { installmentIndex } = req.body;
-    const file = req.file;
+    const paymentProofFile = req.file;
 
     const order = await Order.findById(id);
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    // Update the specific installment
-    order.paymentDetails.installments[installmentIndex].status = 'uploaded';
-    order.paymentDetails.installments[installmentIndex].proofOfPayment = {
-      filename: file.filename,
-      url: file.path,
-      uploadDate: new Date()
-    };
+    if (!paymentProofFile) {
+      return res.status(400).json({ error: 'No payment proof uploaded' });
+    }
 
+    const installment = order.paymentDetails.installments[installmentIndex];
+    if (!installment) {
+      return res.status(400).json({ error: 'Invalid installment index' });
+    }
+
+    const updatedOrder = await Order.updateOne(
+      { _id: order._id, 'paymentDetails.installments._id': installment._id },
+      {
+        $set: {
+          'paymentDetails.installments.$.status': 'uploaded',
+          'paymentDetails.installments.$.proofOfPayment': {
+            filename: paymentProofFile.originalname,
+            url: paymentProofFile.location,
+            key: paymentProofFile.key,
+            uploadDate: new Date()
+          }
+        }
+      }
+    );
+    
+    res.json(updatedOrder);
+  } catch (error) {
+    console.error('Error uploading payment proof:', error);
+    res.status(500).json({ message: 'Failed to upload payment proof' });
+  }
+};
+
+const updatePaymentStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { installmentIndex, status } = req.body;
+    
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    // Update the specific installment's status
+    order.paymentDetails.installments[installmentIndex].status = status;
     await order.save();
+
     res.json(order);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
-
-const updatePaymentStatus = async (req, res) => {
-    try {
-      const order = await Order.findByIdAndUpdate(
-        req.params.id,
-        {
-          paymentStatus: req.body.status,
-          status: req.body.status === 'approved' ? 'processing' : 'pending'
-        },
-        { new: true }
-      );
-      
-      if (!order) {
-        return res.status(404).json({ message: 'Order not found' });
-      }
-      
-      res.json(order);
-    } catch (error) {
-      res.status(500).json({ message: error.message });
-    }
-  };
   
-  const generateOrderPDF = async (req, res) => {
+const generateOrderPDF = async (req, res) => {
     try {
       const order = await Order.findById(req.params.id);
       if (!order) {
@@ -232,6 +249,7 @@ const getCurrentUserOrder = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 module.exports = {
   createOrder,

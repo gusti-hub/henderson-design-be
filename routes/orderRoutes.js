@@ -13,6 +13,7 @@ const {
 } = require('../controllers/orderController');
 const orderController = require('../controllers/orderController');
 const multer = require('multer');
+const { handlePaymentProofUpload } = require('../config/s3');
 
 router.use(protect);
 
@@ -26,7 +27,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-router.post('/:id/payment-proof', protect, upload.single('paymentProof'), orderController.uploadPaymentProof);
+router.post('/:id/payment-proof', protect, handlePaymentProofUpload, orderController.uploadPaymentProof);
 
 router.get('/user-order', protect, orderController.getCurrentUserOrder);
 
@@ -43,5 +44,7 @@ router.route('/:id/payment')
   .put(updatePaymentStatus);
 
 router.get('/:id/pdf', generateOrderPDF);
+router.put('/orders/:id/payment-status', protect, orderController.updatePaymentStatus);
+
 
 module.exports = router;

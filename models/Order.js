@@ -67,6 +67,7 @@ const orderSchema = new mongoose.Schema({
       proofOfPayment: {
         filename: String,
         url: String,
+        key: String,
         uploadDate: Date
       }
     }]
