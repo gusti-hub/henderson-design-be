@@ -32,7 +32,7 @@ const userSchema = new mongoose.Schema({
   },
   floorPlan: {
     type: String,
-    required: true,
+    required: false,
     enum: [
       "Residence 00A", "Residence 01B", "Residence 03A",
       "Residence 05A", "Residence 08", "Residence 10A/12A",
