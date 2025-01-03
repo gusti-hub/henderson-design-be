@@ -5,30 +5,42 @@ const axios = require('axios');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
+const {
+  generateHeaderSection,
+  generateClientSection,
+  generateItemSection,
+  generateFooter
+} = require('../config/pdfUtils');
+const puppeteer = require('puppeteer');
+const html_to_pdf = require('html-pdf-node');
 
 const createOrder = async (req, res) => {
   try {
-    // Clean up the payment details to match the schema
-    const paymentDetails = {
-      method: req.body.paymentDetails?.method?.method || req.body.paymentDetails?.method,
-      installments: req.body.paymentDetails?.installments?.map(installment => ({
-        percent: installment.percent,
-        dueDate: installment.dueDate,
-        status: installment.status,
-        amount: installment.amount,
-        proofOfPayment: installment.proofOfPayment
-      }))
-    };
+    // Check if user already has an order
+    const existingOrder = await Order.findOne({
+      user: req.user.id,
+      status: 'ongoing'
+    });
 
-    // Create the order with cleaned data
+    if (existingOrder) {
+      // If order exists, update it instead
+      const updatedOrder = await Order.findOneAndUpdate(
+        { _id: existingOrder._id },
+        req.body,
+        { new: true }
+      );
+      return res.json(updatedOrder);
+    }
+
+    // If no order exists, create new one
     const orderData = {
       user: req.user.id,
       selectedPlan: req.body.selectedPlan,
       clientInfo: req.body.clientInfo,
-      designSelections: req.body.designSelections,
+      selectedProducts: req.body.selectedProducts,
+      occupiedSpots: req.body.occupiedSpots,
       step: req.body.step,
-      status: req.body.status,
-      paymentDetails: paymentDetails
+      status: req.body.status
     };
 
     const order = await Order.create(orderData);
@@ -39,26 +51,46 @@ const createOrder = async (req, res) => {
   }
 };
 
+// Modify the updateOrder function
 const updateOrder = async (req, res) => {
   try {
-    // Check if this is a floor plan change
     const existingOrder = await Order.findById(req.params.id);
-    if (existingOrder && existingOrder.selectedPlan?.id !== req.body.selectedPlan?.id) {
-      // If floor plan changed, ensure products are reset
-      req.body.selectedProducts = [];
-      req.body.occupiedSpots = {};
-      req.body.designSelections = null;
+    if (!existingOrder) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    // Clean up selected products if present in request
+    let cleanedData = { ...req.body };
+    if (req.body.selectedProducts) {
+      cleanedData.selectedProducts = req.body.selectedProducts.map(product => ({
+        _id: product._id,
+        name: product.name,
+        product_id: product.product_id,
+        spotId: product.spotId,
+        spotName: product.spotName,
+        finalPrice: product.finalPrice,
+        quantity: product.quantity,
+        unitPrice: product.unitPrice,
+        selectedOptions: {
+          finish: product.selectedOptions?.finish || '',
+          fabric: product.selectedOptions?.fabric || '',
+          image: product.selectedOptions?.image || ''
+        }
+      }));
+    }
+
+    // If floor plan changed, reset products
+    if (existingOrder.selectedPlan?.id !== req.body.selectedPlan?.id) {
+      cleanedData.selectedProducts = [];
+      cleanedData.occupiedSpots = {};
     }
 
     const order = await Order.findOneAndUpdate(
       { _id: req.params.id, user: req.user.id },
-      req.body,
+      cleanedData,
       { new: true }
     );
 
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
-    }
     res.json(order);
   } catch (error) {
     console.error('Error updating order:', error);
@@ -67,42 +99,56 @@ const updateOrder = async (req, res) => {
 };
 
 const getOrders = async (req, res) => {
-    try {
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 10;
-      const search = req.query.search || '';
-      const status = req.query.status;
-      const skip = (page - 1) * limit;
-  
-      // Create search query
-      const searchQuery = {
-        $or: [
-          { orderId: { $regex: search, $options: 'i' } },
-          { 'clientInfo.name': { $regex: search, $options: 'i' } }
-        ]
-      };
-  
-      // Add status filter if specified
-      if (status && status !== 'all') {
-        searchQuery.status = status;
-      }
-  
-      const total = await Order.countDocuments(searchQuery);
-      const orders = await Order.find(searchQuery)
-        .skip(skip)
-        .limit(limit)
-        .sort({ createdAt: -1 });
-  
-      res.json({
-        orders,
-        total,
-        page,
-        totalPages: Math.ceil(total / limit)
-      });
-    } catch (error) {
-      res.status(500).json({ message: error.message });
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search || '';
+    const status = req.query.status;
+    const skip = (page - 1) * limit;
+
+
+    // Create base query
+    let searchQuery = {};
+
+    // Add search conditions if search exists
+    if (search) {
+      searchQuery.$or = [
+        { 'selectedPlan.clientInfo.name': { $regex: search, $options: 'i' } },
+        { 'selectedPlan.clientInfo.unitNumber': { $regex: search, $options: 'i' } },
+        { 'selectedProducts.name': { $regex: search, $options: 'i' } }
+      ];
     }
-  };
+
+    // Add status filter
+    if (status && status !== 'all') {
+      searchQuery.status = status;
+    }
+
+    // Execute query
+    const total = await Order.countDocuments(searchQuery);
+    const orders = await Order.find(searchQuery)
+      .populate({
+        path: 'user',
+        select: 'name email'  // Select specific fields you need
+      })
+      .skip(skip)
+      .limit(limit)
+      .sort({ createdAt: -1 });
+
+
+    // Send response
+    res.json({
+      orders,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit)
+    });
+
+  } catch (error) {
+    console.error('Error in getOrders:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
 
 const getOrderById = async (req, res) => {
   try {
@@ -254,10 +300,10 @@ const generateOrderPDF = async (req, res) => {
 
 const getCurrentUserOrder = async (req, res) => {
   try {
-    // Find the most recent order for the current user
+    // Only get the most recent in-progress order
     const order = await Order.findOne({
       user: req.user.id,
-      //status: { $in: ['in_progress', 'pending', 'confirmed'] } // Added 'confirmed' status
+      status: 'ongoing'
     }).sort({ createdAt: -1 });
 
     if (!order) {
@@ -272,213 +318,487 @@ const getCurrentUserOrder = async (req, res) => {
 };
 
 
-const generateOrderSummary = async (req, res) => {
+const generateProposal = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
-      .populate('selectedProducts')
-      .populate('clientInfo');
+      .populate('user')
+      .lean();
 
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    const doc = new PDFDocument({
-      margin: 50,
-      size: 'A4'
-    });
+    const products = order.selectedProducts || [];
     
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=summary-${order._id}.pdf`);
-    
-    doc.pipe(res);
-
-    // Header
-    doc.fontSize(24).text('HALE', 50, 50);
-    doc.moveDown();
-
-    // Client Information
-    doc.fontSize(12)
-      .text(`Client: ${order.clientInfo?.name}`)
-      .text(`Unit Number: ${order.clientInfo?.unitNumber}`)
-      .text(`Order ID: ${order._id}`)
-      .text(`Date: ${new Date().toLocaleDateString()}`);
-    doc.moveDown();
-
-    // Products
-    if (order.designSelections?.selectedProducts?.length > 0) {
-      for (const product of order.designSelections.selectedProducts) {
-        // Location name centered above table
-        doc.text(product.spotName || 'Unknown', { align: 'center' });
-        doc.moveDown(0.5);
-
-        const startY = doc.y;
-
-        // First row - Product name and Quantity
-        doc.rect(50, startY, 500, 25).stroke();
-        doc.text(product.name || '1500', 60, startY + 5);
-        doc.text(`Quantity: ${product.quantity || 1}`, 350, startY + 5);
-
-        // Second row - Content
-        const contentStartY = startY + 25;
-        const contentHeight = 200;
-
-        // Main content rectangle
-        doc.rect(50, contentStartY, 500, contentHeight).stroke();
-
-        // Vertical line to split content
-        doc.moveTo(300, contentStartY).lineTo(300, contentStartY + contentHeight).stroke();
-
-        // Left side - Image and details
-        if (product.variants?.[0]?.image?.url) {
-          try {
-            const imageUrl = product.variants[0].image.url;
-            const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-            const imageBuffer = Buffer.from(imageResponse.data);
-            doc.image(imageBuffer, 60, contentStartY + 10, { 
-              width: 180, 
-              height: 120 
-            });
-          } catch (imageError) {
-            console.error('Error loading image:', imageError);
-          }
-        }
-
-        // Product details below image
-        doc.text(`Leg Finish: ${product.selectedOptions?.finish || 'Light'}`, 60, contentStartY + 140)
-           .text(`Size: ${product.size || 'N/A'}`, 60, contentStartY + 155)
-           .text('Fabric Details:', 60, contentStartY + 170)
-           .text(`Manufacturer: ${product.selectedOptions?.manufacturer || 'N/A'}`, 60, contentStartY + 185)
-           .text(`Fabric: ${product.selectedOptions?.fabric || 'Cream'}`, 60, contentStartY + 200);
-
-        // Right side - Pricing
-        doc.text(`Unit Price: $${product.finalPrice?.toFixed(2) || '0.00'}`, 310, contentStartY + 10)
-           .text(`Sales Tax: $${(product.finalPrice * 0.04712).toFixed(2) || '0.00'}`, 310, contentStartY + 30)
-           .text(`Total Price: $${product.finalPrice?.toFixed(2) || '0.00'}`, 310, contentStartY + 50);
-
-        // Add space before next product
-        doc.moveDown(12);
-      }
+    const productPages = [];
+    productPages.push(products.slice(0, 2));
+    for (let i = 2; i < products.length; i += 3) {
+      productPages.push(products.slice(i, i + 3));
     }
 
-    doc.end();
+    const subTotal = products.reduce((sum, product) => sum + (product.finalPrice || 0), 0);
+    const salesTax = subTotal * 0.04712;
+    const total = subTotal + salesTax;
+
+    const totalPages = productPages.length + 2;
+
+    const htmlTemplate = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page {
+            size: letter;
+            margin: 0;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .page {
+            position: relative;
+            height: 11in;
+            padding: 40px;
+            box-sizing: border-box;
+            page-break-after: always;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .header h1 {
+            color: rgb(0, 86, 112);
+            font-size: 28px;
+            margin: 0;
+            font-weight: normal;
+        }
+        .header p {
+            color: rgb(0, 86, 112);
+            font-size: 14px;
+            margin: 5px 0 0 0;
+        }
+        .proposal-title {
+            color: rgb(128, 0, 0);
+            font-weight: bold;
+            margin: 20px 0;
+        }
+        .section-header {
+            background: #f0f0f0;
+            padding: 8px;
+            text-align: center;
+            border: 1px solid #000;
+            border-bottom: none;
+        }
+        .section-content {
+            border: 1px solid #000;
+            padding: 20px;
+            margin-bottom: 20px;
+            min-height: 150px;
+        }
+        .product-box {
+            display: grid;
+            grid-template-columns: 120px 1fr 200px;
+            gap: 20px;
+        }
+        .product-image {
+            width: 120px;
+        }
+        .product-image img {
+            width: 100%;
+            height: auto;
+            max-height: 120px;
+            object-fit: contain;
+        }
+        .product-details p {
+            margin: 3px 0;
+        }
+        .pricing {
+            text-align: right;
+        }
+        .pricing p {
+            margin: 3px 0;
+        }
+        .page-footer {
+            position: absolute;
+            bottom: 60px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-size: 11px;
+            color: rgb(0, 86, 112);
+            background: white;
+            padding: 0 40px;
+        }
+        .page-number {
+            position: absolute;
+            bottom: 20px;
+            right: 40px;
+            font-size: 11px;
+        }
+        .totals {
+            text-align: right;
+            margin: 20px 0;
+        }
+        .warranty-section {
+            margin: 20px 0;
+        }
+        .warranty-title {
+            color: rgb(128, 0, 0);
+            font-weight: bold;
+        }
+        .content-wrapper {
+            margin-bottom: 100px;
+        }
+        .signature-line {
+            border-top: 1px solid black;
+            margin-top: 40px;
+        }
+        .client-info {
+            margin-bottom: 20px;
+        }
+        .client-info p {
+            margin: 3px 0;
+        }
+        .project-info {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+        }
+        .project-info .left {
+            color: rgb(0, 0, 128);
+        }
+        .project-info .right {
+            text-align: right;
+        }
+        .project-info p {
+            margin: 3px 0;
+        }
+        .pricing {
+            text-align: right;
+            border-left: 1px solid #eee;
+            padding-left: 20px;
+        }
+        .pricing p {
+            margin: 3px 0;
+            line-height: 1.6;
+        }
+        .pricing p:last-child {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    ${productPages.map((pageProducts, pageIndex) => `
+        <div class="page">
+            <div class="content-wrapper">
+                ${pageIndex === 0 ? `
+                    <div class="header">
+                        <h1>HENDERSON</h1>
+                        <p>DESIGN GROUP</p>
+                    </div>
+
+                    <div class="proposal-title">Proposal</div>
+
+                    <div class="client-info">
+                        <p>${order.clientInfo?.name || ''}</p>
+                        <p>${order.clientInfo?.unitNumber || ''}</p>
+                        <p>Kailua Kona, Hawaii 96740</p>
+                        <p>${order.user?.email || ''}</p>
+                    </div>
+
+                    <div class="project-info">
+                        <div class="left">
+                            <p>Project: Alia</p>
+                        </div>
+                        <div class="right">
+                            <p>Proposal #: ${order._id}</p>
+                            <p>Proposal Date: ${new Date().toLocaleDateString()}</p>
+                        </div>
+                    </div>
+                ` : ''}
+
+                  ${pageProducts.map(product => `
+                      <div>
+                          <div class="section-header">${product.spotName || ''}</div>
+                          <div class="section-content">
+                              <div class="product-box">
+                                  <div class="product-image">
+                                      ${product.selectedOptions?.image ? 
+                                          `<img src="${product.selectedOptions.image}" alt="${product.name}">` 
+                                          : '<div style="width:120px;height:120px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;">No Image</div>'}
+                                  </div>
+                                  <div class="product-details">
+                                      <p style="font-weight:bold">${product.name}</p>
+                                      <p>Product ID: ${product.product_id || ''}</p>
+                                      <p>Fabric Details</p>
+                                      <p>Finish: ${product.selectedOptions?.finish || ''}</p>
+                                      <p>Fabric: ${product.selectedOptions?.fabric || ''}</p>
+                                  </div>
+                                  <div class="pricing">
+                                      <p>Quantity: ${product.quantity || 1}</p>
+                                      <p>Unit Price: $${product.unitPrice?.toFixed(2) || '0.00'}</p>
+                                      <p>Subtotal: $${((product.unitPrice || 0) * (product.quantity || 1)).toFixed(2)}</p>
+                                      <p>Sales Tax: $${((product.unitPrice * (product.quantity || 1)) * 0.04712).toFixed(2) || '0.00'}</p>
+                                      <p style="font-weight:bold">Total Price: $${product.finalPrice?.toFixed(2) || '0.00'}</p>
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                  `).join('')}
+            </div>
+
+            <div class="page-footer">
+                <p>Henderson Design Group 74-5518 Kaiwi Street Suite B, Kailua Kona, HI, 96740-3145</p>
+                <p>Phone: (808) 315-8782</p>
+            </div>
+            <div class="page-number">${pageIndex + 1}/${totalPages}</div>
+        </div>
+    `).join('')}
+
+    <!-- Warranty Terms Page -->
+    <div class="page">
+        <div class="content-wrapper">
+            <div class="totals">
+                <p>Sub Total: $${subTotal.toFixed(2)}</p>
+                <p>Sales Tax: $${salesTax.toFixed(2)}</p>
+                <p>Total: $${total.toFixed(2)}</p>
+                <p>Required Deposit: $${total.toFixed(2)}</p>
+            </div>
+
+            <div class="warranty-title">Proposal Terms: Henderson Design Group Warranty Terms and Conditions</div>
+            
+            <div class="warranty-section">
+                <p>Coverage Period: Furniture is warranted to be free from defects in workmanship, materials, and functionality for a period of 30 days from the date of installation.</p>
+
+                <p>Scope of Warranty:</p>
+                <p>• Workmanship, Materials, and Functionality: The warranty covers defects in workmanship, materials, and functionality under normal wear and tear conditions.</p>
+                <p>• Repair or Replacement: If a defect is identified within the 30-day period, Henderson Design Group will, at its discretion, either repair or replace the defective item. This warranty applies to normal household use only.</p>
+
+                <p>Returns and Exchanges:</p>
+                <p>• No Returns: Items are not eligible for returns.</p>
+                <p>• No Exchanges: Exchanges are not permitted except in cases of defects as noted above.</p>
+                <p>• Custom Items: Custom items, including upholstery, are not eligible for returns or exchanges.</p>
+
+                <p>Exclusions:</p>
+                <p>• Negligence, Misuse, or Accidents: The warranty does not cover defects resulting from negligence, misuse, or accidents after installation.</p>
+                <p>• Maintenance and Commercial Use: The warranty is void for any condition resulting from incorrect or inadequate maintenance.</p>
+                <p>• Non-Residential Use: The warranty is void for any condition resulting from other than ordinary residential wear.</p>
+                <p>• Natural Material Variations: The warranty does not cover the matching of color, grain, or texture of wood, leather, or fabrics.</p>
+                <p>• Environmental Responses: Wood may expand and contract in response to temperature and humidity variations, potentially causing small movements and cracks. This is a natural occurrence and not considered a defect.</p>
+                <p>• Fabric and Leather Wear: The warranty does not cover colorfastness, dye lot variations, wrinkling, or wear of fabrics or leather.</p>
+                <p>• Softening of Fillings: The warranty does not cover the softening of filling materials under normal use.</p>
+                <p>• Sun Exposure: Extensive exposure to the sun is not covered by the warranty.</p>
+                <p>• Fabric Protectants: Applying a fabric protectant to your upholstered furniture could void the Henderson warranty.</p>
+            </div>
+        </div>
+
+        <div class="page-footer">
+            <p>Henderson Design Group 74-5518 Kaiwi Street Suite B, Kailua Kona, HI, 96740-3145</p>
+            <p>Phone: (808) 315-8782</p>
+        </div>
+        <div class="page-number">${totalPages - 1}/${totalPages}</div>
+    </div>
+
+    <!-- Signature Page -->
+    <div class="page">
+        <div class="content-wrapper">
+            <div class="header">
+                <h1>HENDERSON</h1>
+                <p>DESIGN GROUP</p>
+            </div>
+
+            <div class="proposal-title">Proposal</div>
+
+            <div>
+                <p>${order.clientInfo?.name || ''}</p>
+                <p>${order.clientInfo?.unitNumber || ''}</p>
+                <p>Kailua Kona, Hawaii 96740</p>
+                <p>${order.user?.email || ''}</p>
+            </div>
+
+            <div class="project-info">
+                <p>Project: Alia</p>
+                <div>
+                    <p>Proposal #: ${order._id}</p>
+                    <p>Proposal Date: ${new Date().toLocaleDateString()}</p>
+                </div>
+            </div>
+
+            <div class="warranty-section">
+                <p>• Original Buyer: The warranty applies to the original buyer only and covers furniture that has been installed under Henderson Design Group supervision.</p>
+                <p>• Original Installation Location: The warranty is valid only for furnishings and products in the space where they were originally installed.</p>
+                <p>• Repair, Touch-Up, or Replacement Only: Henderson Design Group policies are for repair, touch-up, or replacement only. No refunds.</p>
+                <p>• Non-Returnable Custom Upholstery: Custom upholstery is non-returnable.</p>
+                <p>• Non-Transferable Warranty: The warranty is non-transferable.</p>
+
+                <p style="margin-top: 30px">100% Deposit</p>
+                
+                <p style="margin-top: 30px">Accept and Approve:</p>
+                <div class="signature-line"></div>
+            </div>
+        </div>
+
+        <div class="page-footer">
+            <p>Henderson Design Group 74-5518 Kaiwi Street Suite B, Kailua Kona, HI, 96740-3145</p>
+            <p>Phone: (808) 315-8782</p>
+        </div>
+        <div class="page-number">${totalPages}/${totalPages}</div>
+    </div>
+</body>
+</html>`;
+
+    const options = {
+        format: 'Letter',
+        printBackground: true,
+        preferCSSPageSize: true,
+        margin: {
+            top: '0',
+            right: '0',
+            bottom: '0',
+            left: '0'
+        }
+    };
+
+    const file = { content: htmlTemplate };
+    const pdfBuffer = await html_to_pdf.generatePdf(file, options);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=proposal-${order._id}.pdf`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
 
   } catch (error) {
-    console.error('Error generating summary:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ message: 'Error generating summary' });
-    }
+    console.error('Error generating PDF:', error);
+    res.status(500).json({ message: 'Error generating PDF' });
   }
 };
 
 
-const generateProposal = async (req, res) => {
+
+
+const generateOrderSummary = async (req, res) => {
   try {
+    const XLSX = require('xlsx');
     const order = await Order.findById(req.params.id)
-      .populate('selectedProducts')
-      .populate('clientInfo');
+      .populate('user')
+      .lean();
 
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    const doc = new PDFDocument({
-      margin: 50,
-      size: 'A4'
-    });
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new();
     
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=summary-${order._id}.pdf`);
-    
-    doc.pipe(res);
+    // Create headers for the products sheet
+    const headers = [
+      'Product Name',
+      'Product ID',
+      'Location',
+      'Quantity',
+      'Unit Price',
+      'Subtotal',
+      'Sales Tax',
+      'Total Price',
+      'Finish',
+      'Fabric',
+      'Image URL'
+    ];
 
-    // Header
-    doc.fontSize(24).text('HALE', 50, 50);
-    doc.moveDown();
+    // Transform products data
+    const productData = (order.selectedProducts || []).map(product => [
+      product.name,
+      product.product_id,
+      product.spotName,
+      product.quantity || 1,
+      product.unitPrice?.toFixed(2) || '0.00',
+      ((product.unitPrice || 0) * (product.quantity || 1)).toFixed(2),
+      ((product.unitPrice * (product.quantity || 1)) * 0.04712).toFixed(2),
+      product.finalPrice?.toFixed(2) || '0.00',
+      product.selectedOptions?.finish || '',
+      product.selectedOptions?.fabric || '',
+      product.selectedOptions?.image || ''
+    ]);
 
-    // Client Information
-    doc.fontSize(12)
-      .text(`Client: ${order.clientInfo?.name}`)
-      .text(`Unit Number: ${order.clientInfo?.unitNumber}`)
-      .text(`Order ID: ${order._id}`)
-      .text(`Date: ${new Date().toLocaleDateString()}`);
-    doc.moveDown();
+    // Calculate totals
+    const subTotal = order.selectedProducts?.reduce((sum, product) => sum + (product.finalPrice || 0), 0) || 0;
+    const salesTax = subTotal * 0.04712;
+    const total = subTotal + salesTax;
 
-    // Products
-    if (order.designSelections?.selectedProducts?.length > 0) {
-      for (const product of order.designSelections.selectedProducts) {
-        // Room/Location name above table
-        doc.fontSize(12)
-           .text(product.spotName || 'Unknown', { align: 'center' });
+    // Add summary rows
+    const summaryRows = [
+      [], // Empty row for spacing
+      ['Order Summary'],
+      ['Order ID:', order._id],
+      ['Client Name:', order.clientInfo?.name || ''],
+      ['Unit Number:', order.clientInfo?.unitNumber || ''],
+      ['Floor Plan:', order.selectedPlan?.title || ''],
+      ['Status:', order.status],
+      [],
+      ['Subtotal:', subTotal.toFixed(2)],
+      ['Sales Tax:', salesTax.toFixed(2)],
+      ['Total:', total.toFixed(2)]
+    ];
 
-        // Start table
-        const tableTop = doc.y + 5;
-        const rowHeight = 250; // Increased height to fit content
+    // Combine all data
+    const wsData = [
+      headers,
+      ...productData,
+      ...summaryRows
+    ];
 
-        // Header row with product name and quantity
-        doc.rect(50, tableTop, 500, 30).stroke()
-           .text(product.name || '', 60, tableTop + 10)
-           .text(`Quantity: ${product.quantity || 1}`, 400, tableTop + 10);
+    // Create worksheet
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-        // Main content row
-        const contentY = tableTop + 30;
-        
-        // Draw main content container
-        doc.rect(50, contentY, 500, rowHeight).stroke();
-        
-        // Draw vertical line to separate content and pricing
-        doc.moveTo(350, contentY).lineTo(350, contentY + rowHeight).stroke();
+    // Set column widths
+    const colWidths = [
+      { wch: 30 }, // Product Name
+      { wch: 15 }, // Product ID
+      { wch: 20 }, // Location
+      { wch: 10 }, // Quantity
+      { wch: 12 }, // Unit Price
+      { wch: 12 }, // Subtotal
+      { wch: 12 }, // Sales Tax
+      { wch: 12 }, // Total Price
+      { wch: 15 }, // Finish
+      { wch: 15 }, // Fabric
+      { wch: 50 }  // Image URL
+    ];
+    ws['!cols'] = colWidths;
 
-        // Left side: Image and Details
-        if (product.variants?.[0]?.image?.url) {
-          try {
-            const imageUrl = product.variants[0].image.url;
-            const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-            const imageBuffer = Buffer.from(imageResponse.data);
-            doc.image(imageBuffer, 60, contentY + 10, { 
-              width: 150,
-              height: 150
-            });
-          } catch (imageError) {
-            console.error('Error loading image:', imageError);
-          }
-        }
-
-        // Product details below image
-        doc.text(`Leg Finish: ${product.selectedOptions?.finish || 'N/A'}`, 60, contentY + 170)
-           .text(`Size: ${product.size || 'N/A'}`, 60, contentY + 190)
-           .text('Fabric Details:', 60, contentY + 210)
-           .text(`Manufacturer: ${product.selectedOptions?.manufacturer || 'N/A'}`, 60, contentY + 230)
-           .text(`Fabric: ${product.selectedOptions?.fabric || 'Cream'}`, 60, contentY + 250);
-
-        // Right side: Pricing
-        doc.text(`Unit Price: $${product.finalPrice?.toFixed(2) || '0.00'}`, 360, contentY + 10)
-           .text(`Sales Tax: $${(product.finalPrice * 0.04712).toFixed(2) || '0.00'}`, 360, contentY + 30)
-           .text(`Total Price: $${product.finalPrice?.toFixed(2) || '0.00'}`, 360, contentY + 50);
-
-        // Add spacing before next product
-        doc.moveDown(15);
-      }
-
-      // FDI Section
-      if (order.fdi) {
-        // Similar structure for FDI section
-        // ...
-      }
+    // Style the headers
+    const headerRange = XLSX.utils.decode_range(ws['!ref']);
+    for (let C = headerRange.s.c; C <= headerRange.e.c; ++C) {
+      const address = XLSX.utils.encode_cell({ r: 0, c: C });
+      if (!ws[address]) continue;
+      ws[address].s = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: "CCCCCC" } }
+      };
     }
 
-    // Footer
-    const footerY = doc.page.height - 50;
-    doc.fontSize(10)
-      .text('Generated by Hale Admin System', { align: 'center' })
-      .text(new Date().toLocaleString(), { align: 'center' });
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'Order Summary');
 
-    doc.end();
+    // Generate buffer
+    const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    // Set headers for Excel file download
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=order-summary-${order._id}.xlsx`);
+    res.setHeader('Content-Length', excelBuffer.length);
+
+    // Send the file
+    res.send(excelBuffer);
 
   } catch (error) {
-    console.error('Error generating summary:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ message: 'Error generating summary' });
-    }
+    console.error('Error generating Excel summary:', error);
+    res.status(500).json({ message: 'Error generating Excel summary' });
   }
 };
 

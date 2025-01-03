@@ -10,7 +10,8 @@ const {
   updateProduct,
   deleteProduct,
   getProductsBasicInfo,
-  getProductVariants
+  getProductVariants,
+  bulkDeleteProducts
 } = require('../controllers/productController');
 
 // Protected routes
@@ -28,5 +29,7 @@ router.route('/:id')
   .get(getProduct)
   .put(handleUpload, updateProduct)
   .delete(deleteProduct);
+
+router.post('/bulk-delete', protect, bulkDeleteProducts);
 
 module.exports = router;

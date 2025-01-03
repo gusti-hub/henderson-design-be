@@ -259,6 +259,46 @@ const getProductVariants = async (req, res) => {
   }
 };
 
+const bulkDeleteProducts = async (req, res) => {
+  try {
+    const { product_ids } = req.body;
+    
+    if (!Array.isArray(product_ids) || product_ids.length === 0) {
+      return res.status(400).json({ message: 'Product IDs array is required' });
+    }
+
+    // Find all products first
+    const products = await Product.find({ product_id: { $in: product_ids } });
+    
+    // Delete all variant images from S3
+    await Promise.all(products.flatMap(product => 
+      product.variants.map(async (variant) => {
+        if (variant.image?.key) {
+          try {
+            await s3Client.send(new DeleteObjectCommand({
+              Bucket: process.env.SPACES_BUCKET,
+              Key: variant.image.key
+            }));
+          } catch (error) {
+            console.error('Error deleting image:', error);
+          }
+        }
+      })
+    ));
+
+    // Delete the products
+    const result = await Product.deleteMany({ product_id: { $in: product_ids } });
+
+    res.json({ 
+      message: 'Products deleted successfully',
+      deletedCount: result.deletedCount 
+    });
+  } catch (error) {
+    console.error('Error in bulkDeleteProducts:', error);
+    res.status(500).json({ message: 'Error deleting products' });
+  }
+};
+
 module.exports = {
   getProducts,
   getProduct,
@@ -266,5 +306,6 @@ module.exports = {
   updateProduct,
   deleteProduct,
   getProductsBasicInfo,
-  getProductVariants
+  getProductVariants,
+  bulkDeleteProducts
 };

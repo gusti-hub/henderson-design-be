@@ -23,19 +23,20 @@ const orderSchema = new mongoose.Schema({
     unitNumber: String,
     floorPlan: String
   },
-  designSelections: mongoose.Schema.Types.Mixed,
   selectedProducts: [{
-    id: String,
+    _id: String,
     name: String,
+    product_id: String,
     spotId: String,
     spotName: String,
     finalPrice: Number,
+    quantity: Number,
+    unitPrice: Number,   
     selectedOptions: {
       finish: String,
-      fabric: String
-    },
-    coordinates: Object,
-    variants: Array
+      fabric: String,
+      image: String // Store selected variant image URL here
+    }
   }],
   occupiedSpots: {
     type: Map,
@@ -47,8 +48,8 @@ const orderSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['in_progress', 'completed', 'cancelled', 'confirmed'],
-    default: 'in_progress'
+    enum: ['ongoing', 'completed', 'cancelled', 'confirmed'],
+    default: 'ongoing'
   },
   paymentDetails: {
     method: {

@@ -25,6 +25,7 @@ app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/clients', require('./routes/clientRoutes'));
 app.use('/api/products', require('./routes/productRoutes'));
 app.use('/api/location-mappings', require('./routes/locationMappingsRoutes'));
+app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
