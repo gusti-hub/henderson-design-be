@@ -400,8 +400,7 @@ const generatePurchaseOrder = async (req, res) => {
     });
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=proposal-${order._id}.pdf`);
-    res.setHeader('Content-Length', pdfBuffer.length);
+    res.setHeader('Content-Disposition', `attachment; filename=purchase-order-${orderNumber}.pdf`);
     res.send(pdfBuffer);
 
   } catch (error) {
