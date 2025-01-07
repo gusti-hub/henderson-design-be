@@ -40,6 +40,7 @@ const createOrder = async (req, res) => {
       selectedProducts: req.body.selectedProducts,
       occupiedSpots: req.body.occupiedSpots,
       step: req.body.step,
+      package: req.body.package,
       status: req.body.status
     };
 
@@ -81,6 +82,7 @@ const updateOrder = async (req, res) => {
 
     // If floor plan changed, reset products
     if (existingOrder.selectedPlan?.id !== req.body.selectedPlan?.id) {
+      cleanedData.package = req.body.package;
       cleanedData.selectedProducts = [];
       cleanedData.occupiedSpots = {};
     }

@@ -2,6 +2,11 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
+  clientCode: {
+    type: String,
+    unique: true, // Make the name (client code) field unique
+    trim: true
+  },
   name: {
     type: String,
     required: [true, 'Please add a name']

@@ -12,10 +12,11 @@ const getClients = async (req, res) => {
     const searchQuery = {
       role: 'user',
       $or: [
+        { clientCode: { $regex: search, $options: 'i' } },
         { name: { $regex: search, $options: 'i' } },
         { email: { $regex: search, $options: 'i' } },
         { unitNumber: { $regex: search, $options: 'i' } },
-        { floorPlan: { $regex: search, $options: 'i' } }  // Add search by floor plan
+        { floorPlan: { $regex: search, $options: 'i' } }
       ]
     };
 
@@ -54,21 +55,28 @@ const getClient = async (req, res) => {
 // Create client
 const createClient = async (req, res) => {
   try {
-    const { name, email, password, unitNumber, floorPlan } = req.body;
+    const { clientCode, name, email, password, unitNumber, floorPlan } = req.body;
 
-    // Validate required fields
-    if (!name || !email || !password || !unitNumber || !floorPlan) {
+    if (!clientCode || !name || !email || !password || !unitNumber || !floorPlan) {
       return res.status(400).json({ 
-        message: 'Please provide all required fields (name, email, password, unit number, and floor plan)' 
+        message: 'Please provide all required fields (client code, name, email, password, unit number, and floor plan)' 
       });
     }
 
-    const userExists = await User.findOne({ email });
-    if (userExists) {
+    // Check if client code already exists
+    const clientCodeExists = await User.findOne({ clientCode });
+    if (clientCodeExists) {
+      return res.status(400).json({ message: 'Client code already exists' });
+    }
+
+    // Check if email already exists
+    const emailExists = await User.findOne({ email });
+    if (emailExists) {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
     const client = await User.create({
+      clientCode,
       name,
       email,
       password,
@@ -79,6 +87,7 @@ const createClient = async (req, res) => {
 
     res.status(201).json({
       _id: client._id,
+      clientCode: client.clientCode,
       name: client.name,
       email: client.email,
       unitNumber: client.unitNumber,
@@ -87,6 +96,9 @@ const createClient = async (req, res) => {
     });
   } catch (error) {
     console.error('Error in createClient:', error);
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'Client code or email already exists' });
+    }
     res.status(500).json({ message: 'Error creating client' });
   }
 };
@@ -94,18 +106,26 @@ const createClient = async (req, res) => {
 // Update client
 const updateClient = async (req, res) => {
   try {
-    const { name, email, password, unitNumber, floorPlan } = req.body;
+    const { clientCode, name, email, password, unitNumber, floorPlan } = req.body;
     const client = await User.findById(req.params.id);
 
     if (!client) {
       return res.status(404).json({ message: 'Client not found' });
     }
 
-    // Check if at least one field is provided for update
-    if (!name && !email && !password && !unitNumber && !floorPlan) {
+    if (!clientCode && !name && !email && !password && !unitNumber && !floorPlan) {
       return res.status(400).json({ message: 'Please provide at least one field to update' });
     }
 
+    // Check if new client code already exists
+    if (clientCode && clientCode !== client.clientCode) {
+      const clientCodeExists = await User.findOne({ clientCode });
+      if (clientCodeExists) {
+        return res.status(400).json({ message: 'Client code already exists' });
+      }
+    }
+
+    // Check if new email already exists
     if (email && email !== client.email) {
       const emailExists = await User.findOne({ email });
       if (emailExists) {
@@ -113,29 +133,29 @@ const updateClient = async (req, res) => {
       }
     }
 
-    // Create update object
     const updateData = {
+      clientCode: clientCode || client.clientCode,
       name: name || client.name,
       email: email || client.email,
       unitNumber: unitNumber || client.unitNumber,
       floorPlan: floorPlan || client.floorPlan
     };
 
-    // Handle password update if provided
     if (password) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
       updateData.password = hashedPassword;
     }
 
-    // Update client with new data
-    await User.findByIdAndUpdate(client._id, updateData);
-
-    // Fetch updated user (without password)
-    const updatedClient = await User.findById(client._id).select('-password');
+    const updatedClient = await User.findByIdAndUpdate(
+      client._id,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password');
 
     res.json({
       _id: updatedClient._id,
+      clientCode: updatedClient.clientCode,
       name: updatedClient.name,
       email: updatedClient.email,
       unitNumber: updatedClient.unitNumber,
@@ -144,6 +164,9 @@ const updateClient = async (req, res) => {
     });
   } catch (error) {
     console.error('Error in updateClient:', error);
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'Client code or email already exists' });
+    }
     res.status(500).json({ message: 'Error updating client' });
   }
 };

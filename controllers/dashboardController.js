@@ -157,114 +157,258 @@ const getDashboardStats = async (req, res) => {
 };
 
 const generatePurchaseOrder = async (req, res) => {
-    try {
-      const { orderIds } = req.body;
+  try {
+    const { orderIds } = req.body;
+    const orders = await Order.find({ _id: { $in: orderIds } }).populate('user');
+    const currentDate = new Date().toLocaleDateString();
+    const orderNumber = `HDG-${Date.now().toString().slice(-6)}`;
+
+    // Simplified HTML generation - avoid complex calculations in template
+    const headerTemplate = `
+      <div class="company-header">
+        74-5518 Kaiwi Street Suite B<br>
+        Kailua Kona, HI 96740-3145<br>
+        (808) 315-8782<br>
+        Fax:
+      </div>
+      <div class="company-logo">
+        <div class="company-name">HENDERSON</div>
+        <div class="company-tagline">DESIGN GROUP</div>
+      </div>`;
+
+    // Pre-process products to simplify template generation
+    const allProducts = orders.flatMap(order => 
+      order.selectedProducts.map(product => ({
+        image: product.selectedOptions?.image,
+        name: product.name,
+        quantity: product.quantity || 1,
+        fabric: product.selectedOptions?.fabric || '',
+        finish: product.selectedOptions?.finish || '',
+        unitPrice: product.unitPrice?.toFixed(2) || '0.00',
+        finalPrice: product.finalPrice?.toFixed(2) || '0.00'
+      }))
+    );
+
+    // Calculate totals beforehand
+    const totalAmount = orders.reduce((sum, order) => 
+      sum + order.selectedProducts.reduce((sum, product) => sum + (product.finalPrice || 0), 0), 0);
+
+    let htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <style>
+            @page { size: Letter; margin: 0.5in; }
+            body { 
+              font-family: Arial, sans-serif;
+              font-size: 11pt;
+              line-height: 1.3;
+              margin: 0;
+              padding: 0;
+            }
+            .page { page-break-after: always; }
+            .page:last-child { page-break-after: auto; }
+            .company-header { margin-bottom: 20px; }
+            .company-logo {
+              position: absolute;
+              top: 0;
+              right: 0;
+              text-align: right;
+            }
+            .company-name {
+              color: rgb(0, 86, 112);
+              font-size: 26pt;
+              margin: 0;
+            }
+            .company-tagline {
+              color: rgb(0, 86, 112);
+              font-size: 12pt;
+              margin: 0;
+            }
+            .order-title {
+              font-weight: bold;
+              font-size: 12pt;
+              margin: 20px 0;
+              border-bottom: 1px solid black;
+              padding-bottom: 5px;
+            }
+            .main-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              border-bottom: 1px solid black;
+              margin-bottom: 10px;
+              position: relative;
+            }
+            .main-grid::after {
+              content: '';
+              position: absolute;
+              top: 0;
+              bottom: 0;
+              left: 50%;
+              width: 1px;
+              background-color: black;
+            }
+            .ship-to, .comments {
+              border-bottom: 1px solid black;
+              margin-bottom: 10px;
+              padding-bottom: 10px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 20px;
+            }
+            th, td {
+              border: 1px solid black;
+              padding: 8px;
+              height: 150px;
+            }
+            th {
+              background-color: #808080;
+              color: white;
+              height: auto;
+            }
+            .product-container {
+              display: grid;
+              grid-template-columns: 100px 1fr;
+              gap: 10px;
+              height: 134px;
+            }
+            .product-image {
+              width: 100px;
+              height: 134px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+            }
+            .product-image img {
+              max-width: 100px;
+              max-height: 134px;
+              object-fit: contain;
+            }
+            .cost-cell { text-align: right; }
+          </style>
+        </head>
+        <body>`;
+
+    // Generate pages with proper product distribution
+    let currentIndex = 0;
+    let pageCount = 0;
+    while (currentIndex < allProducts.length) {
+      const productsPerPage = pageCount === 0 ? 2 : // First page
+                             currentIndex + 5 <= allProducts.length ? 5 : // Middle pages
+                             Math.min(4, allProducts.length - currentIndex); // Last page
+
+      const pageProducts = allProducts.slice(currentIndex, currentIndex + productsPerPage);
       
-      if (!orderIds || orderIds.length === 0) {
-        return res.status(400).json({ message: 'No orders selected' });
-      }
-  
-      // Fetch all selected orders
-      const orders = await Order.find({ _id: { $in: orderIds } });
-  
-      // Group products across all orders
-      const groupedProducts = orders.reduce((acc, order) => {
-        order.selectedProducts.forEach(product => {
-          const key = `${product.product_id}-${product.selectedOptions.finish}-${product.selectedOptions.fabric}`;
-          if (!acc[key]) {
-            acc[key] = {
-              productId: product.product_id,
-              name: product.name,
-              selectedOptions: product.selectedOptions,
-              quantity: 0,
-              unitPrice: product.unitPrice,
-              totalPrice: 0,
-              orders: new Set()
-            };
-          }
-          acc[key].quantity += product.quantity;
-          acc[key].totalPrice += product.finalPrice;
-          acc[key].orders.add(order._id.toString());
-        });
-        return acc;
-      }, {});
-  
-      // Generate HTML for PDF
-      const htmlContent = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; }
-              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-              th { background-color: #f5f5f5; }
-              .header { text-align: center; margin-bottom: 30px; }
-              .summary { margin-top: 30px; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>HENDERSON DESIGN GROUP</h1>
-              <h2>Combined Purchase Order</h2>
-              <p>Date: ${new Date().toLocaleDateString()}</p>
+      htmlContent += `
+        <div class="page">
+          ${pageCount === 0 ? `
+            ${headerTemplate}
+            <div class="order-title">Purchase Order</div>
+            <div class="main-grid">
+              <div class="left-section">
+                <div><b>To:</b><br>
+                  ${orders[0]?.selectedPlan?.clientInfo?.name || ''}<br>
+                  ${orders[0]?.selectedPlan?.clientInfo?.unitNumber || ''}</div>
+                <div><b>Attention:</b></div>
+                <div><b>Phone:</b></div>
+                <div><b>Fax:</b></div>
+              </div>
+              <div class="right-section">
+                <div><b>Order #:</b> ${orderNumber}</div>
+                <div><b>Order Date:</b> ${currentDate}</div>
+                <div><b>Printed Date:</b> ${currentDate}</div>
+                <div><b>Account Number:</b> ${orders[0]?._id?.toString().slice(-5) || ''}</div>
+                <div><b>Rep Name:</b></div>
+                <div><b>Rep Phone:</b></div>
+                <div><b>Rep Email:</b></div>
+                <div><b>Terms:</b></div>
+                <div><b>Client:</b></div>
+                <div><b>Estimate #:</b></div>
+              </div>
             </div>
-  
-            <table>
+            <div class="ship-to">
+              <div><b>Ship To:</b></div>
+              <div><b>Attention:</b></div>
+            </div>
+            <div class="comments">
+              <div><b>Comments:</b></div>
+              <div><b>Notes:</b></div>
+            </div>
+          ` : ''}
+          <table>
+            ${pageCount === 0 ? `
               <thead>
                 <tr>
-                  <th>Product ID</th>
-                  <th>Name</th>
-                  <th>Finish</th>
-                  <th>Fabric</th>
-                  <th>Quantity</th>
-                  <th>Unit Price</th>
-                  <th>Total Price</th>
+                  <th style="width: 60%">Description</th>
+                  <th style="width: 20%">Unit Cost</th>
+                  <th style="width: 20%">Total Cost</th>
                 </tr>
-              </thead>
-              <tbody>
-                ${Object.values(groupedProducts).map(product => `
-                  <tr>
-                    <td>${product.productId}</td>
-                    <td>${product.name}</td>
-                    <td>${product.selectedOptions.finish}</td>
-                    <td>${product.selectedOptions.fabric}</td>
-                    <td>${product.quantity}</td>
-                    <td>$${product.unitPrice.toFixed(2)}</td>
-                    <td>$${product.totalPrice.toFixed(2)}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-  
-            <div class="summary">
-              <p>Total Orders: ${orderIds.length}</p>
-              <p>Total Amount: $${Object.values(groupedProducts)
-                .reduce((sum, p) => sum + p.totalPrice, 0)
-                .toFixed(2)}</p>
-              <p>Order IDs: ${orderIds.join(', ')}</p>
-            </div>
-          </body>
-        </html>
-      `;
-  
-      const options = {
-        format: 'Letter',
-        margin: { top: '20mm', right: '20mm', bottom: '20mm', left: '20mm' }
-      };
-  
-      const file = { content: htmlContent };
-      const pdfBuffer = await html_to_pdf.generatePdf(file, options);
-  
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename=purchase-order-${Date.now()}.pdf`);
-      res.send(pdfBuffer);
-  
-    } catch (error) {
-      console.error('Error generating purchase order:', error);
-      res.status(500).json({ message: 'Error generating purchase order' });
+              </thead>` : ''}
+            <tbody>
+              ${pageProducts.map(product => `
+                <tr>
+                  <td>
+                    <div class="product-container">
+                      <div class="product-image">
+                        ${product.image ? 
+                          `<img src="${product.image}" alt="${product.name}">` : 
+                          '<div style="width:100px;height:100px;background:#f0f0f0"></div>'}
+                      </div>
+                      <div class="product-specs">
+                        <div>Quantity: ${product.quantity}</div>
+                        <div>Fabric: ${product.fabric}</div>
+                        <div>Finish: ${product.finish}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td class="cost-cell">$${product.unitPrice}</td>
+                  <td class="cost-cell">$${product.finalPrice}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          ${pageCount === Math.ceil((allProducts.length - 2) / 5) ? `
+            <div style="margin-top: 20px; text-align: right;">
+              <div><b>Sub Total:</b> $${totalAmount.toFixed(2)}</div>
+              <div><b>Shipping:</b> $0.00</div>
+              <div><b>Others:</b> $0.00</div>
+              <div><b>Total:</b> $${totalAmount.toFixed(2)}</div>
+            </div>` : ''}
+        </div>`;
+
+      currentIndex += productsPerPage;
+      pageCount++;
     }
-  };
+
+    htmlContent += '</body></html>';
+
+    const options = {
+      format: 'Letter',
+      timeout: 60000, // Increased timeout to 60 seconds
+      margin: {
+        top: '0.5in',
+        right: '0.5in',
+        bottom: '0.5in',
+        left: '0.5in'
+      },
+      printBackground: true
+    };
+
+    const file = { content: htmlContent };
+    const pdfBuffer = await html_to_pdf.generatePdf(file, options);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=purchase-order-${orderNumber}.pdf`);
+    res.send(pdfBuffer);
+
+  } catch (error) {
+    console.error('Error generating purchase order:', error);
+    res.status(500).json({ message: 'Error generating purchase order' });
+  }
+};
 
 module.exports = {
   getDashboardStats,
