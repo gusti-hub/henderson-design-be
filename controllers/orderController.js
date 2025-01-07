@@ -655,9 +655,6 @@ const generateProposal = async (req, res) => {
 </body>
 </html>`;
 
-
-    const file = { content: htmlTemplate };
-    //const pdfBuffer = await html_to_pdf.generatePdf(file, options);
     const pdfBuffer = await generatePDF(htmlTemplate, {
       format: 'Letter',
       printBackground: true,

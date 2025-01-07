@@ -1,6 +1,8 @@
 // controllers/dashboardController.js
 const Order = require('../models/Order');
 const html_to_pdf = require('html-pdf-node');
+const { generatePDF } = require('../config/pdfConfig');
+
 
 const getDashboardStats = async (req, res) => {
     try {
@@ -397,11 +399,21 @@ const generatePurchaseOrder = async (req, res) => {
       printBackground: true
     };
 
-    const file = { content: htmlContent };
-    const pdfBuffer = await html_to_pdf.generatePdf(file, options);
+    const pdfBuffer = await generatePDF(htmlTemplate, {
+      format: 'Letter',
+      printBackground: true,
+      preferCSSPageSize: true,
+      margin: {
+        top: '0',
+        right: '0',
+        bottom: '0',
+        left: '0'
+      }
+    });
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=purchase-order-${orderNumber}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename=proposal-${order._id}.pdf`);
+    res.setHeader('Content-Length', pdfBuffer.length);
     res.send(pdfBuffer);
 
   } catch (error) {
