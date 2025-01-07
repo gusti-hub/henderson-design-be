@@ -387,19 +387,7 @@ const generatePurchaseOrder = async (req, res) => {
 
     htmlContent += '</body></html>';
 
-    const options = {
-      format: 'Letter',
-      timeout: 60000, // Increased timeout to 60 seconds
-      margin: {
-        top: '0.5in',
-        right: '0.5in',
-        bottom: '0.5in',
-        left: '0.5in'
-      },
-      printBackground: true
-    };
-
-    const pdfBuffer = await generatePDF(htmlTemplate, {
+    const pdfBuffer = await generatePDF(htmlContent, {
       format: 'Letter',
       printBackground: true,
       preferCSSPageSize: true,
