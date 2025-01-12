@@ -19,8 +19,7 @@ const createOrder = async (req, res) => {
   try {
     // Check if user already has an order
     const existingOrder = await Order.findOne({
-      user: req.user.id,
-      status: 'ongoing'
+      user: req.user.id
     });
 
     if (existingOrder) {
@@ -303,14 +302,13 @@ const generateOrderPDF = async (req, res) => {
 
 const getCurrentUserOrder = async (req, res) => {
   try {
-    // Only get the most recent in-progress order
+    // Look for any order, not just 'ongoing' ones
     const order = await Order.findOne({
-      user: req.user.id,
-      status: 'ongoing'
-    }).sort({ createdAt: -1 });
+      user: req.user.id
+    }).sort({ createdAt: -1 }); // Get most recent order
 
     if (!order) {
-      return res.status(404).json({ message: 'No active order found' });
+      return res.status(404).json({ message: 'No order found' });
     }
 
     res.json(order);

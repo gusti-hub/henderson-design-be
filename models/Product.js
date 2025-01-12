@@ -8,7 +8,6 @@ const variantSchema = new mongoose.Schema({
   },
   fabric: {
     type: String,
-    enum: ['Cream', 'Tan', 'Beige', 'Blue', ''],
     default: ''
   },
   price: {
@@ -17,7 +16,7 @@ const variantSchema = new mongoose.Schema({
   },
   image: {
     url: String,
-    key: String // Store the S3 object key
+    key: String
   }
 });
 
