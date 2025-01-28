@@ -149,7 +149,7 @@ const getLocationProducts = async (req, res) => {
     const { floorPlanId, locationId } = req.query;
     
     const mapping = await LocationMapping.findOne({
-      //floorPlanId,
+      floorPlanId,
       locationId
     }).populate({
       path: 'allowedProductIds',
