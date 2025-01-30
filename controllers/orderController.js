@@ -1,4 +1,5 @@
 const Order = require('../models/Order');
+const User = require('../models/User');
 const { s3Client } = require('../config/s3');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const axios = require('axios');
@@ -14,6 +15,7 @@ const {
 const puppeteer = require('puppeteer');
 const html_to_pdf = require('html-pdf-node');
 const { generatePDF } = require('../config/pdfConfig');
+const nodemailer = require('nodemailer');
 
 const createOrder = async (req, res) => {
   try {
@@ -92,6 +94,23 @@ const updateOrder = async (req, res) => {
       cleanedData,
       { new: true }
     );
+
+    // Check if status changed to confirmed
+    if (cleanedData.status === 'ongoing') {
+      try {
+
+        const user = await User.findById(existingOrder.user);
+        if (!user || !user.email) {
+          console.error('User or user email not found');
+          return res.status(400).json({ message: 'User email not found' });
+        }
+
+        await sendOrderConfirmationEmail(user.email, order);
+      } catch (emailError) {
+        console.error('Failed to send confirmation email:', emailError);
+        // Continue with response even if email fails
+      }
+    }
 
     res.json(order);
   } catch (error) {
@@ -800,6 +819,42 @@ const generateOrderSummary = async (req, res) => {
   }
 };
 
+const transporter = nodemailer.createTransport({
+  // Configure your email service
+  service: 'gmail', // or your preferred service
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD
+  }
+});
+
+const sendOrderConfirmationEmail = async (userEmail, orderDetails) => {
+  try {
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: userEmail,
+      subject: 'Order Confirmation',
+      html: `
+        <h1>Your Order Has Been Confirmed</h1>
+        <p>Order Details:</p>
+        <ul>
+          <li>Order ID: ${orderDetails._id}</li>
+          <li>Package: ${orderDetails.Package}</li>
+          <li>Client Name: ${orderDetails.clientInfo.name}</li>
+          <li>Unit Number: ${orderDetails.clientInfo.unitNumber}</li>
+        </ul>
+        <p>Thank you for your order!</p>
+        <p>The Henderson team will contact you shortly to review your order.</p>
+      `
+    };
+
+    await transporter.sendMail(mailOptions);
+    console.log('Confirmation email sent successfully');
+  } catch (error) {
+    console.error('Error sending confirmation email:', error);
+    throw error;
+  }
+};
 
 module.exports = {
   createOrder,
