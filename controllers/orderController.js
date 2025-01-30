@@ -96,7 +96,7 @@ const updateOrder = async (req, res) => {
     );
 
     // Check if status changed to confirmed
-    if (cleanedData.status === 'ongoing') {
+    if (cleanedData.status === 'confirmed') {
       try {
 
         const user = await User.findById(existingOrder.user);
