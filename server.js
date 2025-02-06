@@ -3,6 +3,8 @@ const path = require('path');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const connectDB = require('./config/db');
+const profileRoutes = require('./routes/profileRoutes');
+const trackActivity = require('./middleware/activityTracker');
 
 // Load env vars
 dotenv.config();
@@ -18,6 +20,7 @@ app.use(express.json());
 
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/activity', require('./routes/activityRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -26,6 +29,7 @@ app.use('/api/clients', require('./routes/clientRoutes'));
 app.use('/api/products', require('./routes/productRoutes'));
 app.use('/api/location-mappings', require('./routes/locationMappingsRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
+app.use('/api/profile', profileRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

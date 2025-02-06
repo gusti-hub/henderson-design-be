@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
+const ActivityLog = require('../models/ActivityLog');
 
 // Generate JWT Token
 const generateToken = (id) => {
@@ -51,24 +52,32 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
-
-    // Find user and include password field
     const user = await User.findOne({ email }).select('+password');
 
-    if (!user) {
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Compare passwords using bcrypt
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    // Generate token
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-      expiresIn: '1d'
+    // Log activity
+    await ActivityLog.create({
+      userId: user._id,
+      action: 'login',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      timestamp: new Date()
     });
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+
+    // Track active session
+    if (user.role === 'user') {
+      await ActivityLog.create({
+        userId: user._id,
+        action: 'login',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+    }
 
     res.json({
       _id: user._id,
