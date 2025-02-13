@@ -90,7 +90,7 @@ const updateOrder = async (req, res) => {
     }
 
     const order = await Order.findOneAndUpdate(
-      { _id: req.params.id, user: req.user.id },
+      { _id: req.params.id },
       cleanedData,
       { new: true }
     );
@@ -356,9 +356,11 @@ const generateProposal = async (req, res) => {
       productPages.push(products.slice(i, i + 3));
     }
 
-    const subTotal = products.reduce((sum, product) => sum + (product.finalPrice || 0), 0);
-    const salesTax = subTotal * 0.04712;
+    const totalBudget = getBudgetForPlan(order.selectedPlan.id);
+    const subTotal = totalBudget;
+    const salesTax = subTotal * 0;
     const total = subTotal + salesTax;
+    const deposit = total * 0.5;
 
     const totalPages = productPages.length + 2;
 
@@ -561,10 +563,10 @@ const generateProposal = async (req, res) => {
                                   </div>
                                   <div class="pricing">
                                       <p>Quantity: ${product.quantity || 1}</p>
-                                      <p>Unit Price: $${product.unitPrice?.toFixed(2) || '0.00'}</p>
-                                      <p>Subtotal: $${((product.unitPrice || 0) * (product.quantity || 1)).toFixed(2)}</p>
-                                      <p>Sales Tax: $${((product.unitPrice * (product.quantity || 1)) * 0.04712).toFixed(2) || '0.00'}</p>
-                                      <p style="font-weight:bold">Total Price: $${product.finalPrice?.toFixed(2) || '0.00'}</p>
+                                      <p>Unit Price: $${(1).toFixed(2) || '0.00'}</p>
+                                      <p>Subtotal: $${(((1) || 0) * ((1) || 1)).toFixed(2)}</p>
+                                      <p>Sales Tax: $${(((1) * ((1) || 1)) * 1).toFixed(2) || '0.00'}</p>
+                                      <p style="font-weight:bold">Total Price: $${(1).toFixed(2) || '0.00'}</p>
                                   </div>
                               </div>
                           </div>
@@ -585,9 +587,9 @@ const generateProposal = async (req, res) => {
         <div class="content-wrapper">
             <div class="totals">
                 <p>Sub Total: $${subTotal.toFixed(2)}</p>
-                <p>Sales Tax: $${salesTax.toFixed(2)}</p>
+                <p>Sales Tax: $${(1).toFixed(2)}</p>
                 <p>Total: $${total.toFixed(2)}</p>
-                <p>Required Deposit: $${total.toFixed(2)}</p>
+                <p>Required Deposit: $${deposit.toFixed(2)}</p>
             </div>
 
             <div class="warranty-title">Proposal Terms: Henderson Design Group Warranty Terms and Conditions</div>
@@ -695,7 +697,25 @@ const generateProposal = async (req, res) => {
   }
 };
 
+const getBudgetForPlan = (planId) => {
+  const budgets = {
+    'investor-a': 80835,  // 2 Bedroom
+    'investor-b': 115000, // 2 Bedroom + 2.5 Bath
+    'investor-c': 115000, // 2 Bedroom + Den
+    'investor-d': 65000,  // 1 Bedroom
+    'investor-e': 70000,  // 2 Bedroom
+    'investor-f': 120000, // 3 Bedroom + Den
+    'custom-a': 133414,  // 2 Bedroom
+    'custom-b': 105000,  // 2 Bedroom + 2.5 Bath
+    'custom-c': 147000,  // 2 Bedroom + Den
+    'custom-d': 85000,   // 1 Bedroom
+    'custom-e': 90000,   // 2 Bedroom
+    'custom-f': 140000,  // 3 Bedroom + Den
+    default: 80000
+  };
 
+  return budgets[planId] || budgets.default;
+};
 
 
 const generateOrderSummary = async (req, res) => {

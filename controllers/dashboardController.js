@@ -129,7 +129,7 @@ const getDashboardStats = async (req, res) => {
           pendingPayments: pendingPayments,
           totalRevenue: revenue[0]?.total || 0
         },
-        recentOrders: recentOrders.map(order => ({
+        recentOrders: recentOrders.filter(order => order.status === 'confirmed').map(order => ({
           _id: order._id,
           clientName: order.selectedPlan?.clientInfo?.name || order.clientInfo?.name || 'N/A',
           status: order.status,
