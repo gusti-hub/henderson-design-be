@@ -16,6 +16,7 @@ const {
 const orderController = require('../controllers/orderController');
 const multer = require('multer');
 const { handlePaymentProofUpload } = require('../config/s3');
+const proposalVersionController = require('../controllers/proposalVersionController');
 
 router.use(protect);
 
@@ -49,7 +50,13 @@ router.route('/:id/payment')
   .put(updatePaymentStatus);
 
 router.get('/:id/pdf', generateOrderPDF);
-router.put('/:id/payment-status', protect, orderController.updatePaymentStatus)
+router.put('/:id/payment-status', protect, orderController.updatePaymentStatus);
+
+// Keep/add these routes
+router.post('/:id/proposal', protect, generateProposal);
+router.get('/:id/generate-version-pdf/:version', protect, proposalVersionController.generateVersionPdf);
+router.get('/:orderId/proposal-versions', protect, proposalVersionController.getProposalVersions);
+//router.put('/:orderId/proposal-versions/:version/status', protect, proposalVersionController.updateProposalVersionStatus);
 
 
 module.exports = router;

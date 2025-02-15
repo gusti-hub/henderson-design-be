@@ -1,5 +1,6 @@
 const Order = require('../models/Order');
 const User = require('../models/User');
+const ProposalVersion = require('../models/ProposalVersion');
 const { s3Client } = require('../config/s3');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const axios = require('axios');
@@ -340,6 +341,7 @@ const getCurrentUserOrder = async (req, res) => {
 
 const generateProposal = async (req, res) => {
   try {
+    const { notes } = req.body;
     const order = await Order.findById(req.params.id)
       .populate('user')
       .lean();
@@ -347,6 +349,26 @@ const generateProposal = async (req, res) => {
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
+
+    // Get next version number
+    const latestVersion = await ProposalVersion.findOne(
+      { orderId: order._id },
+      { version: 1 },
+      { sort: { version: -1 } }
+    );
+    const nextVersion = (latestVersion?.version || 0) + 1;
+
+    await ProposalVersion.create({
+      orderId: order._id,
+      version: nextVersion,
+      selectedProducts: order.selectedProducts,
+      selectedPlan: order.selectedPlan,
+      clientInfo: order.clientInfo,
+      occupiedSpots: order.occupiedSpots,
+      notes: notes || 'Initial proposal version',
+      status: 'draft',
+      createdBy: req.user.id
+    });
 
     const products = order.selectedProducts || [];
     
@@ -683,11 +705,14 @@ const generateProposal = async (req, res) => {
         right: '0',
         bottom: '0',
         left: '0'
-      }
+      },
+      timeout: 120000
     });
 
+    productPages.length = 0;
+
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=proposal-${order._id}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename=proposal-${order._id}-v${nextVersion}.pdf`);
     res.setHeader('Content-Length', pdfBuffer.length);
     res.send(pdfBuffer);
 
