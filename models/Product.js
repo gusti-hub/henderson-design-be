@@ -10,6 +10,14 @@ const variantSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  size: {
+    type: String,
+    default: ''
+  },
+  insetPanel: {
+    type: String,
+    default: ''
+  },
   price: {
     type: Number,
     required: true

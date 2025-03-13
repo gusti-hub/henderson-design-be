@@ -78,6 +78,8 @@ const updateOrder = async (req, res) => {
         selectedOptions: {
           finish: product.selectedOptions?.finish || '',
           fabric: product.selectedOptions?.fabric || '',
+          size: product.selectedOptions?.size || '',
+          insetPanel: product.selectedOptions?.insetPanel || '',
           image: product.selectedOptions?.image || ''
         }
       }));
@@ -99,7 +101,6 @@ const updateOrder = async (req, res) => {
     // Check if status changed to confirmed
     if (cleanedData.status === 'confirmed') {
       try {
-
         const user = await User.findById(existingOrder.user);
         if (!user || !user.email) {
           console.error('User or user email not found');
@@ -582,6 +583,8 @@ const generateProposal = async (req, res) => {
                                       <p>Fabric Details</p>
                                       <p>Finish: ${product.selectedOptions?.finish || ''}</p>
                                       <p>Fabric: ${product.selectedOptions?.fabric || ''}</p>
+                                      ${product.selectedOptions?.size ? `<p>Size: ${product.selectedOptions.size}</p>` : ''}
+                                      ${product.selectedOptions?.insetPanel ? `<p>Inset Panel: ${product.selectedOptions.insetPanel}</p>` : ''}
                                   </div>
                                   <div class="pricing">
                                       <p>Quantity: ${product.quantity || 1}</p>
@@ -769,6 +772,8 @@ const generateOrderSummary = async (req, res) => {
       'Total Price',
       'Finish',
       'Fabric',
+      'Size',
+      'Inset Panel',
       'Image URL'
     ];
 
@@ -784,6 +789,8 @@ const generateOrderSummary = async (req, res) => {
       product.finalPrice?.toFixed(2) || '0.00',
       product.selectedOptions?.finish || '',
       product.selectedOptions?.fabric || '',
+      product.selectedOptions?.size || '',
+      product.selectedOptions?.insetPanel || '',
       product.selectedOptions?.image || ''
     ]);
 
@@ -829,6 +836,8 @@ const generateOrderSummary = async (req, res) => {
       { wch: 12 }, // Total Price
       { wch: 15 }, // Finish
       { wch: 15 }, // Fabric
+      { wch: 15 }, // Size
+      { wch: 15 }, // Inset Panel
       { wch: 50 }  // Image URL
     ];
     ws['!cols'] = colWidths;

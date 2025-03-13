@@ -35,6 +35,8 @@ const orderSchema = new mongoose.Schema({
     selectedOptions: {
       finish: String,
       fabric: String,
+      size: String,
+      insetPanel: String,
       image: String // Store selected variant image URL here
     }
   }],

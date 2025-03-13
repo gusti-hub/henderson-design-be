@@ -55,6 +55,8 @@ const createProduct = async (req, res) => {
         return {
           finish: variant.finish || '',
           fabric: variant.fabric || '',
+          size: variant.size || '',
+          insetPanel: variant.insetPanel || '',
           price: parseFloat(variant.price),
           image: {
             url: file.location,
@@ -67,6 +69,8 @@ const createProduct = async (req, res) => {
         return {
           finish: variant.finish || '',
           fabric: variant.fabric || '',
+          size: variant.size || '',
+          insetPanel: variant.insetPanel || '',
           price: parseFloat(variant.price),
           image: variant.image
         };
@@ -76,6 +80,8 @@ const createProduct = async (req, res) => {
         return {
           finish: variant.finish || '',
           fabric: variant.fabric || '',
+          size: variant.size || '',
+          insetPanel: variant.insetPanel || '',
           price: parseFloat(variant.price),
           image: null
         };
@@ -126,6 +132,8 @@ const updateProduct = async (req, res) => {
         return {
           finish: variant.finish || '',
           fabric: variant.fabric || '',
+          size: variant.size || '',
+          insetPanel: variant.insetPanel || '',
           price: parseFloat(variant.price),
           image: {
             url: file.location,
@@ -139,6 +147,8 @@ const updateProduct = async (req, res) => {
         return {
           finish: variant.finish || '',
           fabric: variant.fabric || '',
+          size: variant.size || '',
+          insetPanel: variant.insetPanel || '',
           price: parseFloat(variant.price),
           image: variant.image
         };
@@ -149,6 +159,8 @@ const updateProduct = async (req, res) => {
         return {
           finish: variant.finish || '',
           fabric: variant.fabric || '',
+          size: variant.size || '',
+          insetPanel: variant.insetPanel || '',
           price: parseFloat(variant.price),
           image: null
         };
