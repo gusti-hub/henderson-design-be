@@ -118,10 +118,10 @@ const registerClient = async (req, res) => {
     });
 
     // Send confirmation email to user
-    await sendRegistrationConfirmationEmail(user.email, user.name);
+    //await sendRegistrationConfirmationEmail(user.email, user.name);
 
     // Send notification email to admin
-    await sendAdminNotificationEmail(user);
+    //await sendAdminNotificationEmail(user);
 
     res.status(201).json({
       message: 'Registration submitted successfully. Your account is under review and you will receive an email notification once approved.',
