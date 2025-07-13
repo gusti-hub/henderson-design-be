@@ -25,6 +25,10 @@ const variantSchema = new mongoose.Schema({
   image: {
     url: String,
     key: String
+  },
+  model: {
+    url: String,
+    key: String
   }
 });
 
@@ -39,6 +43,10 @@ const productSchema = new mongoose.Schema({
     required: true
   },
   description: {
+    type: String,
+    required: false
+  },
+  dimension: {
     type: String,
     required: false
   },

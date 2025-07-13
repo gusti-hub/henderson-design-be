@@ -44,7 +44,7 @@ const createProduct = async (req, res) => {
     console.log('Files:', req.files);
     console.log('Body:', req.body);
 
-    const { product_id, name, description, basePrice } = req.body;
+    const { product_id, name, description, dimension, basePrice } = req.body;
     let variants = JSON.parse(req.body.variants);
 
     // Process variants and match with uploaded files
@@ -72,7 +72,8 @@ const createProduct = async (req, res) => {
           size: variant.size || '',
           insetPanel: variant.insetPanel || '',
           price: parseFloat(variant.price),
-          image: variant.image
+          image: variant.image,
+          model: variant.model
         };
       }
       // No image case
@@ -83,7 +84,8 @@ const createProduct = async (req, res) => {
           size: variant.size || '',
           insetPanel: variant.insetPanel || '',
           price: parseFloat(variant.price),
-          image: null
+          image: null,
+          model: null
         };
       }
     });
@@ -92,6 +94,7 @@ const createProduct = async (req, res) => {
       product_id,
       name,
       description,
+      dimension,
       basePrice: parseFloat(basePrice),
       variants: processedVariants
     });
@@ -114,7 +117,7 @@ const updateProduct = async (req, res) => {
     });
 
     const productId = req.params.id;
-    const { product_id, name, description, basePrice } = req.body;
+    const { product_id, name, description, dimension, basePrice } = req.body;
     let variants = JSON.parse(req.body.variants);
 
     // Find existing product
@@ -175,6 +178,7 @@ const updateProduct = async (req, res) => {
         product_id,
         name,
         description,
+        dimension,
         basePrice: parseFloat(basePrice),
         variants: processedVariants
       },
