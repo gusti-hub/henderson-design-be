@@ -30,7 +30,7 @@ app.use(express.urlencoded({
 }));
 
 // Middleware
-//app.use(cors());
+app.use(cors());
 
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
