@@ -107,7 +107,7 @@ const updateOrder = async (req, res) => {
           return res.status(400).json({ message: 'User email not found' });
         }
 
-        await sendOrderConfirmationEmail(user.email, order);
+        // await sendOrderConfirmationEmail(user.email, order);
       } catch (emailError) {
         console.error('Failed to send confirmation email:', emailError);
         // Continue with response even if email fails
