@@ -43,6 +43,7 @@ app.use('/api/clients', require('./routes/clientRoutes'));
 app.use('/api/products', require('./routes/productRoutes'));
 app.use('/api/location-mappings', require('./routes/locationMappingsRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
+app.use('/api/clients-portal', require('./routes/clientPortalRoutes'));
 app.use('/api/profile', profileRoutes);
 
 // Enhanced error handling

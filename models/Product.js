@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const variantSchema = new mongoose.Schema({
   finish: {
     type: String,
-    enum: ['Light', 'Dark', ''],
+    enum: ['Light', 'Dark', 'Medium', ''],
     default: ''
   },
   fabric: {
