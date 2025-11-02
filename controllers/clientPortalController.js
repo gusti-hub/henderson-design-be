@@ -1,76 +1,94 @@
 const User = require('../models/User');
-const Order = require('../models/Order');
 const MeetingSchedule = require('../models/MeetingSchedule');
-const nodemailer = require('nodemailer');
+const Questionnaire = require('../models/ClientQuestionnaire');
+const sendEmail = require('../utils/sendEmail');
+const { 
+  meetingRequestTemplate, 
+  meetingConfirmationTemplate, 
+  meetingCancellationTemplate,
+  adminMeetingNotificationTemplate 
+} = require('../utils/emailTemplates');
 
-// Configure nodemailer transporter
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD
-  }
-});
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'anggaraputra9552@gmail.com';
 
-// @desc    Verify client's down payment
-// @route   POST /api/clients/verify-down-payment
-// @access  Public
+// ✅ UPDATED: Check down payment status
 const verifyDownPayment = async (req, res) => {
   try {
     const { email, unitNumber } = req.body;
 
-    // Validate input
     if (!email || !unitNumber) {
       return res.status(400).json({ 
         message: 'Email and unit number are required' 
       });
     }
 
-    // Find user by email and unit number
     const user = await User.findOne({ 
       email: email.toLowerCase(), 
-      unitNumber,
-      // status: 'approved' 
+      unitNumber
     });
 
-    // if (!user) {
-    //   return res.status(404).json({ 
-    //     message: 'No approved account found with this email and unit number' 
-    //   });
-    // }
+    if (!user) {
+      return res.status(404).json({ 
+        message: 'No account found with this email and unit number' 
+      });
+    }
 
-    // // Check if user has an order with down payment completed
-    // const order = await Order.findOne({ 
-    //   userId: user._id,
-    //   downPaymentStatus: 'completed'
-    // });
+    // ✅ Check if user is approved
+    if (user.status !== 'approved') {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account is not yet approved. Please wait for admin approval.',
+        status: user.status
+      });
+    }
 
-    // if (!order) {
-    //   return res.status(403).json({ 
-    //     message: 'No down payment found for this account. Please complete your down payment before scheduling a meeting.' 
-    //   });
-    // }
+    // ✅ Check down payment status
+    const hasDownPayment = user.paymentInfo?.downPaymentStatus === 'paid';
+    const paymentSummary = user.getPaymentSummary();
 
-    // Return client info (without sensitive data)
+    if (!hasDownPayment) {
+      return res.status(403).json({
+        success: false,
+        message: 'Down payment has not been received. Please complete your down payment to access the portal.',
+        downPaymentRequired: true,
+        paymentInfo: {
+          totalAmount: paymentSummary.totalAmount,
+          requiredDownPayment: paymentSummary.requiredDownPayment,
+          paidDownPayment: paymentSummary.paidDownPayment,
+          remainingDownPayment: paymentSummary.remainingDownPayment,
+          status: paymentSummary.status
+        }
+      });
+    }
+
+    // ✅ Success - user can access portal
     res.json({
       success: true,
       client: {
         name: user.name,
         email: email,
-        unitNumber: unitNumber
-        //phoneNumber: user.phoneNumber
+        unitNumber: unitNumber,
+        clientCode: user.clientCode,
+        floorPlan: user.floorPlan
+      },
+      paymentInfo: {
+        status: 'paid',
+        totalAmount: paymentSummary.totalAmount,
+        paidDownPayment: paymentSummary.paidDownPayment,
+        remainingBalance: paymentSummary.remainingBalance
       }
     });
 
   } catch (error) {
     console.error('Down payment verification error:', error);
-    res.status(500).json({ message: 'Verification failed. Please try again.' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Verification failed. Please try again.' 
+    });
   }
 };
 
-// @desc    Schedule a meeting with designer
-// @route   POST /api/clients/schedule-meeting
-// @access  Public (but requires verification)
+// ✅ FIXED: Remove unitNumber from query (not in MeetingSchedule schema)
 const scheduleMeeting = async (req, res) => {
   try {
     const { 
@@ -84,340 +102,347 @@ const scheduleMeeting = async (req, res) => {
       notes 
     } = req.body;
 
-    // Validate input
-    if (!email || !unitNumber || !preferredDate || !preferredTime || !alternateDate || !alternateTime) {
+    if (!email || !unitNumber || !preferredDate || !preferredTime) {
       return res.status(400).json({ 
         message: 'All required fields must be provided' 
       });
     }
 
-    // Re-verify user
     const user = await User.findOne({ 
       email: email.toLowerCase(), 
-      unitNumber,
-      // status: 'approved' 
+      unitNumber
     });
 
-    // if (!user) {
-    //   return res.status(404).json({ 
-    //     message: 'User not found' 
-    //   });
-    // }
+    if (!user) {
+      return res.status(404).json({ 
+        message: 'User not found' 
+      });
+    }
 
-    // // Verify down payment again
-    // const order = await Order.findOne({ 
-    //   userId: user._id,
-    //   downPaymentStatus: 'completed'
-    // });
+    console.log('\n📅 ========================================');
+    console.log('   NEW MEETING REQUEST');
+    console.log('========================================');
+    console.log('Client:', user.name);
+    console.log('Email:', user.email);
+    console.log('Unit:', unitNumber);
 
-    // if (!order) {
-    //   return res.status(403).json({ 
-    //     message: 'Down payment verification failed' 
-    //   });
-    // }
-
-    // Create meeting schedule
-    const meetingSchedule = await MeetingSchedule.create({
+    // ✅ FIX: Only query by userId (unitNumber not in schema)
+    const existingMeeting = await MeetingSchedule.findOne({
       userId: user._id,
-      // orderId: order._id,
-      preferredDate: new Date(preferredDate),
-      preferredTime,
-      alternateDate: new Date(alternateDate),
-      alternateTime,
-      meetingType: meetingType || 'in-person',
-      notes: notes || '',
-      status: 'pending'
+      status: { $in: ['pending', 'confirmed'] }
     });
 
-    // Send confirmation email to client
-    await sendClientConfirmationEmail(user, {
-      preferredDate,
-      preferredTime,
-      alternateDate,
-      alternateTime,
-      meetingType,
-      notes
-    });
+    let meetingSchedule;
 
-    // Send notification to designers/admins
-    await sendDesignerNotificationEmail(user, {
-      preferredDate,
-      preferredTime,
-      alternateDate,
-      alternateTime,
-      meetingType,
-      notes,
-      meetingScheduleId: meetingSchedule._id
-    });
+    if (existingMeeting) {
+      console.log('📝 Updating existing meeting:', existingMeeting._id);
+      existingMeeting.preferredDate = new Date(preferredDate);
+      existingMeeting.preferredTime = preferredTime;
+      existingMeeting.alternateDate = new Date(alternateDate);
+      existingMeeting.alternateTime = alternateTime;
+      existingMeeting.meetingType = meetingType || 'in-person';
+      existingMeeting.notes = notes || '';
+      existingMeeting.status = 'pending';
+      
+      meetingSchedule = await existingMeeting.save();
+    } else {
+      console.log('✨ Creating new meeting...');
+      meetingSchedule = await MeetingSchedule.create({
+        userId: user._id,
+        preferredDate: new Date(preferredDate),
+        preferredTime,
+        alternateDate: new Date(alternateDate),
+        alternateTime,
+        meetingType: meetingType || 'in-person',
+        notes: notes || '',
+        status: 'pending'
+      });
+    }
+
+    console.log('✅ Meeting saved - ID:', meetingSchedule._id);
+
+    // Get questionnaire
+    let questionnaire = null;
+    try {
+      questionnaire = await Questionnaire.findOne({ 
+        userId: user._id,
+        status: { $in: ['draft', 'submitted'] }
+      }).sort({ updatedAt: -1 }).limit(1);
+      
+      if (questionnaire) {
+        console.log('✅ Questionnaire found');
+      }
+    } catch (err) {
+      console.log('⚠️  No questionnaire');
+    }
+
+    // Send client email
+    try {
+      console.log('\n📧 Sending to client...');
+      
+      const formattedPreferredDate = new Date(preferredDate).toLocaleDateString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      });
+
+      const formattedAlternateDate = new Date(alternateDate).toLocaleDateString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      });
+
+      const clientEmailHTML = meetingRequestTemplate({
+        clientName: user.name,
+        unitNumber: unitNumber,
+        preferredDate: formattedPreferredDate,
+        preferredTime: preferredTime,
+        alternateDate: formattedAlternateDate,
+        alternateTime: alternateTime,
+        meetingType: meetingType || 'in-person',
+        notes: notes || ''
+      });
+
+      await sendEmail({
+        to: user.email,
+        toName: user.name,
+        subject: `Meeting Request Confirmation - Unit ${unitNumber}`,
+        htmlContent: clientEmailHTML
+      });
+
+      console.log('✅ Client email sent');
+
+    } catch (emailError) {
+      console.error('❌ Client email failed:', emailError.message);
+    }
+
+    // Send admin email
+    try {
+      console.log('\n📧 Sending to admin:', ADMIN_EMAIL);
+
+      const adminEmailHTML = adminMeetingNotificationTemplate({
+        clientName: user.name,
+        clientEmail: user.email,
+        unitNumber: unitNumber,
+        preferredDate: new Date(preferredDate).toLocaleDateString('en-US', {
+          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+        }),
+        preferredTime: preferredTime,
+        alternateDate: new Date(alternateDate).toLocaleDateString('en-US', {
+          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+        }),
+        alternateTime: alternateTime,
+        meetingType: meetingType || 'in-person',
+        meetingNotes: notes || '',
+        questionnaire: questionnaire
+      });
+
+      await sendEmail({
+        to: ADMIN_EMAIL,
+        toName: 'Henderson Admin',
+        subject: `🔔 New Meeting Request - ${user.name} (${unitNumber})`,
+        htmlContent: adminEmailHTML
+      });
+
+      console.log('✅ Admin email sent');
+
+    } catch (adminEmailError) {
+      console.error('⚠️  Admin email failed:', adminEmailError.message);
+    }
+
+    console.log('========================================\n');
 
     res.json({
       success: true,
-      message: 'Meeting request submitted successfully',
-      meetingScheduleId: meetingSchedule._id
+      message: existingMeeting 
+        ? '✅ Meeting updated! Confirmation email sent.'
+        : '✅ Meeting scheduled! Confirmation email sent.',
+      meetingScheduleId: meetingSchedule._id,
+      status: 'pending',
+      isUpdate: !!existingMeeting
     });
 
   } catch (error) {
-    console.error('Meeting scheduling error:', error);
-    res.status(500).json({ message: 'Failed to schedule meeting. Please try again.' });
-  }
-};
-
-// Email helper functions
-const sendClientConfirmationEmail = async (user, meetingDetails) => {
-  try {
-    const { preferredDate, preferredTime, alternateDate, alternateTime, meetingType, notes } = meetingDetails;
-    
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: user.email,
-      subject: 'Design Consultation Request Received - Henderson Design Group',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background-color: #005670; color: white; padding: 20px; text-align: center;">
-            <h1 style="margin: 0; font-weight: normal; letter-spacing: 2px;">HENDERSON</h1>
-            <p style="margin: 5px 0 0 0; letter-spacing: 1px;">DESIGN GROUP</p>
-          </div>
-          
-          <div style="padding: 30px; background-color: #f9f9f9;">
-            <h2 style="color: #005670; margin-bottom: 20px;">Design Consultation Request Received</h2>
-            
-            <p>Dear ${user.name},</p>
-            
-            <p>Thank you for scheduling your design consultation! We've received your meeting request and our team is reviewing your preferred time slots.</p>
-            
-            <div style="background-color: white; border: 1px solid #ddd; padding: 20px; margin: 20px 0;">
-              <h3 style="color: #005670; margin-top: 0;">Your Request Details</h3>
-              <p><strong>Unit Number:</strong> ${user.unitNumber}</p>
-              <p><strong>Meeting Type:</strong> ${meetingType === 'in-person' ? 'In-Person' : 'Virtual Meeting'}</p>
-              <p><strong>Preferred Date & Time:</strong> ${new Date(preferredDate).toLocaleDateString()} at ${preferredTime}</p>
-              <p><strong>Alternate Date & Time:</strong> ${new Date(alternateDate).toLocaleDateString()} at ${alternateTime}</p>
-              ${notes ? `<p><strong>Your Notes:</strong> ${notes}</p>` : ''}
-            </div>
-            
-            <div style="background-color: #e8f4f8; border-left: 4px solid #005670; padding: 15px; margin: 20px 0;">
-              <p style="margin: 0;"><strong>What happens next:</strong></p>
-              <ul style="margin: 10px 0 0 20px;">
-                <li>Our design team will review your time preferences</li>
-                <li>You'll receive a confirmation email within 24 hours</li>
-                <li>We'll send calendar invitations with meeting details</li>
-                <li>For virtual meetings, we'll include video conference links</li>
-              </ul>
-            </div>
-            
-            <p>We're excited to work with you and bring your design vision to life!</p>
-            
-            <p>If you need to make any changes or have questions, please don't hesitate to contact us at (808) 315-8782.</p>
-            
-            <p>Best regards,<br>The Henderson Design Group Team</p>
-          </div>
-          
-          <div style="background-color: #005670; color: white; padding: 15px; text-align: center; font-size: 12px;">
-            <p style="margin: 0;">Henderson Design Group | 74-5518 Kaiwi Street Suite B, Kailua Kona, HI, 96740-3145</p>
-            <p style="margin: 5px 0 0 0;">Phone: (808) 315-8782</p>
-          </div>
-        </div>
-      `
-    };
-
-    await transporter.sendMail(mailOptions);
-    console.log('Client confirmation email sent successfully');
-  } catch (error) {
-    console.error('Error sending client confirmation email:', error);
-  }
-};
-
-const sendDesignerNotificationEmail = async (user, meetingDetails) => {
-  try {
-    const { preferredDate, preferredTime, alternateDate, alternateTime, meetingType, notes, meetingScheduleId } = meetingDetails;
-    
-    // Get all admin and designer users
-    const designers = await User.find({ 
-      role: { $in: ['admin', 'designer'] } 
+    console.error('❌ Error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to schedule meeting.',
+      error: error.message 
     });
-    
-    for (const designer of designers) {
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: designer.email,
-        subject: 'New Design Consultation Request - Action Required',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background-color: #005670; color: white; padding: 20px; text-align: center;">
-              <h1 style="margin: 0; font-weight: normal; letter-spacing: 2px;">HENDERSON</h1>
-              <p style="margin: 5px 0 0 0; letter-spacing: 1px;">DESIGN GROUP</p>
-            </div>
-            
-            <div style="padding: 30px; background-color: #f9f9f9;">
-              <h2 style="color: #800000; margin-bottom: 20px;">New Design Consultation Request</h2>
-              
-              <p>A client has submitted a meeting request and is awaiting confirmation.</p>
-              
-              <div style="background-color: white; border: 1px solid #ddd; padding: 20px; margin: 20px 0;">
-                <h3 style="color: #005670; margin-top: 0;">Client Information</h3>
-                <p><strong>Name:</strong> ${user.name}</p>
-                <p><strong>Email:</strong> ${user.email}</p>
-                <p><strong>Phone:</strong> ${user.phoneNumber}</p>
-                <p><strong>Unit Number:</strong> ${user.unitNumber}</p>
-              </div>
-              
-              <div style="background-color: white; border: 1px solid #ddd; padding: 20px; margin: 20px 0;">
-                <h3 style="color: #005670; margin-top: 0;">Meeting Request Details</h3>
-                <p><strong>Meeting Type:</strong> ${meetingType === 'in-person' ? 'In-Person' : 'Virtual Meeting'}</p>
-                <p><strong>Preferred Date & Time:</strong> ${new Date(preferredDate).toLocaleDateString()} at ${preferredTime}</p>
-                <p><strong>Alternate Date & Time:</strong> ${new Date(alternateDate).toLocaleDateString()} at ${alternateTime}</p>
-                ${notes ? `<p><strong>Client Notes:</strong> ${notes}</p>` : ''}
-                <p><strong>Request ID:</strong> ${meetingScheduleId}</p>
-              </div>
-              
-              <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 20px 0;">
-                <p style="margin: 0;"><strong>Action Required:</strong> Please review this meeting request and confirm the appointment time within 24 hours.</p>
-              </div>
-              
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${process.env.FRONTEND_URL || 'https://de-cora.com'}/designer-login" 
-                   style="background-color: #005670; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
-                  Access Admin Panel
-                </a>
-              </div>
-            </div>
-            
-            <div style="background-color: #005670; color: white; padding: 15px; text-align: center; font-size: 12px;">
-              <p style="margin: 0;">Henderson Design Group Admin System</p>
-            </div>
-          </div>
-        `
-      };
-
-      await transporter.sendMail(mailOptions);
-    }
-    
-    console.log('Designer notification emails sent successfully');
-  } catch (error) {
-    console.error('Error sending designer notification email:', error);
   }
 };
 
-// @desc    Confirm meeting schedule (for designers/admins)
-// @route   PUT /api/clients/confirm-meeting/:meetingId
-// @access  Private (Admin/Designer)
-const confirmMeeting = async (req, res) => {
+const updateMeeting = async (req, res) => {
   try {
     const { meetingId } = req.params;
-    const { confirmedDate, confirmedTime, meetingLink, notes } = req.body;
+    const { newDate, newTime, meetingLink, notes, status } = req.body;
 
     const meetingSchedule = await MeetingSchedule.findById(meetingId)
       .populate('userId');
 
     if (!meetingSchedule) {
-      return res.status(404).json({ message: 'Meeting schedule not found' });
+      return res.status(404).json({ message: 'Meeting not found' });
     }
 
-    // Update meeting schedule
-    meetingSchedule.status = 'confirmed';
-    meetingSchedule.confirmedDate = new Date(confirmedDate);
-    meetingSchedule.confirmedTime = confirmedTime;
-    meetingSchedule.meetingLink = meetingLink || '';
-    meetingSchedule.designerNotes = notes || '';
-    meetingSchedule.confirmedBy = req.user.id;
+    if (newDate) meetingSchedule.confirmedDate = new Date(newDate);
+    if (newTime) meetingSchedule.confirmedTime = newTime;
+    if (meetingLink) meetingSchedule.meetingLink = meetingLink;
+    if (notes) meetingSchedule.designerNotes = notes;
+    if (status) meetingSchedule.status = status;
+    if (req.user) meetingSchedule.confirmedBy = req.user._id;
+
     await meetingSchedule.save();
 
-    // Send confirmation email to client
-    await sendMeetingConfirmationEmail(meetingSchedule.userId, {
-      confirmedDate,
-      confirmedTime,
-      meetingType: meetingSchedule.meetingType,
-      meetingLink,
-      notes
-    });
+    try {
+      const formattedDate = new Date(meetingSchedule.confirmedDate).toLocaleDateString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      });
+
+      const htmlContent = meetingConfirmationTemplate({
+        clientName: meetingSchedule.userId.name,
+        unitNumber: meetingSchedule.userId.unitNumber,
+        confirmedDate: formattedDate,
+        confirmedTime: meetingSchedule.confirmedTime,
+        meetingType: meetingSchedule.meetingType || 'in-person',
+        meetingLink: meetingLink || '',
+        notes: notes || meetingSchedule.designerNotes || ''
+      });
+
+      const emailSubject = status === 'confirmed' 
+        ? `Meeting Confirmed - Unit ${meetingSchedule.userId.unitNumber}`
+        : `Meeting Updated - Unit ${meetingSchedule.userId.unitNumber}`;
+
+      await sendEmail({
+        to: meetingSchedule.userId.email,
+        toName: meetingSchedule.userId.name,
+        subject: emailSubject,
+        htmlContent: htmlContent
+      });
+
+    } catch (emailError) {
+      console.error('Email error:', emailError.message);
+    }
 
     res.json({
       success: true,
-      message: 'Meeting confirmed successfully'
+      message: 'Meeting updated',
+      meeting: {
+        id: meetingSchedule._id,
+        status: meetingSchedule.status,
+        confirmedDate: meetingSchedule.confirmedDate,
+        confirmedTime: meetingSchedule.confirmedTime
+      }
     });
 
   } catch (error) {
-    console.error('Meeting confirmation error:', error);
-    res.status(500).json({ message: 'Failed to confirm meeting' });
+    console.error('Update error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to update meeting' 
+    });
   }
 };
 
-const sendMeetingConfirmationEmail = async (user, confirmationDetails) => {
+const cancelMeeting = async (req, res) => {
   try {
-    const { confirmedDate, confirmedTime, meetingType, meetingLink, notes } = confirmationDetails;
-    
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: user.email,
-      subject: 'Design Consultation Confirmed - Henderson Design Group',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background-color: #005670; color: white; padding: 20px; text-align: center;">
-            <h1 style="margin: 0; font-weight: normal; letter-spacing: 2px;">HENDERSON</h1>
-            <p style="margin: 5px 0 0 0; letter-spacing: 1px;">DESIGN GROUP</p>
-          </div>
-          
-          <div style="padding: 30px; background-color: #f9f9f9;">
-            <h2 style="color: #28a745; margin-bottom: 20px;">Your Design Consultation is Confirmed! 🎉</h2>
-            
-            <p>Dear ${user.name},</p>
-            
-            <p>Great news! Your design consultation has been confirmed. We're looking forward to meeting with you!</p>
-            
-            <div style="background-color: #d4edda; border: 1px solid #c3e6cb; padding: 20px; margin: 20px 0; border-radius: 5px;">
-              <h3 style="color: #155724; margin-top: 0;">Confirmed Meeting Details</h3>
-              <p><strong>📅 Date:</strong> ${new Date(confirmedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
-              <p><strong>🕐 Time:</strong> ${confirmedTime} (HST - Hawaii Standard Time)</p>
-              <p><strong>📍 Type:</strong> ${meetingType === 'in-person' ? 'In-Person at our Kailua Kona Office' : 'Virtual Meeting'}</p>
-              ${meetingLink ? `<p><strong>🔗 Meeting Link:</strong> <a href="${meetingLink}" style="color: #005670;">${meetingLink}</a></p>` : ''}
-              ${notes ? `<p><strong>📝 Additional Notes:</strong> ${notes}</p>` : ''}
-            </div>
-            
-            ${meetingType === 'in-person' ? `
-              <div style="background-color: white; border: 1px solid #ddd; padding: 20px; margin: 20px 0;">
-                <h3 style="color: #005670; margin-top: 0;">Office Location</h3>
-                <p>
-                  Henderson Design Group<br>
-                  74-5518 Kaiwi Street Suite B<br>
-                  Kailua Kona, HI 96740-3145<br>
-                  Phone: (808) 315-8782
-                </p>
-              </div>
-            ` : ''}
-            
-            <div style="background-color: #e8f4f8; border-left: 4px solid #005670; padding: 15px; margin: 20px 0;">
-              <p style="margin: 0;"><strong>To prepare for your consultation:</strong></p>
-              <ul style="margin: 10px 0 0 20px;">
-                <li>Review your design questionnaire responses</li>
-                <li>Prepare any questions or ideas you'd like to discuss</li>
-                <li>Gather inspiration photos if you have them</li>
-                <li>${meetingType === 'virtual' ? 'Test your video/audio setup 10 minutes before' : 'Plan to arrive 5-10 minutes early'}</li>
-              </ul>
-            </div>
-            
-            <p>If you need to reschedule or have any questions, please contact us at (808) 315-8782 or reply to this email.</p>
-            
-            <p>We're excited to work with you!</p>
-            
-            <p>Best regards,<br>The Henderson Design Group Team</p>
-          </div>
-          
-          <div style="background-color: #005670; color: white; padding: 15px; text-align: center; font-size: 12px;">
-            <p style="margin: 0;">Henderson Design Group | 74-5518 Kaiwi Street Suite B, Kailua Kona, HI, 96740-3145</p>
-            <p style="margin: 5px 0 0 0;">Phone: (808) 315-8782</p>
-          </div>
-        </div>
-      `
-    };
+    const { meetingId } = req.params;
+    const { reason } = req.body;
 
-    await transporter.sendMail(mailOptions);
-    console.log('Meeting confirmation email sent successfully');
+    const meetingSchedule = await MeetingSchedule.findById(meetingId)
+      .populate('userId');
+
+    if (!meetingSchedule) {
+      return res.status(404).json({ message: 'Meeting not found' });
+    }
+
+    meetingSchedule.status = 'cancelled';
+    if (reason) meetingSchedule.designerNotes = reason;
+    await meetingSchedule.save();
+
+    try {
+      const formattedDate = meetingSchedule.confirmedDate 
+        ? new Date(meetingSchedule.confirmedDate).toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+          })
+        : null;
+
+      const htmlContent = meetingCancellationTemplate({
+        clientName: meetingSchedule.userId.name,
+        unitNumber: meetingSchedule.userId.unitNumber,
+        cancelledDate: formattedDate,
+        cancelledTime: meetingSchedule.confirmedTime,
+        reason: reason || ''
+      });
+
+      await sendEmail({
+        to: meetingSchedule.userId.email,
+        toName: meetingSchedule.userId.name,
+        subject: `Meeting Cancelled - Unit ${meetingSchedule.userId.unitNumber}`,
+        htmlContent: htmlContent
+      });
+
+    } catch (emailError) {
+      console.error('Email error:', emailError.message);
+    }
+
+    res.json({
+      success: true,
+      message: 'Meeting cancelled'
+    });
+
   } catch (error) {
-    console.error('Error sending meeting confirmation email:', error);
+    console.error('Cancel error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to cancel meeting' 
+    });
+  }
+};
+
+const getMeeting = async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+
+    const meeting = await MeetingSchedule.findById(meetingId)
+      .populate('userId', 'name email unitNumber');
+
+    if (!meeting) {
+      return res.status(404).json({ message: 'Meeting not found' });
+    }
+
+    res.json({
+      success: true,
+      meeting: {
+        id: meeting._id,
+        client: {
+          name: meeting.userId.name,
+          email: meeting.userId.email,
+          unitNumber: meeting.userId.unitNumber
+        },
+        status: meeting.status,
+        preferredDate: meeting.preferredDate,
+        preferredTime: meeting.preferredTime,
+        alternateDate: meeting.alternateDate,
+        alternateTime: meeting.alternateTime,
+        confirmedDate: meeting.confirmedDate,
+        confirmedTime: meeting.confirmedTime,
+        meetingType: meeting.meetingType,
+        meetingLink: meeting.meetingLink,
+        notes: meeting.notes,
+        designerNotes: meeting.designerNotes,
+        createdAt: meeting.createdAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Get meeting error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to get meeting details' 
+    });
   }
 };
 
 module.exports = {
   verifyDownPayment,
   scheduleMeeting,
-  confirmMeeting
+  updateMeeting,
+  cancelMeeting,
+  getMeeting
 };

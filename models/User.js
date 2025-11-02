@@ -5,7 +5,7 @@ const userSchema = new mongoose.Schema({
   clientCode: {
     type: String,
     unique: true,
-    sparse: true, // Allow null values but ensure uniqueness when present
+    sparse: true,
     trim: true
   },
   name: {
@@ -16,10 +16,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Please add an email'],
     unique: true,
-    match: [
-      /^\S+@\S+\.\S+$/,
-      'Please add a valid email'
-    ]
+    match: [/^\S+@\S+\.\S+$/, 'Please add a valid email']
   },
   password: {
     type: String,
@@ -51,6 +48,90 @@ const userSchema = new mongoose.Schema({
       "Residence 13A"
     ]
   },
+  
+  // ✅ NEW: Down Payment & Transaction Information
+  paymentInfo: {
+    // Total transaction value
+    totalAmount: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    
+    // Down payment amount
+    downPaymentAmount: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    
+    // Down payment percentage (e.g., 30%)
+    downPaymentPercentage: {
+      type: Number,
+      default: 30,
+      min: 0,
+      max: 100
+    },
+    
+    // Down payment status
+    downPaymentStatus: {
+      type: String,
+      enum: ['not-paid', 'partial', 'paid', 'overdue'],
+      default: 'not-paid'
+    },
+    
+    // Down payment date
+    downPaymentDate: {
+      type: Date,
+      default: null
+    },
+    
+    // Payment due date
+    downPaymentDueDate: {
+      type: Date,
+      default: null
+    },
+    
+    // Remaining balance
+    remainingBalance: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    
+    // Payment method
+    paymentMethod: {
+      type: String,
+      enum: ['bank-transfer', 'credit-card', 'check', 'cash', 'other'],
+      default: null
+    },
+    
+    // Transaction/Reference number
+    transactionReference: {
+      type: String,
+      default: ''
+    },
+    
+    // Payment notes
+    paymentNotes: {
+      type: String,
+      default: ''
+    },
+    
+    // Who recorded the payment
+    recordedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    
+    // When payment was recorded
+    recordedAt: {
+      type: Date,
+      default: null
+    }
+  },
+  
   // Registration and approval status
   status: {
     type: String,
@@ -62,36 +143,25 @@ const userSchema = new mongoose.Schema({
     enum: ['admin-created', 'self-registered'],
     default: 'admin-created'
   },
-  // Questionnaire responses based on official Ālia questionnaire
+  
+  // Questionnaire responses
   questionnaire: {
     designStyle: [{
       type: String,
-      enum: [
-        'Modern/Contemporary',
-        'Minimalist',
-        'Beachy/Hawaiian'
-      ]
+      enum: ['Modern/Contemporary', 'Minimalist', 'Beachy/Hawaiian']
     }],
     colorPalette: [{
       type: String,
       enum: [
-        'Tone-on-tone -- Dark',
-        'Tone-on-tone -- Light/Medium',
-        'Ocean Blue',
-        'Navy Blue',
-        'Green',
-        'Coral/Orange',
-        'Yellow',
-        'Tan'
+        'Tone-on-tone -- Dark', 'Tone-on-tone -- Light/Medium',
+        'Ocean Blue', 'Navy Blue', 'Green', 'Coral/Orange', 'Yellow', 'Tan'
       ]
     }],
     patterns: [{
       type: String,
       enum: [
-        'No pattern -- just texture',
-        'Subtle patterns',
-        'Bold/Geometric patterns',
-        'Floral/Tropical patterns',
+        'No pattern -- just texture', 'Subtle patterns',
+        'Bold/Geometric patterns', 'Floral/Tropical patterns',
         'Organic/Natural patterns'
       ]
     }],
@@ -99,86 +169,109 @@ const userSchema = new mongoose.Schema({
       type: String,
       enum: ['Yes', 'No']
     },
-    personalArtworkDetails: {
-      type: String,
-      default: ''
-    },
+    personalArtworkDetails: String,
     primaryUse: [{
       type: String,
       enum: [
-        'Personal use',
-        'Entertaining',
-        'Working from home',
-        'Short-term/Vacation rental',
-        'Long-term rental'
+        'Personal use', 'Entertaining', 'Working from home',
+        'Short-term/Vacation rental', 'Long-term rental'
       ]
     }],
-    occupants: {
-      type: String,
-      default: ''
-    },
-    lifestyleNeeds: {
-      type: String,
-      default: ''
-    },
-    desiredCompletionDate: {
-      type: Date
-    },
+    occupants: String,
+    lifestyleNeeds: String,
+    desiredCompletionDate: Date,
     budgetFlexibility: {
       type: String,
-      enum: [
-        'Very flexible',
-        'Somewhat flexible',
-        'Not flexible'
-      ]
+      enum: ['Very flexible', 'Somewhat flexible', 'Not flexible']
     },
-    technologyIntegration: {
-      type: String,
-      default: ''
-    },
-    additionalThoughts: {
-      type: String,
-      default: ''
-    }
+    technologyIntegration: String,
+    additionalThoughts: String
   },
+  
   // Admin approval tracking
   approvedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
-  approvedAt: {
-    type: Date
-  },
+  approvedAt: Date,
   rejectedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
-  rejectedAt: {
-    type: Date
-  },
-  rejectionReason: {
-    type: String
-  },
+  rejectedAt: Date,
+  rejectionReason: String,
   createdAt: {
     type: Date,
     default: Date.now
   }
 });
 
-// Only hash password on new user creation or password change
+// Hash password before save
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) {
     return next();
   }
-
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
   next();
 });
 
-// Add method to check password
+// Calculate remaining balance before save
+userSchema.pre('save', function(next) {
+  if (this.paymentInfo) {
+    this.paymentInfo.remainingBalance = 
+      this.paymentInfo.totalAmount - this.paymentInfo.downPaymentAmount;
+  }
+  next();
+});
+
+// Method to check password
 userSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
+};
+
+// ✅ NEW: Method to record down payment
+userSchema.methods.recordDownPayment = function(paymentData, adminId) {
+  this.paymentInfo.downPaymentAmount = paymentData.amount;
+  this.paymentInfo.downPaymentDate = paymentData.date || new Date();
+  this.paymentInfo.paymentMethod = paymentData.method;
+  this.paymentInfo.transactionReference = paymentData.reference || '';
+  this.paymentInfo.paymentNotes = paymentData.notes || '';
+  this.paymentInfo.recordedBy = adminId;
+  this.paymentInfo.recordedAt = new Date();
+  
+  // Update status based on amount
+  const totalDP = this.paymentInfo.totalAmount * (this.paymentInfo.downPaymentPercentage / 100);
+  if (paymentData.amount >= totalDP) {
+    this.paymentInfo.downPaymentStatus = 'paid';
+  } else if (paymentData.amount > 0) {
+    this.paymentInfo.downPaymentStatus = 'partial';
+  }
+  
+  return this.save();
+};
+
+// ✅ NEW: Method to check if DP is paid
+userSchema.methods.hasDownPayment = function() {
+  return this.paymentInfo.downPaymentStatus === 'paid';
+};
+
+// ✅ NEW: Method to get payment summary
+userSchema.methods.getPaymentSummary = function() {
+  const requiredDP = this.paymentInfo.totalAmount * (this.paymentInfo.downPaymentPercentage / 100);
+  const paidDP = this.paymentInfo.downPaymentAmount;
+  const remainingDP = Math.max(0, requiredDP - paidDP);
+  
+  return {
+    totalAmount: this.paymentInfo.totalAmount,
+    requiredDownPayment: requiredDP,
+    paidDownPayment: paidDP,
+    remainingDownPayment: remainingDP,
+    downPaymentPercentage: this.paymentInfo.downPaymentPercentage,
+    status: this.paymentInfo.downPaymentStatus,
+    remainingBalance: this.paymentInfo.remainingBalance,
+    isPaid: this.paymentInfo.downPaymentStatus === 'paid'
+  };
 };
 
 // Instance method to approve user

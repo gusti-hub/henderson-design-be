@@ -1,17 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const { protect, authorize } = require('../middleware/auth');
-const {
-  verifyDownPayment,
+const { 
+  verifyDownPayment, 
   scheduleMeeting,
-  confirmMeeting
+  updateMeeting,      // ✅ NEW
+  cancelMeeting,      // ✅ NEW  
+  getMeeting          // ✅ NEW
 } = require('../controllers/clientPortalController');
+const { protect, authorize } = require('../middleware/auth');
 
-// Public routes (no authentication required)
+// Public routes
 router.post('/verify-down-payment', verifyDownPayment);
 router.post('/schedule-meeting', scheduleMeeting);
+router.get('/meeting/:meetingId', getMeeting);
 
-// Protected routes (require authentication and specific roles)
-router.put('/confirm-meeting/:meetingId', protect, authorize('admin', 'designer'), confirmMeeting);
+// Protected routes (Admin/Designer only)
+router.put('/update-meeting/:meetingId', protect, authorize('admin', 'designer'), updateMeeting);
+router.delete('/cancel-meeting/:meetingId', protect, authorize('admin', 'designer'), cancelMeeting);
 
 module.exports = router;

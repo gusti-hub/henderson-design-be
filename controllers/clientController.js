@@ -8,14 +8,11 @@ const getClients = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || '';
-    const status = req.query.status; // New filter for status
+    const status = req.query.status;
     const skip = (page - 1) * limit;
 
-    let searchQuery = {
-      role: 'user'
-    };
+    let searchQuery = { role: 'user' };
 
-    // Add search conditions
     if (search) {
       searchQuery.$or = [
         { clientCode: { $regex: search, $options: 'i' } },
@@ -26,7 +23,6 @@ const getClients = async (req, res) => {
       ];
     }
 
-    // Add status filter
     if (status && status !== 'all') {
       searchQuery.status = status;
     }
@@ -36,6 +32,7 @@ const getClients = async (req, res) => {
       .select('-password')
       .populate('approvedBy', 'name')
       .populate('rejectedBy', 'name')
+      .populate('paymentInfo.recordedBy', 'name')
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -58,12 +55,20 @@ const getClient = async (req, res) => {
     const client = await User.findById(req.params.id)
       .select('-password')
       .populate('approvedBy', 'name')
-      .populate('rejectedBy', 'name');
+      .populate('rejectedBy', 'name')
+      .populate('paymentInfo.recordedBy', 'name');
     
     if (!client) {
       return res.status(404).json({ message: 'Client not found' });
     }
-    res.json(client);
+    
+    // Add payment summary
+    const paymentSummary = client.getPaymentSummary();
+    
+    res.json({
+      ...client.toObject(),
+      paymentSummary
+    });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching client' });
   }
@@ -72,27 +77,28 @@ const getClient = async (req, res) => {
 // Create client (admin only)
 const createClient = async (req, res) => {
   try {
-    const { clientCode, name, email, password, unitNumber, floorPlan } = req.body;
+    const { 
+      clientCode, name, email, password, unitNumber, floorPlan,
+      totalAmount, downPaymentPercentage 
+    } = req.body;
 
     if (!clientCode || !name || !email || !password || !unitNumber || !floorPlan) {
       return res.status(400).json({ 
-        message: 'Please provide all required fields (client code, name, email, password, unit number, and floor plan)' 
+        message: 'Please provide all required fields' 
       });
     }
 
-    // Check if client code already exists
     const clientCodeExists = await User.findOne({ clientCode });
     if (clientCodeExists) {
       return res.status(400).json({ message: 'Client code already exists' });
     }
 
-    // Check if email already exists
     const emailExists = await User.findOne({ email });
     if (emailExists) {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
-    const client = await User.create({
+    const clientData = {
       clientCode,
       name,
       email,
@@ -101,8 +107,21 @@ const createClient = async (req, res) => {
       floorPlan,
       role: 'user',
       registrationType: 'admin-created',
-      status: 'approved' // Admin-created clients are automatically approved
-    });
+      status: 'approved'
+    };
+
+    // ✅ Add payment info if provided
+    if (totalAmount) {
+      clientData.paymentInfo = {
+        totalAmount: totalAmount,
+        downPaymentPercentage: downPaymentPercentage || 30,
+        downPaymentAmount: 0,
+        downPaymentStatus: 'not-paid',
+        remainingBalance: totalAmount
+      };
+    }
+
+    const client = await User.create(clientData);
 
     res.status(201).json({
       _id: client._id,
@@ -112,7 +131,8 @@ const createClient = async (req, res) => {
       unitNumber: client.unitNumber,
       floorPlan: client.floorPlan,
       role: client.role,
-      status: client.status
+      status: client.status,
+      paymentInfo: client.paymentInfo
     });
   } catch (error) {
     console.error('Error in createClient:', error);
@@ -126,18 +146,17 @@ const createClient = async (req, res) => {
 // Update client
 const updateClient = async (req, res) => {
   try {
-    const { clientCode, name, email, password, unitNumber, floorPlan } = req.body;
+    const { 
+      clientCode, name, email, password, unitNumber, floorPlan,
+      totalAmount, downPaymentPercentage 
+    } = req.body;
+    
     const client = await User.findById(req.params.id);
 
     if (!client) {
       return res.status(404).json({ message: 'Client not found' });
     }
 
-    if (!clientCode && !name && !email && !password && !unitNumber && !floorPlan) {
-      return res.status(400).json({ message: 'Please provide at least one field to update' });
-    }
-
-    // Check if new client code already exists
     if (clientCode && clientCode !== client.clientCode) {
       const clientCodeExists = await User.findOne({ clientCode });
       if (clientCodeExists) {
@@ -145,7 +164,6 @@ const updateClient = async (req, res) => {
       }
     }
 
-    // Check if new email already exists
     if (email && email !== client.email) {
       const emailExists = await User.findOne({ email });
       if (emailExists) {
@@ -161,10 +179,20 @@ const updateClient = async (req, res) => {
       floorPlan: floorPlan || client.floorPlan
     };
 
+    // ✅ Update payment info
+    if (totalAmount !== undefined) {
+      updateData['paymentInfo.totalAmount'] = totalAmount;
+      updateData['paymentInfo.remainingBalance'] = 
+        totalAmount - (client.paymentInfo?.downPaymentAmount || 0);
+    }
+    
+    if (downPaymentPercentage !== undefined) {
+      updateData['paymentInfo.downPaymentPercentage'] = downPaymentPercentage;
+    }
+
     if (password) {
       const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
-      updateData.password = hashedPassword;
+      updateData.password = await bcrypt.hash(password, salt);
     }
 
     const updatedClient = await User.findByIdAndUpdate(
@@ -173,22 +201,114 @@ const updateClient = async (req, res) => {
       { new: true, runValidators: true }
     ).select('-password');
 
-    res.json({
-      _id: updatedClient._id,
-      clientCode: updatedClient.clientCode,
-      name: updatedClient.name,
-      email: updatedClient.email,
-      unitNumber: updatedClient.unitNumber,
-      floorPlan: updatedClient.floorPlan,
-      role: updatedClient.role,
-      status: updatedClient.status
-    });
+    res.json(updatedClient);
   } catch (error) {
     console.error('Error in updateClient:', error);
-    if (error.code === 11000) {
-      return res.status(400).json({ message: 'Client code or email already exists' });
-    }
     res.status(500).json({ message: 'Error updating client' });
+  }
+};
+
+// ✅ NEW: Record down payment
+const recordDownPayment = async (req, res) => {
+  try {
+    const { 
+      amount, 
+      paymentDate, 
+      paymentMethod, 
+      transactionReference, 
+      notes 
+    } = req.body;
+
+    const client = await User.findById(req.params.id);
+
+    if (!client) {
+      return res.status(404).json({ message: 'Client not found' });
+    }
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Valid payment amount is required' });
+    }
+
+    // Record the payment
+    await client.recordDownPayment({
+      amount,
+      date: paymentDate || new Date(),
+      method: paymentMethod,
+      reference: transactionReference,
+      notes
+    }, req.user.id);
+
+    const paymentSummary = client.getPaymentSummary();
+
+    res.json({
+      message: 'Down payment recorded successfully',
+      client: {
+        _id: client._id,
+        name: client.name,
+        email: client.email,
+        paymentInfo: client.paymentInfo
+      },
+      paymentSummary
+    });
+  } catch (error) {
+    console.error('Error recording down payment:', error);
+    res.status(500).json({ message: 'Error recording down payment' });
+  }
+};
+
+// ✅ NEW: Update down payment status
+const updateDownPaymentStatus = async (req, res) => {
+  try {
+    const { status, notes } = req.body;
+
+    const client = await User.findById(req.params.id);
+
+    if (!client) {
+      return res.status(404).json({ message: 'Client not found' });
+    }
+
+    const validStatuses = ['not-paid', 'partial', 'paid', 'overdue'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' });
+    }
+
+    client.paymentInfo.downPaymentStatus = status;
+    if (notes) {
+      client.paymentInfo.paymentNotes = notes;
+    }
+    
+    await client.save();
+
+    res.json({
+      message: 'Payment status updated successfully',
+      paymentInfo: client.paymentInfo
+    });
+  } catch (error) {
+    console.error('Error updating payment status:', error);
+    res.status(500).json({ message: 'Error updating payment status' });
+  }
+};
+
+// ✅ NEW: Get payment summary
+const getPaymentSummary = async (req, res) => {
+  try {
+    const client = await User.findById(req.params.id);
+
+    if (!client) {
+      return res.status(404).json({ message: 'Client not found' });
+    }
+
+    const paymentSummary = client.getPaymentSummary();
+
+    res.json({
+      clientId: client._id,
+      clientName: client.name,
+      clientCode: client.clientCode,
+      paymentSummary
+    });
+  } catch (error) {
+    console.error('Error getting payment summary:', error);
+    res.status(500).json({ message: 'Error getting payment summary' });
   }
 };
 
@@ -222,14 +342,12 @@ const approveClient = async (req, res) => {
       return res.status(400).json({ message: 'Client is already approved' });
     }
 
-    // Validate required fields for approval
     if (!clientCode || !floorPlan) {
       return res.status(400).json({ 
-        message: 'Client code and floor plan are required for approval' 
+        message: 'Client code and floor plan are required' 
       });
     }
 
-    // Check if client code already exists (if provided)
     if (clientCode) {
       const clientCodeExists = await User.findOne({ 
         clientCode, 
@@ -240,7 +358,6 @@ const approveClient = async (req, res) => {
       }
     }
 
-    // Update client with approval details
     const updateData = {
       status: 'approved',
       approvedBy: req.user.id,
@@ -255,12 +372,10 @@ const approveClient = async (req, res) => {
       { new: true, runValidators: true }
     ).select('-password');
 
-    // Send approval email
     try {
       await sendApprovalEmail(client.email, client.name);
     } catch (emailError) {
       console.error('Failed to send approval email:', emailError);
-      // Continue with response even if email fails
     }
 
     res.json({
@@ -288,10 +403,9 @@ const rejectClient = async (req, res) => {
     }
 
     if (client.status === 'approved') {
-      return res.status(400).json({ message: 'Cannot reject an already approved client' });
+      return res.status(400).json({ message: 'Cannot reject an approved client' });
     }
 
-    // Update client with rejection details
     const updatedClient = await User.findByIdAndUpdate(
       client._id,
       {
@@ -303,12 +417,10 @@ const rejectClient = async (req, res) => {
       { new: true, runValidators: true }
     ).select('-password');
 
-    // Send rejection email
     try {
       await sendRejectionEmail(client.email, client.name, reason);
     } catch (emailError) {
       console.error('Failed to send rejection email:', emailError);
-      // Continue with response even if email fails
     }
 
     res.json({
@@ -341,9 +453,7 @@ const getPendingCount = async (req, res) => {
 const getRegistrationStats = async (req, res) => {
   try {
     const stats = await User.aggregate([
-      {
-        $match: { role: 'user' }
-      },
+      { $match: { role: 'user' } },
       {
         $group: {
           _id: '$status',
@@ -353,13 +463,24 @@ const getRegistrationStats = async (req, res) => {
     ]);
 
     const registrationTypeStats = await User.aggregate([
-      {
-        $match: { role: 'user' }
-      },
+      { $match: { role: 'user' } },
       {
         $group: {
           _id: '$registrationType',
           count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // ✅ NEW: Payment statistics
+    const paymentStats = await User.aggregate([
+      { $match: { role: 'user' } },
+      {
+        $group: {
+          _id: '$paymentInfo.downPaymentStatus',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$paymentInfo.totalAmount' },
+          totalPaid: { $sum: '$paymentInfo.downPaymentAmount' }
         }
       }
     ]);
@@ -372,13 +493,21 @@ const getRegistrationStats = async (req, res) => {
       byType: registrationTypeStats.reduce((acc, item) => {
         acc[item._id] = item.count;
         return acc;
+      }, {}),
+      byPaymentStatus: paymentStats.reduce((acc, item) => {
+        acc[item._id || 'not-set'] = {
+          count: item.count,
+          totalAmount: item.totalAmount,
+          totalPaid: item.totalPaid
+        };
+        return acc;
       }, {})
     };
 
     res.json(formattedStats);
   } catch (error) {
     console.error('Error in getRegistrationStats:', error);
-    res.status(500).json({ message: 'Error getting registration statistics' });
+    res.status(500).json({ message: 'Error getting statistics' });
   }
 };
 
@@ -400,7 +529,7 @@ const getFloorPlans = async (req, res) => {
   }
 };
 
-// Reset client password (admin only)
+// Reset client password
 const resetClientPassword = async (req, res) => {
   try {
     const { newPassword } = req.body;
@@ -411,14 +540,14 @@ const resetClientPassword = async (req, res) => {
     }
 
     if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+      return res.status(400).json({ 
+        message: 'Password must be at least 6 characters' 
+      });
     }
 
-    // Hash the new password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    // Update the client's password
     await User.findByIdAndUpdate(client._id, { password: hashedPassword });
 
     res.json({ message: 'Password reset successfully' });
@@ -445,28 +574,25 @@ const bulkApproveClients = async (req, res) => {
         const client = await User.findById(clientId);
         
         if (!client) {
-          results.push({ clientId, status: 'error', message: 'Client not found' });
+          results.push({ clientId, status: 'error', message: 'Not found' });
           continue;
         }
 
         if (client.status !== 'pending') {
-          results.push({ clientId, status: 'skipped', message: 'Client is not pending' });
+          results.push({ clientId, status: 'skipped', message: 'Not pending' });
           continue;
         }
 
-        // Generate client code if not provided
         const clientCode = defaultClientCodePrefix 
           ? `${defaultClientCodePrefix}${String(i + 1).padStart(3, '0')}`
           : `CL${Date.now()}${i}`;
 
-        // Check if client code exists
         const codeExists = await User.findOne({ clientCode });
         if (codeExists) {
-          results.push({ clientId, status: 'error', message: 'Generated client code already exists' });
+          results.push({ clientId, status: 'error', message: 'Code exists' });
           continue;
         }
 
-        // Update client
         await User.findByIdAndUpdate(clientId, {
           status: 'approved',
           approvedBy: req.user.id,
@@ -475,16 +601,19 @@ const bulkApproveClients = async (req, res) => {
           floorPlan: defaultFloorPlan || 'Residence 00A'
         });
 
-        // Send approval email
         try {
           await sendApprovalEmail(client.email, client.name);
         } catch (emailError) {
-          console.error(`Failed to send approval email to ${client.email}:`, emailError);
+          console.error(`Email failed for ${client.email}`);
         }
 
         results.push({ clientId, status: 'approved', clientCode });
       } catch (error) {
-        results.push({ clientId: clientIds[i], status: 'error', message: error.message });
+        results.push({ 
+          clientId: clientIds[i], 
+          status: 'error', 
+          message: error.message 
+        });
       }
     }
 
@@ -510,5 +639,9 @@ module.exports = {
   getRegistrationStats,
   getFloorPlans,
   resetClientPassword,
-  bulkApproveClients
+  bulkApproveClients,
+  // ✅ NEW exports
+  recordDownPayment,
+  updateDownPaymentStatus,
+  getPaymentSummary
 };

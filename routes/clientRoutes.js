@@ -11,7 +11,10 @@ const {
   approveClient,
   rejectClient,
   getPendingCount,
-  getFloorPlans
+  getFloorPlans,
+  recordDownPayment,
+  updateDownPaymentStatus,
+  getPaymentSummary
 } = require('../controllers/clientController');
 
 // All routes require authentication
@@ -42,5 +45,10 @@ router.route('/:id')
   .get(getClient)
   .put(updateClient)
   .delete(deleteClient);
+
+// In routes/clientRoutes.js
+router.post('/:id/record-payment', protect, authorize('admin'), recordDownPayment);
+router.put('/:id/payment-status', protect, authorize('admin'), updateDownPaymentStatus);
+router.get('/:id/payment-summary', protect, authorize('admin'), getPaymentSummary);
 
 module.exports = router;

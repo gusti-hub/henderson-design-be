@@ -66,6 +66,14 @@ const meetingScheduleSchema = new mongoose.Schema({
   },
   completedAt: {
     type: Date
+  },
+  calendarEventId: {
+    type: String,
+    default: null
+  },
+  calendarEventLink: {
+    type: String,
+    default: null
   }
 }, {
   timestamps: true
