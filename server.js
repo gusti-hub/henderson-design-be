@@ -6,6 +6,7 @@ const connectDB = require('./config/db');
 const profileRoutes = require('./routes/profileRoutes');
 const trackActivity = require('./middleware/activityTracker');
 
+
 // Load env vars
 dotenv.config();
 
@@ -45,6 +46,7 @@ app.use('/api/location-mappings', require('./routes/locationMappingsRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/clients-portal', require('./routes/clientPortalRoutes'));
 app.use('/api/questionnaires', require('./routes/questionnaireRoutes'));
+app.use('/api/next-steps', require('./routes/NextstepsRoutes'));
 app.use('/api/profile', profileRoutes);
 
 // Enhanced error handling
