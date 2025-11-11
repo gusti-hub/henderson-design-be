@@ -1,4 +1,4 @@
-const NextStepsSubmission = require('../models/NextStepsSubmission');
+const NextStepsSubmission = require('../models/Nextstepssubmission');
 const sendEmail = require('../utils/sendEmail');
 const { 
   meetingRequestTemplate, 
