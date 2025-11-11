@@ -51,7 +51,7 @@ const sendEmail = async (options) => {
     // Optional: Add reply-to
     if (process.env.EMAIL_REPLY_TO) {
       sendSmtpEmail.replyTo = {
-        email: process.env.EMAIL_REPLY_TO,
+        email: 'aloha@henderson.house',
         name: process.env.EMAIL_FROM_NAME || 'Henderson Design Group'
       };
     }
