@@ -1,82 +1,60 @@
-const NextStepsSubmission = require('../models/Nextstepssubmission');
+const NextStepsOption = require('../models/Nextstepssubmission');
 const sendEmail = require('../utils/sendEmail');
 const { 
-  meetingRequestTemplate, 
-  meetingConfirmationTemplate, 
-  meetingCancellationTemplate,
-  adminMeetingNotificationTemplate 
+  lockPriceClientTemplate, 
+  lockPriceAdminTemplate,
+  designFeeClientTemplate,
+  designFeeAdminTemplate,
+  questionsClientTemplate,
+  questionsAdminTemplate
 } = require('../utils/emailTemplates');
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'anggaraputra9552@gmail.com';
+const NOTIFICATION_EMAIL = 'anggaraputra9552@gmail.com';
 
-// @desc    Submit next steps form (documents acknowledged + meeting request)
-// @route   POST /api/next-steps/submit
-// @access  Public
-const submitNextSteps = async (req, res) => {
+// @desc Submit next steps option selection
+// @route POST /api/next-steps/submit-option
+// @access Public
+const submitOption = async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      unitNumber,
-      preferredDate,
-      preferredTime,
-      alternateDate,
-      alternateTime,
-      meetingType,
-      notes
-    } = req.body;
+    const { name, email, phone, unitNumber, selectedOption, notes } = req.body;
 
     // Validation
-    if (!name || !email || !unitNumber || !preferredDate || !preferredTime || !alternateDate || !alternateTime) {
+    if (!name || !email || !unitNumber || !selectedOption) {
       return res.status(400).json({
         success: false,
-        message: 'All required fields must be provided'
+        message: 'Name, email, unit number, and selected option are required'
       });
     }
 
-    // // Validate email format
-    // const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
-    // if (!emailRegex.test(email)) {
-    //   return res.status(400).json({
-    //     success: false,
-    //     message: 'Please provide a valid email address'
-    //   });
-    // }
-
-    // // Validate public email domain
-    // const publicDomains = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'aol.com', 'protonmail.com', 'zoho.com'];
-    // const domain = email.toLowerCase().split('@')[1];
-    
-    // if (!publicDomains.includes(domain)) {
-    //   return res.status(400).json({
-    //     success: false,
-    //     message: 'Please use a public email domain (Gmail, Yahoo, Outlook, etc.)'
-    //   });
-    // }
-
-    // Validate dates are in the future
-    const preferredDateObj = new Date(preferredDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    if (preferredDateObj < today) {
+    // Validate option type
+    const validOptions = ['lock-price', 'design-fee', 'questions'];
+    if (!validOptions.includes(selectedOption)) {
       return res.status(400).json({
         success: false,
-        message: 'Preferred date must be in the future'
+        message: 'Invalid option selected'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address'
       });
     }
 
     console.log('\n📋 ========================================');
-    console.log('   NEW NEXT STEPS SUBMISSION');
+    console.log(' NEW NEXT STEPS OPTION SUBMISSION');
     console.log('========================================');
     console.log('Name:', name);
     console.log('Email:', email);
     console.log('Unit:', unitNumber);
-    console.log('Preferred Date:', preferredDate);
-    console.log('Meeting Type:', meetingType);
+    console.log('Option:', selectedOption);
 
     // Check if submission already exists for this email + unit
-    let submission = await NextStepsSubmission.findOne({
+    let submission = await NextStepsOption.findOne({
       email: email.toLowerCase(),
       unitNumber: unitNumber.trim()
     });
@@ -85,69 +63,25 @@ const submitNextSteps = async (req, res) => {
       console.log('📝 Updating existing submission:', submission._id);
       
       // Update existing submission
-      submission.clientName = name.trim();
-      submission.meetingRequest = {
-        preferredDate: new Date(preferredDate),
-        preferredTime,
-        alternateDate: new Date(alternateDate),
-        alternateTime,
-        meetingType: meetingType || 'in-person',
-        notes: notes || ''
-      };
-      submission.meetingStatus = 'pending';
-      submission.allDocumentsAcknowledged = true;
-      submission.documentsAcknowledgedAt = new Date();
-      
-      // Mark all documents as acknowledged
-      submission.acknowledgedDocuments = {
-        understandingOptions: {
-          acknowledged: true,
-          acknowledgedAt: new Date()
-        },
-        designFee: {
-          acknowledged: true,
-          acknowledgedAt: new Date()
-        },
-        depositPricing: {
-          acknowledged: true,
-          acknowledgedAt: new Date()
-        }
-      };
+      submission.name = name.trim();
+      submission.phone = phone?.trim() || '';
+      submission.selectedOption = selectedOption;
+      submission.notes = notes?.trim() || '';
+      submission.status = 'pending';
       
       await submission.save();
     } else {
       console.log('✨ Creating new submission...');
       
       // Create new submission
-      submission = await NextStepsSubmission.create({
+      submission = await NextStepsOption.create({
+        name: name.trim(),
         email: email.toLowerCase(),
+        phone: phone?.trim() || '',
         unitNumber: unitNumber.trim(),
-        clientName: name.trim(),
-        allDocumentsAcknowledged: true,
-        documentsAcknowledgedAt: new Date(),
-        acknowledgedDocuments: {
-          understandingOptions: {
-            acknowledged: true,
-            acknowledgedAt: new Date()
-          },
-          designFee: {
-            acknowledged: true,
-            acknowledgedAt: new Date()
-          },
-          depositPricing: {
-            acknowledged: true,
-            acknowledgedAt: new Date()
-          }
-        },
-        meetingRequest: {
-          preferredDate: new Date(preferredDate),
-          preferredTime,
-          alternateDate: new Date(alternateDate),
-          alternateTime,
-          meetingType: meetingType || 'in-person',
-          notes: notes || ''
-        },
-        meetingStatus: 'pending',
+        selectedOption: selectedOption,
+        notes: notes?.trim() || '',
+        status: 'pending',
         submissionSource: 'next-steps-page',
         ipAddress: req.ip || req.connection.remoteAddress,
         userAgent: req.get('user-agent')
@@ -156,144 +90,163 @@ const submitNextSteps = async (req, res) => {
 
     console.log('✅ Submission saved - ID:', submission._id);
 
-    // Format dates for email
-    const formattedPreferredDate = new Date(preferredDate).toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+    // Determine which email templates to use
+    let clientTemplate, adminTemplate, clientSubject, adminSubject;
 
-    const formattedAlternateDate = new Date(alternateDate).toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-
-    // Send client confirmation email
-    try {
-      console.log('\n📧 Sending client confirmation email...');
+    switch (selectedOption) {
+      case 'lock-price':
+        clientTemplate = lockPriceClientTemplate;
+        adminTemplate = lockPriceAdminTemplate;
+        clientSubject = 'Lock 2025 Pricing - Next Steps';
+        adminSubject = `🔒 New Lock Pricing Request - ${name} (${unitNumber})`;
+        break;
       
-      const clientEmailHTML = meetingRequestTemplate({
+      case 'design-fee':
+        clientTemplate = designFeeClientTemplate;
+        adminTemplate = designFeeAdminTemplate;
+        clientSubject = 'Design Hold Fee - Next Steps';
+        adminSubject = `📋 New Design Fee Request - ${name} (${unitNumber})`;
+        break;
+      
+      case 'questions':
+        clientTemplate = questionsClientTemplate;
+        adminTemplate = questionsAdminTemplate;
+        clientSubject = 'Consultation Request - We\'ll Be In Touch';
+        adminSubject = `❓ New Consultation Request - ${name} (${unitNumber})`;
+        break;
+      
+      default:
+        clientTemplate = questionsClientTemplate;
+        adminTemplate = questionsAdminTemplate;
+        clientSubject = 'Request Received - We\'ll Be In Touch';
+        adminSubject = `📨 New Request - ${name} (${unitNumber})`;
+    }
+
+    // Send client confirmation email (ONLY ONCE)
+    try {
+      console.log('\n📧 Sending client confirmation email to:', email);
+      
+      const clientEmailHTML = clientTemplate({
         clientName: name,
         unitNumber: unitNumber,
-        preferredDate: formattedPreferredDate,
-        preferredTime: preferredTime,
-        alternateDate: formattedAlternateDate,
-        alternateTime: alternateTime,
-        meetingType: meetingType || 'in-person',
-        notes: notes || ''
+        email: email,
+        phone: phone || 'Not provided',
+        notes: notes || 'None'
       });
 
       await sendEmail({
         to: email,
         toName: name,
-        subject: `Meeting Request Confirmation - Unit ${unitNumber}`,
+        subject: clientSubject,
         htmlContent: clientEmailHTML
       });
 
       submission.emailNotifications.clientConfirmationSent = true;
       submission.emailNotifications.clientConfirmationSentAt = new Date();
       await submission.save();
-
+      
       console.log('✅ Client email sent');
     } catch (emailError) {
       console.error('❌ Client email failed:', emailError.message);
       // Don't fail the request if email fails
     }
 
-    // Send admin notification email to primary admin
+    // Send admin notification email #1 to primary admin
     try {
-      console.log('\n📧 Sending admin notification to:', ADMIN_EMAIL);
-
-      const adminEmailHTML = adminMeetingNotificationTemplate({
+      console.log('\n📧 Sending admin notification #1 to:', ADMIN_EMAIL);
+      
+      const adminEmailHTML = adminTemplate({
         clientName: name,
         clientEmail: email,
+        clientPhone: phone || 'Not provided',
         unitNumber: unitNumber,
-        preferredDate: formattedPreferredDate,
-        preferredTime: preferredTime,
-        alternateDate: formattedAlternateDate,
-        alternateTime: alternateTime,
-        meetingType: meetingType || 'in-person',
-        meetingNotes: notes || '',
-        questionnaire: null // No questionnaire in this flow
+        notes: notes || 'None',
+        submittedAt: new Date().toLocaleString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
       });
 
       await sendEmail({
         to: ADMIN_EMAIL,
         toName: 'Henderson Admin',
-        subject: `🔔 New Meeting Request - ${name} (${unitNumber})`,
+        subject: adminSubject,
         htmlContent: adminEmailHTML
       });
 
       submission.emailNotifications.adminNotificationSent = true;
       submission.emailNotifications.adminNotificationSentAt = new Date();
       await submission.save();
-
-      console.log('✅ Admin email sent to primary admin');
+      
+      console.log('✅ Admin email #1 sent to:', ADMIN_EMAIL);
     } catch (adminEmailError) {
-      console.error('⚠️  Admin email failed:', adminEmailError.message);
+      console.error('⚠️ Admin email #1 failed:', adminEmailError.message);
       // Don't fail the request if admin email fails
     }
 
-    // Send duplicate notification to anggaraputra9552@gmail.com
-    const NOTIFICATION_EMAIL = 'anggaraputra9552@gmail.com';
-    if (NOTIFICATION_EMAIL && NOTIFICATION_EMAIL !== ADMIN_EMAIL) {
-      try {
-        console.log('\n📧 Sending duplicate notification to:', NOTIFICATION_EMAIL);
+    // Send admin notification email #2 to Gusti
+    try {
+      console.log('\n📧 Sending admin notification #2 to:', NOTIFICATION_EMAIL);
+      
+      const notificationEmailHTML = adminTemplate({
+        clientName: name,
+        clientEmail: email,
+        clientPhone: phone || 'Not provided',
+        unitNumber: unitNumber,
+        notes: notes || 'None',
+        submittedAt: new Date().toLocaleString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      });
 
-        const notificationEmailHTML = adminMeetingNotificationTemplate({
-          clientName: name,
-          clientEmail: email,
-          unitNumber: unitNumber,
-          preferredDate: formattedPreferredDate,
-          preferredTime: preferredTime,
-          alternateDate: formattedAlternateDate,
-          alternateTime: alternateTime,
-          meetingType: meetingType || 'in-person',
-          meetingNotes: notes || '',
-          questionnaire: null
-        });
-
-        await sendEmail({
-          to: NOTIFICATION_EMAIL,
-          toName: 'Notification Admin',
-          subject: `🔔 New Meeting Request - ${name} (${unitNumber})`,
-          htmlContent: notificationEmailHTML
-        });
-
-        console.log('✅ Duplicate notification sent');
-      } catch (notificationError) {
-        console.error('⚠️  Duplicate notification failed:', notificationError.message);
-        // Don't fail the request if notification email fails
-      }
+      await sendEmail({
+        to: NOTIFICATION_EMAIL,
+        toName: 'Admin Notification',
+        subject: adminSubject,
+        htmlContent: notificationEmailHTML
+      });
+      
+      console.log('✅ Admin email #2 sent to:', NOTIFICATION_EMAIL);
+    } catch (notificationError) {
+      console.error('⚠️ Admin email #2 failed:', notificationError.message);
+      // Don't fail the request if notification email fails
     }
 
+    console.log('========================================\n');
+    console.log('📊 EMAIL SUMMARY:');
+    console.log(`   1. Client email → ${email}`);
+    console.log(`   2. Admin email #1 → ${ADMIN_EMAIL}`);
+    console.log(`   3. Admin email #2 → ${NOTIFICATION_EMAIL}`);
     console.log('========================================\n');
 
     // Return success response
     res.status(201).json({
       success: true,
-      message: submission.isNew 
-        ? '✅ Meeting request submitted! Confirmation email sent.'
-        : '✅ Meeting request updated! Confirmation email sent.',
+      message: '✅ Your request has been submitted! Confirmation email sent.',
       data: {
         submissionId: submission._id,
-        name: submission.clientName,
+        name: submission.name,
         email: submission.email,
         unitNumber: submission.unitNumber,
-        meetingStatus: submission.meetingStatus,
-        preferredDate: submission.meetingRequest.preferredDate,
-        preferredTime: submission.meetingRequest.preferredTime,
-        documentsAcknowledged: submission.allDocumentsAcknowledged,
+        selectedOption: submission.selectedOption,
+        optionDisplayName: submission.optionDisplayName,
+        status: submission.status,
         createdAt: submission.createdAt
       }
     });
 
   } catch (error) {
     console.error('❌ Submission error:', error);
-    
+
     // Handle validation errors
     if (error.name === 'ValidationError') {
       const messages = Object.values(error.errors).map(err => err.message);
@@ -305,20 +258,20 @@ const submitNextSteps = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: 'Failed to submit meeting request. Please try again.',
+      message: 'Failed to submit request. Please try again.',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// @desc    Get submission by ID
-// @route   GET /api/next-steps/submission/:id
-// @access  Public
+// @desc Get submission by ID
+// @route GET /api/next-steps/submission/:id
+// @access Public
 const getSubmission = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const submission = await NextStepsSubmission.findById(id);
+    const submission = await NextStepsOption.findById(id);
 
     if (!submission) {
       return res.status(404).json({
@@ -341,9 +294,9 @@ const getSubmission = async (req, res) => {
   }
 };
 
-// @desc    Get submissions by email and unit number
-// @route   GET /api/next-steps/check
-// @access  Public
+// @desc Check if submission exists for email + unit number
+// @route GET /api/next-steps/check
+// @access Public
 const checkSubmission = async (req, res) => {
   try {
     const { email, unitNumber } = req.query;
@@ -355,7 +308,7 @@ const checkSubmission = async (req, res) => {
       });
     }
 
-    const submission = await NextStepsSubmission.findOne({
+    const submission = await NextStepsOption.findOne({
       email: email.toLowerCase(),
       unitNumber: unitNumber.trim()
     }).sort({ createdAt: -1 });
@@ -373,12 +326,13 @@ const checkSubmission = async (req, res) => {
       exists: true,
       data: {
         submissionId: submission._id,
+        name: submission.name,
         email: submission.email,
         unitNumber: submission.unitNumber,
-        meetingStatus: submission.meetingStatus,
-        documentsAcknowledged: submission.allDocumentsAcknowledged,
-        createdAt: submission.createdAt,
-        meetingRequest: submission.meetingRequest
+        selectedOption: submission.selectedOption,
+        optionDisplayName: submission.optionDisplayName,
+        status: submission.status,
+        createdAt: submission.createdAt
       }
     });
 
@@ -391,42 +345,69 @@ const checkSubmission = async (req, res) => {
   }
 };
 
-// @desc    Get all pending meeting requests
-// @route   GET /api/next-steps/pending
-// @access  Protected (Admin)
-const getPendingMeetings = async (req, res) => {
+// @desc Get all pending submissions
+// @route GET /api/next-steps/pending
+// @access Protected (Admin)
+const getPendingSubmissions = async (req, res) => {
   try {
-    const pendingMeetings = await NextStepsSubmission.getPendingMeetings();
+    const pendingSubmissions = await NextStepsOption.getPendingSubmissions();
 
     res.json({
       success: true,
-      count: pendingMeetings.length,
-      data: pendingMeetings
+      count: pendingSubmissions.length,
+      data: pendingSubmissions
     });
 
   } catch (error) {
-    console.error('Get pending meetings error:', error);
+    console.error('Get pending submissions error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to get pending meetings'
+      message: 'Failed to get pending submissions'
     });
   }
 };
 
-// @desc    Confirm meeting
-// @route   PUT /api/next-steps/confirm/:id
-// @access  Protected (Admin)
-const confirmMeeting = async (req, res) => {
+// @desc Get submissions by option type
+// @route GET /api/next-steps/by-option/:optionType
+// @access Protected (Admin)
+const getSubmissionsByOption = async (req, res) => {
+  try {
+    const { optionType } = req.params;
+
+    const validOptions = ['lock-price', 'design-fee', 'questions'];
+    if (!validOptions.includes(optionType)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid option type'
+      });
+    }
+
+    const submissions = await NextStepsOption.getSubmissionsByOption(optionType);
+
+    res.json({
+      success: true,
+      count: submissions.length,
+      data: submissions
+    });
+
+  } catch (error) {
+    console.error('Get submissions by option error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get submissions'
+    });
+  }
+};
+
+// @desc Update submission status
+// @route PUT /api/next-steps/update-status/:id
+// @access Protected (Admin)
+const updateSubmissionStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      confirmedDate,
-      confirmedTime,
-      meetingLink,
-      designerNotes
-    } = req.body;
+    const { status, adminNotes, processedBy } = req.body;
 
-    const submission = await NextStepsSubmission.findById(id);
+    const submission = await NextStepsOption.findById(id);
 
     if (!submission) {
       return res.status(404).json({
@@ -435,273 +416,44 @@ const confirmMeeting = async (req, res) => {
       });
     }
 
-    // Update meeting confirmation
-    await submission.confirmMeeting({
-      confirmedDate: new Date(confirmedDate),
-      confirmedTime,
-      meetingLink: meetingLink || '',
-      confirmedBy: req.user?.name || req.user?.email || 'Admin',
-      designerNotes: designerNotes || ''
-    });
-
-    // Send confirmation email to client
-    try {
-      const formattedDate = new Date(confirmedDate).toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-
-      const confirmationEmailHTML = meetingConfirmationTemplate({
-        clientName: submission.clientName || submission.email.split('@')[0],
-        unitNumber: submission.unitNumber,
-        confirmedDate: formattedDate,
-        confirmedTime: confirmedTime,
-        meetingType: submission.meetingRequest.meetingType,
-        meetingLink: meetingLink || '',
-        notes: designerNotes || ''
-      });
-
-      await sendEmail({
-        to: submission.email,
-        toName: submission.clientName || submission.email.split('@')[0],
-        subject: `Meeting Confirmed - Unit ${submission.unitNumber}`,
-        htmlContent: confirmationEmailHTML
-      });
-
-      submission.emailNotifications.meetingConfirmationSent = true;
-      submission.emailNotifications.meetingConfirmationSentAt = new Date();
-      await submission.save();
-
-      console.log('✅ Meeting confirmation email sent to client');
-    } catch (emailError) {
-      console.error('❌ Confirmation email failed:', emailError.message);
+    // Update status
+    if (status) {
+      submission.status = status;
     }
 
-    // Send duplicate notification to anggaraputra9552@gmail.com
-    const NOTIFICATION_EMAIL = 'anggaraputra9552@gmail.com';
-    try {
-      console.log('📧 Sending confirmation notification to:', NOTIFICATION_EMAIL);
-
-      const formattedDate = new Date(confirmedDate).toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-
-      const notificationHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: #28a745; color: white; padding: 20px; text-align: center; }
-    .content { padding: 20px; background: #f8f9fa; }
-    .info-row { margin: 10px 0; }
-    .label { font-weight: bold; color: #004b5f; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h2>✅ Meeting Confirmed</h2>
-    </div>
-    <div class="content">
-      <p>A meeting has been confirmed with the following details:</p>
-      
-      <div class="info-row">
-        <span class="label">Client Name:</span> ${submission.clientName || 'N/A'}
-      </div>
-      <div class="info-row">
-        <span class="label">Email:</span> ${submission.email}
-      </div>
-      <div class="info-row">
-        <span class="label">Unit Number:</span> ${submission.unitNumber}
-      </div>
-      <div class="info-row">
-        <span class="label">Confirmed Date:</span> ${formattedDate}
-      </div>
-      <div class="info-row">
-        <span class="label">Confirmed Time:</span> ${confirmedTime}
-      </div>
-      <div class="info-row">
-        <span class="label">Meeting Type:</span> ${submission.meetingRequest.meetingType}
-      </div>
-      ${meetingLink ? `<div class="info-row"><span class="label">Meeting Link:</span> ${meetingLink}</div>` : ''}
-      ${designerNotes ? `<div class="info-row"><span class="label">Designer Notes:</span> ${designerNotes}</div>` : ''}
-    </div>
-  </div>
-</body>
-</html>`;
-
-      await sendEmail({
-        to: NOTIFICATION_EMAIL,
-        toName: 'Admin Notification',
-        subject: `✅ Meeting Confirmed - ${submission.clientName} (${submission.unitNumber})`,
-        htmlContent: notificationHTML
-      });
-
-      console.log('✅ Confirmation notification sent');
-    } catch (notificationError) {
-      console.error('⚠️  Confirmation notification failed:', notificationError.message);
+    if (adminNotes) {
+      submission.adminNotes = adminNotes;
     }
 
-    res.json({
-      success: true,
-      message: 'Meeting confirmed successfully',
-      data: submission
-    });
-
-  } catch (error) {
-    console.error('Confirm meeting error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to confirm meeting'
-    });
-  }
-};
-
-// @desc    Cancel meeting
-// @route   PUT /api/next-steps/cancel/:id
-// @access  Protected (Admin)
-const cancelMeeting = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { reason } = req.body;
-
-    const submission = await NextStepsSubmission.findById(id);
-
-    if (!submission) {
-      return res.status(404).json({
-        success: false,
-        message: 'Submission not found'
-      });
+    if (processedBy) {
+      submission.processedBy = processedBy;
+      submission.processedAt = new Date();
     }
 
-    submission.meetingStatus = 'cancelled';
-    submission.adminNotes = reason || 'Meeting cancelled by admin';
     await submission.save();
 
-    // Send cancellation email to client
-    try {
-      const cancelledDate = submission.confirmedMeeting?.confirmedDate 
-        ? new Date(submission.confirmedMeeting.confirmedDate).toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-          })
-        : null;
-
-      const cancellationEmailHTML = meetingCancellationTemplate({
-        clientName: submission.clientName || submission.email.split('@')[0],
-        unitNumber: submission.unitNumber,
-        cancelledDate: cancelledDate,
-        cancelledTime: submission.confirmedMeeting?.confirmedTime || '',
-        reason: reason || ''
-      });
-
-      await sendEmail({
-        to: submission.email,
-        toName: submission.clientName || submission.email.split('@')[0],
-        subject: `Meeting Cancelled - Unit ${submission.unitNumber}`,
-        htmlContent: cancellationEmailHTML
-      });
-
-      console.log('✅ Cancellation email sent to client');
-    } catch (emailError) {
-      console.error('❌ Cancellation email failed:', emailError.message);
-    }
-
-    // Send duplicate notification to anggaraputra9552@gmail.com
-    const NOTIFICATION_EMAIL = 'anggaraputra9552@gmail.com';
-    try {
-      console.log('📧 Sending cancellation notification to:', NOTIFICATION_EMAIL);
-
-      const cancelledDate = submission.confirmedMeeting?.confirmedDate 
-        ? new Date(submission.confirmedMeeting.confirmedDate).toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-          })
-        : null;
-
-      const notificationHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: #dc3545; color: white; padding: 20px; text-align: center; }
-    .content { padding: 20px; background: #f8f9fa; }
-    .info-row { margin: 10px 0; }
-    .label { font-weight: bold; color: #004b5f; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h2>❌ Meeting Cancelled</h2>
-    </div>
-    <div class="content">
-      <p>A meeting has been cancelled:</p>
-      
-      <div class="info-row">
-        <span class="label">Client Name:</span> ${submission.clientName || 'N/A'}
-      </div>
-      <div class="info-row">
-        <span class="label">Email:</span> ${submission.email}
-      </div>
-      <div class="info-row">
-        <span class="label">Unit Number:</span> ${submission.unitNumber}
-      </div>
-      ${cancelledDate ? `<div class="info-row"><span class="label">Cancelled Date:</span> ${cancelledDate}</div>` : ''}
-      ${submission.confirmedMeeting?.confirmedTime ? `<div class="info-row"><span class="label">Cancelled Time:</span> ${submission.confirmedMeeting.confirmedTime}</div>` : ''}
-      ${reason ? `<div class="info-row"><span class="label">Reason:</span> ${reason}</div>` : ''}
-    </div>
-  </div>
-</body>
-</html>`;
-
-      await sendEmail({
-        to: NOTIFICATION_EMAIL,
-        toName: 'Admin Notification',
-        subject: `❌ Meeting Cancelled - ${submission.clientName} (${submission.unitNumber})`,
-        htmlContent: notificationHTML
-      });
-
-      console.log('✅ Cancellation notification sent');
-    } catch (notificationError) {
-      console.error('⚠️  Cancellation notification failed:', notificationError.message);
-    }
+    console.log(`✅ Submission ${id} updated - Status: ${submission.status}`);
 
     res.json({
       success: true,
-      message: 'Meeting cancelled',
+      message: 'Submission updated successfully',
       data: submission
     });
 
   } catch (error) {
-    console.error('Cancel meeting error:', error);
+    console.error('Update submission status error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to cancel meeting'
+      message: 'Failed to update submission'
     });
   }
 };
 
 module.exports = {
-  submitNextSteps,
+  submitOption,
   getSubmission,
   checkSubmission,
-  getPendingMeetings,
-  confirmMeeting,
-  cancelMeeting
+  getPendingSubmissions,
+  getSubmissionsByOption,
+  updateSubmissionStatus
 };

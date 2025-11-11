@@ -1,136 +1,63 @@
 const mongoose = require('mongoose');
 
-// Model untuk tracking acknowledgement dokumen dan meeting request
-const nextStepsSubmissionSchema = new mongoose.Schema({
+// Model untuk tracking pilihan Next Steps client
+const nextStepsOptionSchema = new mongoose.Schema({
   // Client Information
+  name: {
+    type: String,
+    required: [true, 'Name is required'],
+    trim: true
+  },
   email: {
     type: String,
     required: [true, 'Email is required'],
     lowercase: true,
     trim: true,
   },
+  phone: {
+    type: String,
+    trim: true
+  },
   unitNumber: {
     type: String,
     required: [true, 'Unit number is required'],
     trim: true
   },
-  clientName: {
+
+  // Selected Option
+  selectedOption: {
     type: String,
-    trim: true
+    required: [true, 'Selected option is required'],
+    enum: ['lock-price', 'design-fee', 'questions'],
   },
-  
-  // Document Acknowledgement Tracking
-  acknowledgedDocuments: {
-    understandingOptions: {
-      acknowledged: {
-        type: Boolean,
-        default: false
-      },
-      acknowledgedAt: {
-        type: Date
-      }
-    },
-    designFee: {
-      acknowledged: {
-        type: Boolean,
-        default: false
-      },
-      acknowledgedAt: {
-        type: Date
-      }
-    },
-    depositPricing: {
-      acknowledged: {
-        type: Boolean,
-        default: false
-      },
-      acknowledgedAt: {
-        type: Date
-      }
-    }
-  },
-  
-  allDocumentsAcknowledged: {
-    type: Boolean,
-    default: false
-  },
-  documentsAcknowledgedAt: {
-    type: Date
-  },
-  
-  // Meeting Request Information
-  meetingRequest: {
-    preferredDate: {
-      type: Date,
-      required: [true, 'Preferred date is required']
-    },
-    preferredTime: {
-      type: String,
-      required: [true, 'Preferred time is required'],
-      trim: true
-    },
-    alternateDate: {
-      type: Date,
-      required: [true, 'Alternate date is required']
-    },
-    alternateTime: {
-      type: String,
-      required: [true, 'Alternate time is required'],
-      trim: true
-    },
-    meetingType: {
-      type: String,
-      enum: ['in-person', 'virtual'],
-      default: 'in-person'
-    },
-    notes: {
-      type: String,
-      trim: true,
-      maxlength: [1000, 'Notes cannot exceed 1000 characters']
-    }
-  },
-  
-  // Meeting Status
-  meetingStatus: {
+
+  // Additional Information
+  notes: {
     type: String,
-    enum: ['pending', 'confirmed', 'completed', 'cancelled', 'rescheduled'],
+    trim: true,
+    maxlength: [2000, 'Notes cannot exceed 2000 characters']
+  },
+
+  // Status Tracking
+  status: {
+    type: String,
+    enum: ['pending', 'contacted', 'processing', 'completed', 'cancelled'],
     default: 'pending'
   },
-  
-  confirmedMeeting: {
-    confirmedDate: {
-      type: Date
-    },
-    confirmedTime: {
-      type: String
-    },
-    meetingLink: {
-      type: String // For virtual meetings
-    },
-    confirmedBy: {
-      type: String // Admin/Designer name or ID
-    },
-    confirmedAt: {
-      type: Date
-    },
-    designerNotes: {
-      type: String,
-      maxlength: [1000, 'Designer notes cannot exceed 1000 characters']
-    }
+
+  // Follow-up Information
+  followUpRequired: {
+    type: Boolean,
+    default: true
   },
-  
-  // Tracking and Metadata
-  submissionSource: {
+  followUpDate: {
+    type: Date
+  },
+  followUpNotes: {
     type: String,
-    default: 'next-steps-page'
+    maxlength: [2000, 'Follow-up notes cannot exceed 2000 characters']
   },
-  ipAddress: {
-    type: String
-  },
-  userAgent: {
-    type: String
-  },
-  
+
   // Email Notifications
   emailNotifications: {
     clientConfirmationSent: {
@@ -146,112 +73,86 @@ const nextStepsSubmissionSchema = new mongoose.Schema({
     },
     adminNotificationSentAt: {
       type: Date
-    },
-    meetingConfirmationSent: {
-      type: Boolean,
-      default: false
-    },
-    meetingConfirmationSentAt: {
-      type: Date
     }
   },
-  
-  // Admin Notes
+
+  // Admin Processing
   adminNotes: {
     type: String,
     maxlength: [2000, 'Admin notes cannot exceed 2000 characters']
   },
-  
-  // Follow-up tracking
-  followUpRequired: {
-    type: Boolean,
-    default: false
+  processedBy: {
+    type: String // Admin/Staff name or ID
   },
-  followUpDate: {
+  processedAt: {
     type: Date
   },
-  followUpNotes: {
+
+  // Tracking and Metadata
+  submissionSource: {
+    type: String,
+    default: 'next-steps-page'
+  },
+  ipAddress: {
+    type: String
+  },
+  userAgent: {
     type: String
   }
-  
 }, {
   timestamps: true
 });
 
 // Indexes for better query performance
-nextStepsSubmissionSchema.index({ email: 1, unitNumber: 1 });
-nextStepsSubmissionSchema.index({ meetingStatus: 1 });
-nextStepsSubmissionSchema.index({ createdAt: -1 });
-nextStepsSubmissionSchema.index({ 'meetingRequest.preferredDate': 1 });
+nextStepsOptionSchema.index({ email: 1 });
+nextStepsOptionSchema.index({ unitNumber: 1 });
+nextStepsOptionSchema.index({ selectedOption: 1 });
+nextStepsOptionSchema.index({ status: 1 });
+nextStepsOptionSchema.index({ createdAt: -1 });
 
-// Virtual for checking if all documents are acknowledged
-nextStepsSubmissionSchema.virtual('isFullyAcknowledged').get(function() {
-  return this.acknowledgedDocuments.understandingOptions.acknowledged &&
-         this.acknowledgedDocuments.designFee.acknowledged &&
-         this.acknowledgedDocuments.depositPricing.acknowledged;
+// Virtual for option display name
+nextStepsOptionSchema.virtual('optionDisplayName').get(function() {
+  const optionNames = {
+    'lock-price': 'Lock 2025 Pricing',
+    'design-fee': 'Design Hold Fee',
+    'questions': 'Schedule Consultation'
+  };
+  return optionNames[this.selectedOption] || this.selectedOption;
 });
 
-// Method to mark document as acknowledged
-nextStepsSubmissionSchema.methods.acknowledgeDocument = function(documentType) {
-  if (this.acknowledgedDocuments[documentType]) {
-    this.acknowledgedDocuments[documentType].acknowledged = true;
-    this.acknowledgedDocuments[documentType].acknowledgedAt = new Date();
-    
-    // Check if all documents are now acknowledged
-    if (this.isFullyAcknowledged) {
-      this.allDocumentsAcknowledged = true;
-      this.documentsAcknowledgedAt = new Date();
-    }
+// Method to mark as contacted
+nextStepsOptionSchema.methods.markAsContacted = function(staffName, notes) {
+  this.status = 'contacted';
+  this.processedBy = staffName;
+  this.processedAt = new Date();
+  if (notes) {
+    this.adminNotes = notes;
   }
   return this.save();
 };
 
-// Method to confirm meeting
-nextStepsSubmissionSchema.methods.confirmMeeting = function(confirmationData) {
-  this.meetingStatus = 'confirmed';
-  this.confirmedMeeting = {
-    confirmedDate: confirmationData.confirmedDate,
-    confirmedTime: confirmationData.confirmedTime,
-    meetingLink: confirmationData.meetingLink || '',
-    confirmedBy: confirmationData.confirmedBy,
-    confirmedAt: new Date(),
-    designerNotes: confirmationData.designerNotes || ''
-  };
-  return this.save();
-};
-
-// Static method to get pending meetings
-nextStepsSubmissionSchema.statics.getPendingMeetings = function() {
-  return this.find({ meetingStatus: 'pending' })
-    .sort({ 'meetingRequest.preferredDate': 1 })
+// Static method to get pending submissions
+nextStepsOptionSchema.statics.getPendingSubmissions = function() {
+  return this.find({ status: 'pending' })
+    .sort({ createdAt: -1 })
     .select('-__v');
 };
 
-// Static method to get meetings by date range
-nextStepsSubmissionSchema.statics.getMeetingsByDateRange = function(startDate, endDate) {
+// Static method to get submissions by option type
+nextStepsOptionSchema.statics.getSubmissionsByOption = function(optionType) {
+  return this.find({ selectedOption: optionType })
+    .sort({ createdAt: -1 })
+    .select('-__v');
+};
+
+// Static method to get submissions by date range
+nextStepsOptionSchema.statics.getSubmissionsByDateRange = function(startDate, endDate) {
   return this.find({
-    $or: [
-      { 'meetingRequest.preferredDate': { $gte: startDate, $lte: endDate } },
-      { 'meetingRequest.alternateDate': { $gte: startDate, $lte: endDate } },
-      { 'confirmedMeeting.confirmedDate': { $gte: startDate, $lte: endDate } }
-    ]
+    createdAt: {
+      $gte: startDate,
+      $lte: endDate
+    }
   }).sort({ createdAt: -1 });
 };
 
-// Pre-save middleware to validate dates
-nextStepsSubmissionSchema.pre('save', function(next) {
-  // Ensure preferred date is in the future
-  if (this.isNew || this.isModified('meetingRequest.preferredDate')) {
-    const preferredDate = new Date(this.meetingRequest.preferredDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    if (preferredDate < today) {
-      return next(new Error('Preferred date must be in the future'));
-    }
-  }
-  
-  next();
-});
-
-module.exports = mongoose.model('NextStepsSubmission', nextStepsSubmissionSchema);
+module.exports = mongoose.model('NextStepsOption', nextStepsOptionSchema);
