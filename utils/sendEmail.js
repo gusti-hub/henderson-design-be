@@ -33,7 +33,7 @@ const sendEmail = async (options) => {
     // Sender
     sendSmtpEmail.sender = options.sender || {
       name: process.env.EMAIL_FROM_NAME || 'Henderson Design Group',
-      email: process.env.EMAIL_FROM || 'agustianggaraputra@gmail.com'
+      email: process.env.EMAIL_FROM || 'hendersongroupnotify@gmail.com'
     };
 
     // Recipient
