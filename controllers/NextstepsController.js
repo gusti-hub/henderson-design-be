@@ -34,25 +34,25 @@ const submitNextSteps = async (req, res) => {
       });
     }
 
-    // Validate email format
-    const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide a valid email address'
-      });
-    }
+    // // Validate email format
+    // const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+    // if (!emailRegex.test(email)) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: 'Please provide a valid email address'
+    //   });
+    // }
 
-    // Validate public email domain
-    const publicDomains = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'aol.com', 'protonmail.com', 'zoho.com'];
-    const domain = email.toLowerCase().split('@')[1];
+    // // Validate public email domain
+    // const publicDomains = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'aol.com', 'protonmail.com', 'zoho.com'];
+    // const domain = email.toLowerCase().split('@')[1];
     
-    if (!publicDomains.includes(domain)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please use a public email domain (Gmail, Yahoo, Outlook, etc.)'
-      });
-    }
+    // if (!publicDomains.includes(domain)) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: 'Please use a public email domain (Gmail, Yahoo, Outlook, etc.)'
+    //   });
+    // }
 
     // Validate dates are in the future
     const preferredDateObj = new Date(preferredDate);

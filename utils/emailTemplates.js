@@ -158,9 +158,7 @@ const meetingRequestTemplate = ({ clientName, unitNumber, preferredDate, preferr
                     <strong>Need Assistance?</strong>
                   </p>
                   <p style="margin: 0; color: #6c757d; font-size: 14px; line-height: 1.6;">
-                    📧 Email: agustianggaraputra@gmail.com<br/>
-                    📱 WhatsApp: +62 812-3456-7890<br/>
-                    🌐 Website: www.henderson.house
+                    📧 Email: aloha@henderson.house<br/>
                   </p>
                 </td>
               </tr>
@@ -340,9 +338,7 @@ const meetingConfirmationTemplate = ({ clientName, unitNumber, confirmedDate, co
                     <strong>Need to Reschedule or Have Questions?</strong>
                   </p>
                   <p style="margin: 0; color: #6c757d; font-size: 14px; line-height: 1.6;">
-                    📧 Email: agustianggaraputra@gmail.com<br/>
-                    📱 WhatsApp: +62 812-3456-7890<br/>
-                    🌐 Website: www.henderson.house
+                    📧 Email: aloha@henderson.house<br/>
                   </p>
                 </td>
               </tr>
@@ -482,9 +478,7 @@ const meetingCancellationTemplate = ({ clientName, unitNumber, cancelledDate, ca
                     <strong>Get in Touch:</strong>
                   </p>
                   <p style="margin: 0; color: #6c757d; font-size: 14px; line-height: 1.6;">
-                    📧 Email: agustianggaraputra@gmail.com<br/>
-                    📱 WhatsApp: +62 812-3456-7890<br/>
-                    🌐 Website: www.henderson.house
+                    📧 Email: aloha@henderson.house<br/>
                   </p>
                 </td>
               </tr>
