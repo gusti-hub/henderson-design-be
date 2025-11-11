@@ -9,7 +9,7 @@ const {
   questionsAdminTemplate
 } = require('../utils/emailTemplates');
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'anggaraputra9552@gmail.com';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'gustianggara@henderson.house;almer@henderson.house;madeline@henderson.house';
 const NOTIFICATION_EMAIL = 'anggaraputra9552@gmail.com';
 
 // @desc Submit next steps option selection
@@ -153,8 +153,13 @@ const submitOption = async (req, res) => {
 
     // Send admin notification email #1 to primary admin
     try {
-      console.log('\n📧 Sending admin notification #1 to:', ADMIN_EMAIL);
-      
+      const adminEmails = (process.env.ADMIN_EMAIL || 'gustianggara@henderson.house;almer@henderson.house;madeline@henderson.house')
+        .split(/[;,]+/) // split by ; or ,
+        .map(e => e.trim())
+        .filter(e => e.length > 0);
+
+      console.log('\n📧 Sending admin notification to:', adminEmails.join(', '));
+
       const adminEmailHTML = adminTemplate({
         clientName: name,
         clientEmail: email,
@@ -171,21 +176,26 @@ const submitOption = async (req, res) => {
         })
       });
 
-      await sendEmail({
-        to: ADMIN_EMAIL,
-        toName: 'Henderson Admin',
-        subject: adminSubject,
-        htmlContent: adminEmailHTML
-      });
+      for (const adminEmail of adminEmails) {
+        try {
+          await sendEmail({
+            to: adminEmail,
+            toName: 'Henderson Admin',
+            subject: adminSubject,
+            htmlContent: adminEmailHTML
+          });
+          console.log(`✅ Admin email sent to: ${adminEmail}`);
+        } catch (err) {
+          console.error(`⚠️ Failed to send admin email to ${adminEmail}:`, err.message);
+        }
+      }
 
       submission.emailNotifications.adminNotificationSent = true;
       submission.emailNotifications.adminNotificationSentAt = new Date();
       await submission.save();
-      
-      console.log('✅ Admin email #1 sent to:', ADMIN_EMAIL);
+
     } catch (adminEmailError) {
-      console.error('⚠️ Admin email #1 failed:', adminEmailError.message);
-      // Don't fail the request if admin email fails
+      console.error('⚠️ Admin email sending loop failed:', adminEmailError.message);
     }
 
     // Send admin notification email #2 to Gusti
