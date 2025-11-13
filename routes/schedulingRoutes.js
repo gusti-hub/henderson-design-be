@@ -9,7 +9,7 @@ const {
   bookAppointment,
   getAppointment,
   cancelAppointment
-} = require('../controllers/schedulingController');
+} = require('../controllers/SchedulingController');
 
 // FE kamu sudah pakai:
 router.get('/config', getAvailabilityConfig);
