@@ -1,4 +1,4 @@
-const NextStepsOption = require('../models/Nextstepssubmission');
+const NextStepsOption = require('../models/NextStepsOption');
 const sendEmail = require('../utils/sendEmail');
 const { 
   lockPriceClientTemplate, 
@@ -27,7 +27,6 @@ const submitOption = async (req, res) => {
       });
     }
 
-    // Validate option type
     const validOptions = ['lock-price', 'design-fee', 'questions'];
     if (!validOptions.includes(selectedOption)) {
       return res.status(400).json({
@@ -36,7 +35,6 @@ const submitOption = async (req, res) => {
       });
     }
 
-    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({
@@ -45,234 +43,56 @@ const submitOption = async (req, res) => {
       });
     }
 
-    console.log('\n📋 ========================================');
-    console.log(' NEW NEXT STEPS OPTION SUBMISSION');
-    console.log('========================================');
-    console.log('Name:', name);
-    console.log('Email:', email);
-    console.log('Unit:', unitNumber);
-    console.log('Option:', selectedOption);
-
-    // Check if submission already exists for this email + unit
+    // Check existing submission
     let submission = await NextStepsOption.findOne({
       email: email.toLowerCase(),
       unitNumber: unitNumber.trim()
     });
 
     if (submission) {
-      console.log('📝 Updating existing submission:', submission._id);
-      
-      // Update existing submission
       submission.name = name.trim();
       submission.phone = phone?.trim() || '';
       submission.selectedOption = selectedOption;
       submission.notes = notes?.trim() || '';
       submission.status = 'pending';
-      
+      submission.emailNotifications = {}; // clear email flags
       await submission.save();
     } else {
-      console.log('✨ Creating new submission...');
-      
-      // Create new submission
       submission = await NextStepsOption.create({
         name: name.trim(),
         email: email.toLowerCase(),
         phone: phone?.trim() || '',
         unitNumber: unitNumber.trim(),
-        selectedOption: selectedOption,
+        selectedOption,
         notes: notes?.trim() || '',
         status: 'pending',
         submissionSource: 'next-steps-page',
+        emailNotifications: {},
         ipAddress: req.ip || req.connection.remoteAddress,
         userAgent: req.get('user-agent')
       });
     }
 
-    console.log('✅ Submission saved - ID:', submission._id);
+    // ❗ NO EMAILS SENT HERE
 
-    // Determine which email templates to use
-    let clientTemplate, adminTemplate, clientSubject, adminSubject;
-
-    switch (selectedOption) {
-      case 'lock-price':
-        clientTemplate = lockPriceClientTemplate;
-        adminTemplate = lockPriceAdminTemplate;
-        clientSubject = 'Lock 2025 Pricing - Next Steps';
-        adminSubject = `🔒 New Lock Pricing Request - ${name} (${unitNumber})`;
-        break;
-      
-      case 'design-fee':
-        clientTemplate = designFeeClientTemplate;
-        adminTemplate = designFeeAdminTemplate;
-        clientSubject = 'Design Hold Fee - Next Steps';
-        adminSubject = `📋 New Design Fee Request - ${name} (${unitNumber})`;
-        break;
-      
-      case 'questions':
-        clientTemplate = questionsClientTemplate;
-        adminTemplate = questionsAdminTemplate;
-        clientSubject = 'Consultation Request - We\'ll Be In Touch';
-        adminSubject = `❓ New Consultation Request - ${name} (${unitNumber})`;
-        break;
-      
-      default:
-        clientTemplate = questionsClientTemplate;
-        adminTemplate = questionsAdminTemplate;
-        clientSubject = 'Request Received - We\'ll Be In Touch';
-        adminSubject = `📨 New Request - ${name} (${unitNumber})`;
-    }
-
-    // Send client confirmation email (ONLY ONCE)
-    try {
-      console.log('\n📧 Sending client confirmation email to:', email);
-      
-      const clientEmailHTML = clientTemplate({
-        clientName: name,
-        unitNumber: unitNumber,
-        email: email,
-        phone: phone || 'Not provided',
-        notes: notes || 'None'
-      });
-
-      await sendEmail({
-        to: email,
-        toName: name,
-        subject: clientSubject,
-        htmlContent: clientEmailHTML
-      });
-
-      submission.emailNotifications.clientConfirmationSent = true;
-      submission.emailNotifications.clientConfirmationSentAt = new Date();
-      await submission.save();
-      
-      console.log('✅ Client email sent');
-    } catch (emailError) {
-      console.error('❌ Client email failed:', emailError.message);
-      // Don't fail the request if email fails
-    }
-
-    // Send admin notification email #1 to primary admin
-    try {
-      const adminEmails = (process.env.ADMIN_EMAIL || 'gustianggara@henderson.house;almer@henderson.house;madeline@henderson.house')
-        .split(/[;,]+/) // split by ; or ,
-        .map(e => e.trim())
-        .filter(e => e.length > 0);
-
-      console.log('\n📧 Sending admin notification to:', adminEmails.join(', '));
-
-      const adminEmailHTML = adminTemplate({
-        clientName: name,
-        clientEmail: email,
-        clientPhone: phone || 'Not provided',
-        unitNumber: unitNumber,
-        notes: notes || 'None',
-        submittedAt: new Date().toLocaleString('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        })
-      });
-
-      for (const adminEmail of adminEmails) {
-        try {
-          await sendEmail({
-            to: adminEmail,
-            toName: 'Henderson Admin',
-            subject: adminSubject,
-            htmlContent: adminEmailHTML
-          });
-          console.log(`✅ Admin email sent to: ${adminEmail}`);
-        } catch (err) {
-          console.error(`⚠️ Failed to send admin email to ${adminEmail}:`, err.message);
-        }
-      }
-
-      submission.emailNotifications.adminNotificationSent = true;
-      submission.emailNotifications.adminNotificationSentAt = new Date();
-      await submission.save();
-
-    } catch (adminEmailError) {
-      console.error('⚠️ Admin email sending loop failed:', adminEmailError.message);
-    }
-
-    // Send admin notification email #2 to Gusti
-    try {
-      console.log('\n📧 Sending admin notification #2 to:', NOTIFICATION_EMAIL);
-      
-      const notificationEmailHTML = adminTemplate({
-        clientName: name,
-        clientEmail: email,
-        clientPhone: phone || 'Not provided',
-        unitNumber: unitNumber,
-        notes: notes || 'None',
-        submittedAt: new Date().toLocaleString('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        })
-      });
-
-      await sendEmail({
-        to: NOTIFICATION_EMAIL,
-        toName: 'Admin Notification',
-        subject: adminSubject,
-        htmlContent: notificationEmailHTML
-      });
-      
-      console.log('✅ Admin email #2 sent to:', NOTIFICATION_EMAIL);
-    } catch (notificationError) {
-      console.error('⚠️ Admin email #2 failed:', notificationError.message);
-      // Don't fail the request if notification email fails
-    }
-
-    console.log('========================================\n');
-    console.log('📊 EMAIL SUMMARY:');
-    console.log(`   1. Client email → ${email}`);
-    console.log(`   2. Admin email #1 → ${ADMIN_EMAIL}`);
-    console.log(`   3. Admin email #2 → ${NOTIFICATION_EMAIL}`);
-    console.log('========================================\n');
-
-    // Return success response
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: '✅ Your request has been submitted! Confirmation email sent.',
+      message: 'Next Step option saved. Please continue to scheduling.',
       data: {
-        submissionId: submission._id,
-        name: submission.name,
-        email: submission.email,
-        unitNumber: submission.unitNumber,
-        selectedOption: submission.selectedOption,
-        optionDisplayName: submission.optionDisplayName,
-        status: submission.status,
-        createdAt: submission.createdAt
+        submissionId: submission._id
       }
     });
 
-  } catch (error) {
-    console.error('❌ Submission error:', error);
+  } catch (err) {
+    console.error('❌ submitOption error:', err);
 
-    // Handle validation errors
-    if (error.name === 'ValidationError') {
-      const messages = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        success: false,
-        message: messages.join(', ')
-      });
-    }
-
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: 'Failed to submit request. Please try again.',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: 'Failed to save next steps option.'
     });
   }
 };
+
 
 // @desc Get submission by ID
 // @route GET /api/next-steps/submission/:id

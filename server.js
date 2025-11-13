@@ -5,6 +5,7 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const profileRoutes = require('./routes/profileRoutes');
 const trackActivity = require('./middleware/activityTracker');
+const schedulingRoutes = require('./routes/schedulingRoutes');
 
 
 // Load env vars
@@ -48,6 +49,7 @@ app.use('/api/clients-portal', require('./routes/clientPortalRoutes'));
 app.use('/api/questionnaires', require('./routes/questionnaireRoutes'));
 app.use('/api/next-steps', require('./routes/NextstepsRoutes'));
 app.use('/api/profile', profileRoutes);
+app.use('/api/scheduling', schedulingRoutes);
 
 // Enhanced error handling
 app.use((err, req, res, next) => {
