@@ -6,6 +6,7 @@ const connectDB = require('./config/db');
 const profileRoutes = require('./routes/profileRoutes');
 const trackActivity = require('./middleware/activityTracker');
 const schedulingRoutes = require('./routes/schedulingRoutes');
+const journeyRoutes = require('./routes/journeyRoutes');
 
 
 // Load env vars
@@ -50,6 +51,8 @@ app.use('/api/questionnaires', require('./routes/questionnaireRoutes'));
 app.use('/api/next-steps', require('./routes/NextstepsRoutes'));
 app.use('/api/profile', profileRoutes);
 app.use('/api/scheduling', schedulingRoutes);
+app.use('/api/journeys', journeyRoutes);
+
 
 // Enhanced error handling
 app.use((err, req, res, next) => {
