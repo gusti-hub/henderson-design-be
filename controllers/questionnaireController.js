@@ -1,33 +1,19 @@
-// backend/controllers/questionnaireController.js
+// backend/controllers/questionnaireController.js - COMPLETE VERSION WITH ALL HANDLERS
 const ClientQuestionnaire = require('../models/ClientQuestionnaire');
 const User = require('../models/User');
-const Order = require('../models/Order');
-const nodemailer = require('nodemailer');
-
-// Configure nodemailer transporter
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD
-  }
-});
 
 /**
- * Create or update questionnaire (draft mode)
- * Supports both authenticated users and client portal (email/unitNumber)
- * ✅ FIXED: Always update existing record, never create duplicates
+ * Save questionnaire draft (auto-save)
+ * NOT USED IN CURRENT IMPLEMENTATION but kept for compatibility
  */
 exports.saveQuestionnaireDraft = async (req, res) => {
   try {
     const questionnaireData = req.body;
     let userId;
 
-    // Check if request is authenticated (has req.user from protect middleware)
     if (req.user) {
       userId = req.user.id;
     } else {
-      // Client portal - verify by email and unitNumber
       const { email, unitNumber } = req.body;
       
       if (!email || !unitNumber) {
@@ -54,16 +40,9 @@ exports.saveQuestionnaireDraft = async (req, res) => {
 
     console.log('\n💾 Saving questionnaire draft...');
     console.log('User ID:', userId);
-    console.log('Unit Number:', questionnaireData.unitNumber);
 
-    // ✅ FIX: Use findOneAndUpdate with upsert to prevent duplicates
-    // Find by userId + unitNumber + status OR just userId + unitNumber
     const questionnaire = await ClientQuestionnaire.findOneAndUpdate(
-      {
-        userId: userId,
-        unitNumber: questionnaireData.unitNumber,
-        status: { $in: ['draft', 'submitted'] } // Update any draft or submitted
-      },
+      { userId: userId },
       {
         ...questionnaireData,
         userId: userId,
@@ -71,21 +50,18 @@ exports.saveQuestionnaireDraft = async (req, res) => {
         updatedAt: new Date()
       },
       {
-        new: true,        // Return updated document
-        upsert: true,     // Create if doesn't exist
+        new: true,
+        upsert: true,
         runValidators: true
       }
     );
 
     console.log('✅ Draft saved/updated successfully');
-    console.log('   Questionnaire ID:', questionnaire._id);
-    console.log('   Status:', questionnaire.status);
 
     res.json({
       success: true,
       message: 'Draft saved successfully',
-      questionnaire: questionnaire,
-      completionPercentage: questionnaire.completionPercentage
+      questionnaire: questionnaire
     });
   } catch (error) {
     console.error('❌ Save draft error:', error);
@@ -99,20 +75,18 @@ exports.saveQuestionnaireDraft = async (req, res) => {
 
 /**
  * Submit completed questionnaire
- * Supports both authenticated users and client portal (email/unitNumber)
- * ✅ FIXED: Always update existing record, never create duplicates
+ * ✅ FIXED: Ensures likedDesigns is saved
+ * ✅ FIXED: 1 user = 1 questionnaire (always update, never duplicate)
  */
 exports.submitQuestionnaire = async (req, res) => {
   try {
     const questionnaireData = req.body;
     let userId, user;
 
-    // Check if request is authenticated
     if (req.user) {
       userId = req.user.id;
       user = await User.findById(userId);
     } else {
-      // Client portal - verify by email and unitNumber
       const { email, unitNumber } = req.body;
       
       if (!email || !unitNumber) {
@@ -137,51 +111,78 @@ exports.submitQuestionnaire = async (req, res) => {
       userId = user._id;
     }
 
-    // Validate required fields
-    const validationErrors = validateQuestionnaire(questionnaireData);
-    if (validationErrors.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please complete all required fields',
-        errors: validationErrors
-      });
-    }
-
     console.log('\n📝 Submitting questionnaire...');
     console.log('User:', user.name);
     console.log('Email:', user.email);
     console.log('Unit Number:', questionnaireData.unitNumber);
+    console.log('Liked Designs:', questionnaireData.likedDesigns);
 
-    // ✅ FIX: Use findOneAndUpdate with upsert to prevent duplicates
+    const dataToSave = {
+      clientName: questionnaireData.clientName || user.name,
+      unitNumber: questionnaireData.unitNumber || user.unitNumber,
+      email: user.email,
+      userId: userId,
+      
+      // ✅ CRITICAL: Explicitly save likedDesigns
+      likedDesigns: questionnaireData.likedDesigns || [],
+      
+      // Form data
+      primary_use: questionnaireData.primary_use,
+      occupancy: questionnaireData.occupancy,
+      lifestyle: questionnaireData.lifestyle,
+      entertaining: questionnaireData.entertaining,
+      entertaining_style: questionnaireData.entertaining_style,
+      design_style: questionnaireData.design_style,
+      color_preference: questionnaireData.color_preference,
+      atmosphere: questionnaireData.atmosphere,
+      bedroom_use: questionnaireData.bedroom_use,
+      work_from_home: questionnaireData.work_from_home,
+      dining: questionnaireData.dining,
+      bed_size: questionnaireData.bed_size,
+      guest_bed: questionnaireData.guest_bed,
+      tv_preference: questionnaireData.tv_preference,
+      artwork: questionnaireData.artwork,
+      window_treatment: questionnaireData.window_treatment,
+      pets: questionnaireData.pets,
+      pet_details: questionnaireData.pet_details,
+      activities: questionnaireData.activities,
+      collection_interest: questionnaireData.collection_interest,
+      move_in: questionnaireData.move_in,
+      must_haves: questionnaireData.must_haves,
+      special_requests: questionnaireData.special_requests,
+      
+      // Status
+      status: 'submitted',
+      submittedAt: new Date(),
+      updatedAt: new Date(),
+      isFirstTimeComplete: true,
+      completionPercentage: 100
+    };
+
+    console.log('📦 Data to save:', dataToSave);
+
+    // ✅ CRITICAL: Use findOneAndUpdate with upsert
     const questionnaire = await ClientQuestionnaire.findOneAndUpdate(
-      {
-        userId: userId,
-        unitNumber: questionnaireData.unitNumber
-      },
-      {
-        ...questionnaireData,
-        userId: userId,
-        status: 'submitted',
-        submittedAt: new Date(),
-        updatedAt: new Date()
-      },
+      { userId: userId },
+      dataToSave,
       {
         new: true,
         upsert: true,
-        runValidators: true
+        runValidators: true,
+        setDefaultsOnInsert: true
       }
     );
 
     console.log('✅ Questionnaire submitted successfully');
     console.log('   Questionnaire ID:', questionnaire._id);
     console.log('   Status:', questionnaire.status);
-
-    // NO EMAIL NOTIFICATIONS - removed as requested
+    console.log('   Liked Designs Count:', questionnaire.likedDesigns?.length || 0);
 
     res.json({
       success: true,
       message: 'Questionnaire submitted successfully',
-      questionnaire: questionnaire
+      questionnaire: questionnaire,
+      isFirstTimeComplete: true
     });
   } catch (error) {
     console.error('❌ Submit questionnaire error:', error);
@@ -195,7 +196,6 @@ exports.submitQuestionnaire = async (req, res) => {
 
 /**
  * Get questionnaire by ID
- * Supports both authenticated users and client portal
  */
 exports.getQuestionnaire = async (req, res) => {
   try {
@@ -211,9 +211,7 @@ exports.getQuestionnaire = async (req, res) => {
       });
     }
 
-    // Check permissions
     if (req.user) {
-      // Authenticated user
       const userId = req.user.id;
       const userRole = req.user.role;
 
@@ -225,7 +223,6 @@ exports.getQuestionnaire = async (req, res) => {
         });
       }
     }
-    // If not authenticated, allow access (client portal)
 
     res.json({
       success: true,
@@ -243,18 +240,15 @@ exports.getQuestionnaire = async (req, res) => {
 
 /**
  * Get user's questionnaires
- * Supports both authenticated users and client portal (email/unitNumber)
- * ✅ FIXED: Return only the latest questionnaire per unit
+ * ✅ FIXED: Returns only ONE questionnaire per user
  */
 exports.getUserQuestionnaires = async (req, res) => {
   try {
     let userId;
 
-    // Check if request is authenticated
     if (req.user) {
       userId = req.user.id;
     } else {
-      // Client portal - verify by email and unitNumber from query params
       const { email, unitNumber } = req.query;
       
       if (!email || !unitNumber) {
@@ -279,13 +273,19 @@ exports.getUserQuestionnaires = async (req, res) => {
       userId = user._id;
     }
 
-    // Get questionnaires - should only be 1 per unit now
     const questionnaires = await ClientQuestionnaire.find({ userId: userId })
-      .sort({ updatedAt: -1, createdAt: -1 });
+      .sort({ updatedAt: -1 })
+      .limit(1);
+
+    const hasCompletedQuestionnaire = questionnaires.some(
+      q => q.status === 'submitted' || q.status === 'under-review' || q.status === 'approved'
+    );
 
     res.json({
       success: true,
-      questionnaires: questionnaires
+      questionnaires: questionnaires,
+      hasCompletedQuestionnaire: hasCompletedQuestionnaire,
+      needsQuestionnaire: !hasCompletedQuestionnaire
     });
   } catch (error) {
     console.error('Get user questionnaires error:', error);
@@ -308,7 +308,7 @@ exports.getAllQuestionnaires = async (req, res) => {
     if (status) query.status = status;
 
     const questionnaires = await ClientQuestionnaire.find(query)
-      .populate('userId', 'name email phoneNumber')
+      .populate('userId', 'name email phoneNumber unitNumber')
       .populate('reviewedBy', 'name email')
       .sort({ submittedAt: -1, updatedAt: -1 })
       .limit(limit * 1)
@@ -357,8 +357,6 @@ exports.updateQuestionnaireStatus = async (req, res) => {
 
     await questionnaire.save();
 
-    // NO EMAIL NOTIFICATIONS - removed as requested
-
     res.json({
       success: true,
       message: 'Questionnaire status updated',
@@ -375,18 +373,41 @@ exports.updateQuestionnaireStatus = async (req, res) => {
 };
 
 /**
- * Delete questionnaire (soft delete - only drafts)
+ * Delete questionnaire (Admin only)
  */
 exports.deleteQuestionnaire = async (req, res) => {
   try {
     const questionnaireId = req.params.id;
-    let userId;
 
-    // Check if request is authenticated
+    // Allow both admin and user to delete (user only their own drafts)
     if (req.user) {
-      userId = req.user.id;
+      const questionnaire = await ClientQuestionnaire.findById(questionnaireId);
+
+      if (!questionnaire) {
+        return res.status(404).json({
+          success: false,
+          message: 'Questionnaire not found'
+        });
+      }
+
+      // Admin can delete any, user can only delete their own drafts
+      if (req.user.role !== 'admin') {
+        if (questionnaire.userId.toString() !== req.user.id || questionnaire.status !== 'draft') {
+          return res.status(403).json({
+            success: false,
+            message: 'Access denied'
+          });
+        }
+      }
+
+      await questionnaire.deleteOne();
+
+      res.json({
+        success: true,
+        message: 'Questionnaire deleted'
+      });
     } else {
-      // Client portal - get userId from query
+      // Non-authenticated request
       const { email, unitNumber } = req.query;
       
       if (!email || !unitNumber) {
@@ -408,39 +429,29 @@ exports.deleteQuestionnaire = async (req, res) => {
         });
       }
 
-      userId = user._id;
-    }
+      const questionnaire = await ClientQuestionnaire.findById(questionnaireId);
 
-    const questionnaire = await ClientQuestionnaire.findById(questionnaireId);
+      if (!questionnaire) {
+        return res.status(404).json({
+          success: false,
+          message: 'Questionnaire not found'
+        });
+      }
 
-    if (!questionnaire) {
-      return res.status(404).json({
-        success: false,
-        message: 'Questionnaire not found'
+      if (questionnaire.userId.toString() !== user._id.toString() || questionnaire.status !== 'draft') {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied'
+        });
+      }
+
+      await questionnaire.deleteOne();
+
+      res.json({
+        success: true,
+        message: 'Questionnaire deleted'
       });
     }
-
-    // Only allow deletion of drafts by owner
-    if (questionnaire.userId.toString() !== userId.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
-    }
-
-    if (questionnaire.status !== 'draft') {
-      return res.status(400).json({
-        success: false,
-        message: 'Only draft questionnaires can be deleted'
-      });
-    }
-
-    await questionnaire.deleteOne();
-
-    res.json({
-      success: true,
-      message: 'Draft questionnaire deleted'
-    });
   } catch (error) {
     console.error('Delete questionnaire error:', error);
     res.status(500).json({
@@ -450,26 +461,5 @@ exports.deleteQuestionnaire = async (req, res) => {
     });
   }
 };
-
-// ========== HELPER FUNCTIONS ==========
-
-/**
- * Validate required questionnaire fields
- */
-function validateQuestionnaire(data) {
-  const errors = [];
-
-  // Section 1: Home Use & Lifestyle (Required)
-  if (!data.clientName) errors.push('Client name is required');
-  if (!data.unitNumber) errors.push('Unit number is required');
-  if (!data.homeUse?.purpose) errors.push('Home purpose is required');
-  if (!data.homeUse?.primaryUsers) errors.push('Primary users is required');
-  if (!data.homeUse?.livingStyle) errors.push('Living style is required');
-
-  // Section 3: Design Aesthetic (Required)
-  if (!data.designOptions?.designType) errors.push('Design type is required');
-
-  return errors;
-}
 
 module.exports = exports;

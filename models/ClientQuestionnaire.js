@@ -161,6 +161,11 @@ const clientQuestionnaireSchema = new mongoose.Schema({
     selectedItems: [String]  // Flexible array
   },
 
+    // ✅ ADD THIS FIELD - Image selections from questionnaire
+  likedDesigns: [{
+    type: Number  // Array of image IDs that user liked
+  }],
+
   // Status and Timestamps
   status: {
     type: String,
