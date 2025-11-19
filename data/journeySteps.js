@@ -1,259 +1,674 @@
 // /backend/data/journeySteps.js
-// 23 Main Steps with Sub-steps
+// Journey – TOTAL 61 steps (step from 1 → 61), CSV steps preserved.
 
 const JOURNEY_STEPS = [
-  // Phase 1: Introduction
-  { 
-    step: 1, 
-    title: "Initial Client Contact & Portal Setup",
-    description: "Introduction, portal setup, and client information gathering",
-    phase: "Introduction",
-    subSteps: [
-      { sub: 1, email: true, title: "Email to client for introduction meeting" },
-      { sub: 2, title: "Introduction with client" },
-      { sub: 3, title: "HDG input client information into software" },
-      { sub: 4, email: true, title: "HDG send out welcome portal" },
-      { sub: 5, clientAction: true, title: "Client responds through portal" },
-      { sub: 6, email: true, title: "Confirm portal completion" }
-    ]
+
+  // ==========================================
+  // PHASE B (original step 7–16) → step 1–10
+  // ==========================================
+  {
+    step: 1,
+    csvStep: 7,
+    title: "Client Portal First Login",
+    description: "Client logs into the portal for the first time",
+    phase: "Portal Activation & Design Setup",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
   },
-  { 
-    step: 2, 
-    title: "First Meeting Scheduling",
-    description: "Client schedules initial consultation meeting",
-    phase: "Introduction",
-    clientAction: true
+  {
+    step: 2,
+    csvStep: 7.5,
+    title: "Complete Initial Questionnaire",
+    description: "Client must complete the questionnaire before continuing",
+    phase: "Portal Activation & Design Setup",
+    email: false,
+    clientAction: true,
+    actionBy: "Client",
+    autoCheck: true
   },
-  { 
-    step: 3, 
-    title: "Initial Consultation & Pricing Review",
-    description: "HDG meets client to review pricing (30% Hold/Design, Contract, Options)",
-    phase: "Introduction"
+  {
+    step: 3,
+    csvStep: 8,
+    title: "Contract & Funding Preparation",
+    description: "HDG prepares contract and funding amount",
+    phase: "Portal Activation & Design Setup",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG",
+    autoGenerate: "contract"
+  },
+  {
+    step: 4,
+    csvStep: 9,
+    title: "Contract Delivery",
+    description: "HDG sends contract for signature",
+    phase: "Portal Activation & Design Setup",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "contractDelivery"
+  },
+  {
+    step: 5,
+    csvStep: "9.a",
+    title: "Funding Instructions Delivery",
+    description: "HDG sends funding instructions",
+    phase: "Portal Activation & Design Setup",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "fundingInstructions"
+  },
+  {
+    step: 6,
+    csvStep: 10,
+    title: "Client Signs and Funds",
+    description: "Client signs contract and submits payment",
+    phase: "Portal Activation & Design Setup",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
+  },
+  {
+    step: 7,
+    csvStep: 11,
+    title: "HDG Receives Signed Contract",
+    description: "HDG confirms receipt of signed contract",
+    phase: "Portal Activation & Design Setup",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 8,
+    csvStep: 12,
+    title: "Bank Confirms Receipt",
+    description: "Bank/System confirms payment receipt",
+    phase: "Portal Activation & Design Setup",
+    email: false,
+    clientAction: false,
+    actionBy: "Bank/System",
+    autoTrigger: true
+  },
+  {
+    step: 9,
+    csvStep: 13,
+    title: "Contract Receipt Confirmation",
+    description: "HDG confirms receipt of signed contract to client",
+    phase: "Portal Activation & Design Setup",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "contractConfirmation"
+  },
+  {
+    step: 10,
+    csvStep: 14,
+    title: "Funding Receipt Confirmation",
+    description: "HDG confirms receipt of funding to client",
+    phase: "Portal Activation & Design Setup",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "fundingConfirmation"
   },
 
-  // Phase 2: Contract & Initial Payment
-  { 
-    step: 4, 
-    title: "Contract Preparation & Delivery",
-    description: "Contract and funding instructions preparation and delivery",
-    phase: "Contract",
-    subSteps: [
-      { sub: 1, title: "HDG accounting prepares contract(s) & funding instructions" },
-      { sub: 2, email: true, title: "HDG send out contract(s) for client to sign" },
-      { sub: 3, email: true, title: "HDG send funding instructions" }
-    ]
+  // ==========================================
+  // PHASE C (original 17–35) → step 11–29
+  // ==========================================
+  {
+    step: 11,
+    csvStep: 15,
+    title: "Schedule Design Meeting 1",
+    description: "HDG emails client to schedule Design Meeting 1",
+    phase: "Design Meetings & Presentations",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "scheduleDesignMeeting1"
   },
-  { 
-    step: 5, 
-    title: "Client Contract Execution & Payment",
-    description: "Client signs contract and submits initial payment",
-    phase: "Contract",
-    subSteps: [
-      { sub: 1, clientAction: true, title: "Client signs and funds" },
-      { sub: 2, title: "HDG receives signed contract(s)" },
-      { sub: 3, title: "Bank confirms receipt of funding" }
-    ]
+  {
+    step: 12,
+    csvStep: 16,
+    title: "Client Books Design Meeting 1",
+    description: "Client signs up for Design Meeting 1",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
   },
-  { 
-    step: 6, 
-    title: "Contract Confirmation & Design Meeting Setup",
-    description: "Confirm receipt and schedule design meeting",
-    phase: "Contract",
-    subSteps: [
-      { sub: 1, email: true, title: "HDG confirms receipt of contract" },
-      { sub: 2, email: true, title: "HDG confirms receipt of funding" },
-      { sub: 3, email: true, title: "HDG emails to schedule design meeting" },
-      { sub: 4, clientAction: true, title: "Client signs up for design meeting" },
-      { sub: 5, email: true, title: "HDG sends design meeting confirmation" }
-    ]
+  {
+    step: 13,
+    csvStep: 17,
+    title: "Design Meeting 1 Confirmation",
+    description: "HDG sends confirmation with meeting details",
+    phase: "Design Meetings & Presentations",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "meetingConfirmation",
+    autoTrigger: true
   },
-
-  // Phase 3: Design Development
-  { 
-    step: 7, 
-    title: "Design Meeting 1 & Presentation Prep",
-    description: "First design meeting and presentation preparation",
-    phase: "Design",
-    subSteps: [
-      { sub: 1, title: "HDG design team reviews client response" },
-      { sub: 2, title: "Design meeting 1" },
-      { sub: 3, title: "HDG prepares presentation 1" }
-    ]
+  {
+    step: 14,
+    csvStep: 18,
+    title: "Design Team Review",
+    description: "Design team reviews questionnaire and client info",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
   },
-  { 
-    step: 8, 
-    title: "Presentation 1 & Revisions",
-    description: "First design presentation and initial revisions",
-    phase: "Design",
-    subSteps: [
-      { sub: 1, email: true, title: "HDG emails to schedule presentation 1" },
-      { sub: 2, clientAction: true, title: "Client signs up for presentation 1" },
-      { sub: 3, title: "HDG/Client presentation 1 meeting" },
-      { sub: 4, title: "HDG revises design (as needed)" }
-    ]
+  {
+    step: 15,
+    csvStep: 19,
+    title: "Design Meeting 1",
+    description: "HDG and client hold Design Meeting 1",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG + Client"
   },
-  { 
-    step: 9, 
-    title: "Presentation 2 & Revisions",
-    description: "Second design presentation and revisions (as needed)",
-    phase: "Design",
-    subSteps: [
-      { sub: 1, email: true, title: "HDG emails to schedule presentation 2" },
-      { sub: 2, clientAction: true, title: "Client signs up for presentation 2" },
-      { sub: 3, title: "HDG/Client presentation 2 meeting" },
-      { sub: 4, title: "HDG revises design (as needed)" }
-    ]
+  {
+    step: 16,
+    csvStep: 20,
+    title: "Prepare Presentation 1",
+    description: "HDG prepares first design presentation",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
   },
-  { 
-    step: 10, 
-    title: "Presentation 3 & Revisions",
-    description: "Third design presentation and revisions (as needed)",
-    phase: "Design",
-    subSteps: [
-      { sub: 1, email: true, title: "HDG emails to schedule presentation 3" },
-      { sub: 2, clientAction: true, title: "Client signs up for presentation 3" },
-      { sub: 3, title: "HDG/Client presentation 3 meeting" }
-    ]
+  {
+    step: 17,
+    csvStep: 21,
+    title: "Schedule Presentation 1",
+    description: "HDG emails client to schedule Presentation 1",
+    phase: "Design Meetings & Presentations",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "schedulePresentation1"
   },
-  { 
-    step: 11, 
-    title: "Final Design Approval",
+  {
+    step: 18,
+    csvStep: 22,
+    title: "Client Books Presentation 1",
+    description: "Client signs up for Presentation 1",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
+  },
+  {
+    step: 19,
+    csvStep: 23,
+    title: "Presentation 1 Meeting",
+    description: "HDG presents first design to client",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG + Client"
+  },
+  {
+    step: 20,
+    csvStep: 24,
+    title: "Design Revision 1",
+    description: "HDG revises design based on feedback",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 21,
+    csvStep: 25,
+    title: "Schedule Presentation 2",
+    description: "HDG emails client to schedule Presentation 2",
+    phase: "Design Meetings & Presentations",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "schedulePresentation2"
+  },
+  {
+    step: 22,
+    csvStep: 26,
+    title: "Client Books Presentation 2",
+    description: "Client signs up for Presentation 2",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
+  },
+  {
+    step: 23,
+    csvStep: 27,
+    title: "Presentation 2 Meeting",
+    description: "HDG presents revised design to client",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG + Client"
+  },
+  {
+    step: 24,
+    csvStep: 28,
+    title: "Design Revision 2",
+    description: "HDG revises design based on feedback",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 25,
+    csvStep: 29,
+    title: "Schedule Presentation 3",
+    description: "HDG emails client to schedule Presentation 3",
+    phase: "Design Meetings & Presentations",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "schedulePresentation3"
+  },
+  {
+    step: 26,
+    csvStep: 30,
+    title: "Client Books Presentation 3",
+    description: "Client signs up for Presentation 3",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
+  },
+  {
+    step: 27,
+    csvStep: 31,
+    title: "Presentation 3 Meeting",
+    description: "HDG presents final design iteration to client",
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG + Client"
+  },
+  {
+    step: 28,
+    csvStep: 32,
+    title: "Final Design Approval Request",
+    description: "HDG sends final design for approval",
+    phase: "Design Meetings & Presentations",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "finalDesignApproval"
+  },
+  {
+    step: 29,
+    csvStep: 33,
+    title: "Client Approves Final Design",
     description: "Client reviews and approves final design",
-    phase: "Design",
-    subSteps: [
-      { sub: 1, email: true, title: "HDG sends final design for approval" },
-      { sub: 2, clientAction: true, title: "Client approves design" }
-    ]
+    phase: "Design Meetings & Presentations",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
   },
 
-  // Phase 4: Final Proposal & Payment
-  { 
-    step: 12, 
-    title: "Final Proposal Preparation & Delivery",
-    description: "Preparation and delivery of final proposal",
-    phase: "Proposal",
-    subSteps: [
-      { sub: 1, title: "Design team and accounting prepare proposal" },
-      { sub: 2, title: "HDG accounting prepares proposal amount" },
-      { sub: 3, email: true, title: "HDG sends funding instructions & proposal to client" }
-    ]
+  // ==========================================
+  // PHASE D (original step 36–43) → step 30–37
+  // ==========================================
+  {
+    step: 30,
+    csvStep: 34,
+    title: "Production Contract Preparation",
+    description: "HDG prepares production contract",
+    phase: "Proposal Contract & 50% Funding",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG",
+    autoGenerate: "proposalContract"
   },
-  { 
-    step: 13, 
-    title: "Client Proposal Execution & Payment",
-    description: "Client signs proposal and submits payment",
-    phase: "Proposal",
-    subSteps: [
-      { sub: 1, clientAction: true, title: "Client signs and funds" },
-      { sub: 2, title: "HDG receives signed proposal" },
-      { sub: 3, title: "Bank confirms receipt of proposal funding" }
-    ]
+  {
+    step: 31,
+    csvStep: 35,
+    title: "Proposal Amount Calculation",
+    description: "HDG prepares and calculates proposal amount",
+    phase: "Proposal Contract & 50% Funding",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
   },
-  { 
-    step: 14, 
-    title: "Proposal Payment Confirmation",
-    description: "Confirmation of proposal receipt and payment",
-    phase: "Proposal",
-    subSteps: [
-      { sub: 1, email: true, title: "HDG confirms receipt of signed proposal" },
-      { sub: 2, email: true, title: "HDG confirms receipt of proposal funding" }
-    ]
+  {
+    step: 32,
+    csvStep: 36,
+    title: "Proposal & Funding Instructions Delivery",
+    description: "HDG sends proposal and funding instructions",
+    phase: "Proposal Contract & 50% Funding",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "proposalDelivery"
+  },
+  {
+    step: 33,
+    csvStep: 37,
+    title: "Client Signs and Funds Proposal",
+    description: "Client signs proposal and submits 50% payment",
+    phase: "Proposal Contract & 50% Funding",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
+  },
+  {
+    step: 34,
+    csvStep: 38,
+    title: "HDG Receives Signed Proposal",
+    description: "HDG confirms receipt of signed proposal",
+    phase: "Proposal Contract & 50% Funding",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 35,
+    csvStep: 39,
+    title: "Bank Confirms Proposal Payment",
+    description: "Bank/System confirms proposal payment receipt",
+    phase: "Proposal Contract & 50% Funding",
+    email: false,
+    clientAction: false,
+    actionBy: "Bank/System",
+    autoTrigger: true
+  },
+  {
+    step: 36,
+    csvStep: 40,
+    title: "Proposal Receipt Confirmation",
+    description: "HDG confirms receipt of signed proposal",
+    phase: "Proposal Contract & 50% Funding",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "proposalConfirmation"
+  },
+  {
+    step: 37,
+    csvStep: 41,
+    title: "Proposal Funding Confirmation",
+    description: "HDG confirms receipt of proposal funding",
+    phase: "Proposal Contract & 50% Funding",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "proposalFundingConfirmation"
   },
 
-  // Phase 5: Production Preparation
-  { 
-    step: 15, 
-    title: "Vendor Orders & Production Start",
-    description: "Vendor order processing and production initiation",
-    phase: "Production Prep",
-    subSteps: [
-      { sub: 1, title: "HDG prepares orders for vendor(s)" },
-      { sub: 2, title: "HDG sends order to vendor(s)" },
-      { sub: 3, title: "HDG receives vendor deposit 50% invoice" },
-      { sub: 4, title: "HDG funds vendor deposit 50%" },
-      { sub: 5, title: "Vendor production begins" }
-    ]
+  // ==========================================
+  // PHASE E (original 44–50) → step 38–44
+  // ==========================================
+  {
+    step: 38,
+    csvStep: 42,
+    title: "Vendor Order Preparation",
+    description: "HDG prepares vendor orders",
+    phase: "Vendor Order & Production",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
   },
-  { 
-    step: 16, 
+  {
+    step: 39,
+    csvStep: 43,
+    title: "Send Orders to Vendors",
+    description: "HDG sends orders to vendors",
+    phase: "Vendor Order & Production",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 40,
+    csvStep: 44,
+    title: "Vendor Invoice Received",
+    description: "Vendor sends 50% production deposit invoice",
+    phase: "Vendor Order & Production",
+    email: false,
+    clientAction: false,
+    actionBy: "Vendor"
+  },
+  {
+    step: 41,
+    csvStep: 45,
+    title: "Fund Vendor Deposit",
+    description: "HDG funds 50% vendor deposit",
+    phase: "Vendor Order & Production",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 42,
+    csvStep: 46,
+    title: "Vendor Production Begins",
+    description: "Vendor begins production",
+    phase: "Vendor Order & Production",
+    email: false,
+    clientAction: false,
+    actionBy: "Vendor"
+  },
+  {
+    step: 43,
+    csvStep: 47,
     title: "Production Start Notification",
-    description: "Notify client that order is in production",
-    phase: "Production Prep",
-    email: true
+    description: "HDG emails client that order is in production",
+    phase: "Vendor Order & Production",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "productionStarted",
+    autoTrigger: true
+  },
+  {
+    step: 44,
+    csvStep: 48,
+    title: "Production Management",
+    description: "HDG manages and monitors production",
+    phase: "Vendor Order & Production",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
   },
 
-  // Phase 6: Manufacturing
-  { 
-    step: 17, 
-    title: "Production Management & First Progress Payment",
-    description: "Production oversight and first progress payment processing",
-    phase: "Manufacturing",
-    subSteps: [
-      { sub: 1, title: "HDG manages production" },
-      { sub: 2, title: "HDG accounting invoices client 25% progress payment" },
-      { sub: 3, email: true, title: "HDG sends funding instructions & 25% invoice" },
-      { sub: 4, clientAction: true, title: "Client signs and funds" },
-      { sub: 5, title: "Bank confirms receipt of 25% progress payment" }
-    ]
+  // ==========================================
+  // PHASE F (original 51–58) → step 45–52
+  // ==========================================
+  {
+    step: 45,
+    csvStep: 49,
+    title: "25% Progress Payment Invoice",
+    description: "HDG invoices client for 25% progress payment",
+    phase: "25% Progress Payment",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "progressPayment25Invoice"
   },
-  { 
-    step: 18, 
-    title: "First Progress Payment Confirmation",
-    description: "Confirm receipt of 25% progress payment",
-    phase: "Manufacturing",
-    email: true
+  {
+    step: 46,
+    csvStep: 50,
+    title: "Progress Payment Funding Instructions",
+    description: "HDG sends funding instructions for 25% progress payment",
+    phase: "25% Progress Payment",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "progressPayment25Instructions"
   },
-  { 
-    step: 19, 
-    title: "Vendor Final Payment & Shipping",
-    description: "Complete vendor payment and initiate shipping",
-    phase: "Manufacturing",
-    subSteps: [
-      { sub: 1, title: "HDG funds vendor final balance 50%" },
-      { sub: 2, title: "HDG manages consolidation" },
-      { sub: 3, title: "Products ships" }
-    ]
+  {
+    step: 47,
+    csvStep: 51,
+    title: "Client Submits Progress Payment",
+    description: "Client signs and funds 25% progress payment",
+    phase: "25% Progress Payment",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
+  },
+  {
+    step: 48,
+    csvStep: 52,
+    title: "Bank Confirms Progress Payment",
+    description: "Bank/System confirms progress payment receipt",
+    phase: "25% Progress Payment",
+    email: false,
+    clientAction: false,
+    actionBy: "Bank/System",
+    autoTrigger: true
+  },
+  {
+    step: 49,
+    csvStep: 53,
+    title: "Progress Payment Confirmation",
+    description: "HDG confirms receipt of progress payment",
+    phase: "25% Progress Payment",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "progressPayment25Confirmation"
+  },
+  {
+    step: 50,
+    csvStep: 54,
+    title: "Fund Vendor Final Payment",
+    description: "HDG funds vendor final 50% balance",
+    phase: "25% Progress Payment",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 51,
+    csvStep: 55,
+    title: "Manage Consolidation",
+    description: "HDG manages consolidation and logistics",
+    phase: "25% Progress Payment",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 52,
+    csvStep: 56,
+    title: "Products Ship",
+    description: "Products ship from vendor",
+    phase: "25% Progress Payment",
+    email: false,
+    clientAction: false,
+    actionBy: "Vendor/Logistics"
   },
 
-  // Phase 7: Final Payment
-  { 
-    step: 20, 
-    title: "Final Balance Invoice & Payment",
-    description: "Final payment processing and confirmation",
-    phase: "Shipping",
-    subSteps: [
-      { sub: 1, email: true, title: "HDG invoices client 25% final balance" },
-      { sub: 2, email: true, title: "HDG sends funding instructions & balance invoice" },
-      { sub: 3, clientAction: true, title: "Client signs and funds" },
-      { sub: 4, title: "Bank confirms receipt of 25% balance payment" }
-    ]
+  // ==========================================
+  // PHASE G (original 59–63) → step 53–57
+  // ==========================================
+  {
+    step: 53,
+    csvStep: 57,
+    title: "Final Balance Invoice",
+    description: "HDG invoices client final 25% balance",
+    phase: "Final 25% Balance",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "finalBalance25Invoice"
   },
-  { 
-    step: 21, 
+  {
+    step: 54,
+    csvStep: 58,
+    title: "Final Funding Instructions",
+    description: "HDG sends final funding instructions",
+    phase: "Final 25% Balance",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "finalBalance25Instructions"
+  },
+  {
+    step: 55,
+    csvStep: 59,
+    title: "Client Submits Final Payment",
+    description: "Client signs and funds final 25% payment",
+    phase: "Final 25% Balance",
+    email: false,
+    clientAction: true,
+    actionBy: "Client"
+  },
+  {
+    step: 56,
+    csvStep: 60,
+    title: "Bank Confirms Final Payment",
+    description: "Bank/System confirms final payment receipt",
+    phase: "Final 25% Balance",
+    email: false,
+    clientAction: false,
+    actionBy: "Bank/System",
+    autoTrigger: true
+  },
+  {
+    step: 57,
+    csvStep: 61,
     title: "Final Payment Confirmation",
-    description: "Confirm receipt of final payment",
-    phase: "Shipping",
-    email: true
+    description: "HDG confirms receipt of final payment",
+    phase: "Final 25% Balance",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "finalPaymentConfirmation"
   },
 
-  // Phase 8: Delivery & Installation
-  { 
-    step: 22, 
-    title: "Delivery Coordination & Installation",
-    description: "Freight management, delivery coordination, and installation",
-    phase: "Delivery",
-    subSteps: [
-      { sub: 1, title: "HDG manages freight" },
-      { sub: 2, title: "HDG coordinates delivery with building" },
-      { sub: 3, title: "HDG installs" }
-    ]
+  // ==========================================
+  // PHASE H (original 64–67) → step 58–61
+  // ==========================================
+  {
+    step: 58,
+    csvStep: 62,
+    title: "Freight Management",
+    description: "HDG manages freight and shipping",
+    phase: "Delivery Installation & Reveal",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
   },
-  { 
-    step: 23, 
-    title: "Final Walkthrough Scheduling",
-    description: "Schedule final walkthrough and cleanup",
-    phase: "Delivery",
-    email: true
+  {
+    step: 59,
+    csvStep: 63,
+    title: "Coordinate Delivery",
+    description: "HDG coordinates delivery with building",
+    phase: "Delivery Installation & Reveal",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 60,
+    csvStep: 64,
+    title: "Installation",
+    description: "HDG installs furniture",
+    phase: "Delivery Installation & Reveal",
+    email: false,
+    clientAction: false,
+    actionBy: "HDG"
+  },
+  {
+    step: 61,
+    csvStep: 65,
+    title: "Schedule Final Walkthrough",
+    description: "HDG emails client to schedule walkthrough or reveal",
+    phase: "Delivery Installation & Reveal",
+    email: true,
+    clientAction: false,
+    actionBy: "HDG",
+    emailTemplate: "scheduleFinalWalkthrough"
   }
 ];
 

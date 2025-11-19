@@ -1,42 +1,17 @@
 // models/Journey.js
 const mongoose = require('mongoose');
 
-// ===== SUB-STEP SCHEMA =====
-const subStepSchema = new mongoose.Schema({
-  sub: {
-    type: Number,
-    required: true
-  },
-  title: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  email: {
-    type: Boolean,
-    default: false
-  },
-  clientAction: {
-    type: Boolean,
-    default: false
-  },
-  completed: {
-    type: Boolean,
-    default: false
-  },
-  completedAt: {
-    type: Date,
-    default: null
-  }
-}, { _id: false });
-
 // ===== JOURNEY STEP SCHEMA =====
 const journeyStepSchema = new mongoose.Schema({
   step: {
     type: Number,
     required: true,
     min: 1,
-    max: 23  // ✅ CHANGED FROM 10 TO 23
+    max: 67
+  },
+  csvStep: {
+    type: mongoose.Schema.Types.Mixed,
+    required: true
   },
   title: {
     type: String,
@@ -51,11 +26,20 @@ const journeyStepSchema = new mongoose.Schema({
   phase: {
     type: String,
     required: true,
-    trim: true
+    enum: [
+      'Pre-Portal Flow',
+      'Portal Activation & Design Setup',
+      'Design Meetings & Presentations',
+      'Proposal Contract & 50% Funding',
+      'Vendor Order & Production',
+      '25% Progress Payment',
+      'Final 25% Balance',
+      'Delivery Installation & Reveal'
+    ]
   },
   status: {
     type: String,
-    enum: ['not-started', 'pending', 'in-progress', 'completed'],
+    enum: ['not-started', 'pending', 'in-progress', 'completed', 'blocked'],
     default: 'not-started'
   },
   email: {
@@ -66,9 +50,27 @@ const journeyStepSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  subSteps: {
-    type: [subStepSchema],
-    default: []
+  actionBy: {
+    type: String,
+    enum: ['Client', 'HDG', 'HDG + Client', 'Vendor', 'Bank/System', 'Vendor/Logistics'],
+    required: true
+  },
+  emailTemplate: {
+    type: String,
+    default: null
+  },
+  autoTrigger: {
+    type: Boolean,
+    default: false
+  },
+  autoGenerate: {
+    type: String,
+    enum: ['contract', 'proposalContract', null],
+    default: null
+  },
+  autoCheck: {
+    type: Boolean,
+    default: false
   },
   estimatedDate: {
     type: Date,
@@ -81,8 +83,20 @@ const journeyStepSchema = new mongoose.Schema({
   notes: {
     type: String,
     default: '',
-    maxlength: 1000
+    maxlength: 2000
   },
+  generatedDocuments: [{
+    type: {
+      type: String,
+      enum: ['contract', 'proposal', 'invoice']
+    },
+    filename: String,
+    data: Buffer,
+    generatedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -108,9 +122,25 @@ const journeySchema = new mongoose.Schema({
     default: [],
     validate: {
       validator: function(steps) {
-        return steps.length === 23;  // ✅ CHANGED FROM 10 TO 23
+        return steps.length === 61;
       },
-      message: 'Journey must have exactly 23 steps'  // ✅ UPDATED MESSAGE
+      message: 'Journey must have exactly 61 steps'
+    }
+  },
+  contractData: {
+    designFeeContract: {
+      amount: Number,
+      downPayment: Number,
+      generatedAt: Date,
+      signedAt: Date
+    },
+    productionContract: {
+      amount: Number,
+      initialPayment: Number,
+      progressPayment: Number,
+      finalPayment: Number,
+      generatedAt: Date,
+      signedAt: Date
     }
   },
   createdAt: {
@@ -127,6 +157,7 @@ const journeySchema = new mongoose.Schema({
 // ===== INDEXES =====
 journeySchema.index({ clientId: 1 });
 journeySchema.index({ 'steps.status': 1 });
+journeySchema.index({ 'steps.clientAction': 1, 'steps.status': 1 });
 journeySchema.index({ updatedAt: -1 });
 
 // ===== PRE-SAVE MIDDLEWARE =====
@@ -164,23 +195,29 @@ journeySchema.methods.getStepsByStatus = function(status) {
   return this.steps.filter(s => s.status === status);
 };
 
+journeySchema.methods.getPendingClientActions = function() {
+  return this.steps.filter(s => 
+    s.clientAction && 
+    (s.status === 'pending' || s.status === 'in-progress')
+  );
+};
+
+journeySchema.methods.getStepsByPhase = function(phase) {
+  return this.steps.filter(s => s.phase === phase);
+};
+
 journeySchema.methods.isComplete = function() {
   return this.steps.every(s => s.status === 'completed');
 };
 
-journeySchema.methods.getEstimatedCompletion = function() {
-  const datesWithEstimates = this.steps
-    .filter(s => s.estimatedDate && s.status !== 'completed')
-    .map(s => s.estimatedDate)
-    .sort((a, b) => new Date(b) - new Date(a));
-  
-  return datesWithEstimates.length > 0 ? datesWithEstimates[0] : null;
+journeySchema.methods.getStepByNumber = function(stepNumber) {
+  return this.steps.find(s => s.step === parseInt(stepNumber));
 };
 
 // ===== STATIC METHODS =====
 journeySchema.statics.findByClientId = function(clientId) {
   return this.findOne({ clientId })
-    .populate('clientId', 'name email clientCode unitNumber')
+    .populate('clientId', 'name email clientCode unitNumber floorPlan')
     .populate('steps.updatedBy', 'name email');
 };
 
@@ -193,30 +230,6 @@ journeySchema.statics.getAllWithPagination = function(page = 1, limit = 10) {
     .limit(limit);
 };
 
-journeySchema.statics.getStatistics = async function() {
-  const journeys = await this.find();
-  const stats = {
-    total: journeys.length,
-    completed: 0,
-    inProgress: 0,
-    notStarted: 0,
-    averageProgress: 0
-  };
-  
-  let totalProgress = 0;
-  journeys.forEach(journey => {
-    const progress = journey.getProgress();
-    totalProgress += progress.percentage;
-    
-    if (progress.percentage === 100) stats.completed++;
-    else if (progress.percentage > 0) stats.inProgress++;
-    else stats.notStarted++;
-  });
-  
-  stats.averageProgress = journeys.length > 0 ? Math.round(totalProgress / journeys.length) : 0;
-  return stats;
-};
-
 // ===== VIRTUALS =====
 journeySchema.virtual('progressPercentage').get(function() {
   return this.getProgress().percentage;
@@ -224,6 +237,10 @@ journeySchema.virtual('progressPercentage').get(function() {
 
 journeySchema.virtual('currentStep').get(function() {
   return this.getCurrentStep();
+});
+
+journeySchema.virtual('pendingClientActions').get(function() {
+  return this.getPendingClientActions();
 });
 
 journeySchema.set('toJSON', { virtuals: true });
