@@ -1,54 +1,51 @@
-// clientRoutes.js
 const express = require('express');
 const router = express.Router();
-const { protect, authorize } = require('../middleware/auth');
 const {
-  getClients,
-  getClient,
-  createClient,
-  updateClient,
-  deleteClient,
-  approveClient,
-  rejectClient,
+  getAllClients,
+  getPendingClients,
   getPendingCount,
   getFloorPlans,
-  recordDownPayment,
-  updateDownPaymentStatus,
-  getPaymentSummary
+  getClientById,
+  createClient,      // ✅ ADDED
+  approveClient,
+  rejectClient,
+  updateClient,
+  deleteClient,
+  getClientStats,
+  recordPayment
 } = require('../controllers/clientController');
+const { protect, authorize } = require('../middleware/auth');
 
-// All routes require authentication
-router.use(protect);
 
-// Client CRUD routes
-router.route('/')
-  .get(getClients)
-  .post(createClient);
+// ⚠️ CRITICAL: Specific routes MUST come BEFORE parameterized routes
 
-// Floor plans route
-router.route('/floor-plans')
-  .get(getFloorPlans);
+// 1. Statistics route
+router.get('/stats', getClientStats);
 
-// Pending count route
-router.route('/pending-count')
-  .get(getPendingCount);
+// 2. Pending clients route
+router.get('/pending', getPendingClients);
 
-// Client approval/rejection routes
-router.route('/:id/approve')
-  .put(authorize('admin'), approveClient);
+// 3. Pending count route
+router.get('/pending-count', getPendingCount);
 
-router.route('/:id/reject')
-  .put(authorize('admin'), rejectClient);
+// 4. Floor plans route
+router.get('/floor-plans', getFloorPlans);
 
-// Individual client routes
+router.get('/', protect, authorize('admin'), getAllClients);
+
+// 6. Create new client
+router.post('/', protect, authorize('admin'), createClient);
+
+router.post('/:id/record-payment', protect, authorize('admin'), recordPayment);
+
+// 7. Parameterized routes AFTER all specific routes
 router.route('/:id')
-  .get(getClient)
+  .get(getClientById)
   .put(updateClient)
   .delete(deleteClient);
 
-// In routes/clientRoutes.js
-router.post('/:id/record-payment', protect, authorize('admin'), recordDownPayment);
-router.put('/:id/payment-status', protect, authorize('admin'), updateDownPaymentStatus);
-router.get('/:id/payment-summary', protect, authorize('admin'), getPaymentSummary);
+// 8. Action routes on specific ID
+router.put('/:id/approve', approveClient);
+router.put('/:id/reject', rejectClient);
 
 module.exports = router;

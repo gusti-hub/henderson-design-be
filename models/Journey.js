@@ -1,15 +1,42 @@
 // models/Journey.js
-// Complete Journey Model untuk MongoDB
-
 const mongoose = require('mongoose');
+
+// ===== SUB-STEP SCHEMA =====
+const subStepSchema = new mongoose.Schema({
+  sub: {
+    type: Number,
+    required: true
+  },
+  title: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  email: {
+    type: Boolean,
+    default: false
+  },
+  clientAction: {
+    type: Boolean,
+    default: false
+  },
+  completed: {
+    type: Boolean,
+    default: false
+  },
+  completedAt: {
+    type: Date,
+    default: null
+  }
+}, { _id: false });
 
 // ===== JOURNEY STEP SCHEMA =====
 const journeyStepSchema = new mongoose.Schema({
-  stepNumber: {
+  step: {
     type: Number,
     required: true,
     min: 1,
-    max: 10
+    max: 23  // ✅ CHANGED FROM 10 TO 23
   },
   title: {
     type: String,
@@ -21,10 +48,27 @@ const journeyStepSchema = new mongoose.Schema({
     default: '',
     trim: true
   },
+  phase: {
+    type: String,
+    required: true,
+    trim: true
+  },
   status: {
     type: String,
     enum: ['not-started', 'pending', 'in-progress', 'completed'],
     default: 'not-started'
+  },
+  email: {
+    type: Boolean,
+    default: false
+  },
+  clientAction: {
+    type: Boolean,
+    default: false
+  },
+  subSteps: {
+    type: [subStepSchema],
+    default: []
   },
   estimatedDate: {
     type: Date,
@@ -48,7 +92,7 @@ const journeyStepSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
-}, { _id: false }); // No separate _id for sub-documents
+}, { _id: false });
 
 // ===== MAIN JOURNEY SCHEMA =====
 const journeySchema = new mongoose.Schema({
@@ -56,7 +100,7 @@ const journeySchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
-    unique: true, // One journey per client
+    unique: true,
     index: true
   },
   steps: {
@@ -64,9 +108,9 @@ const journeySchema = new mongoose.Schema({
     default: [],
     validate: {
       validator: function(steps) {
-        return steps.length === 10;
+        return steps.length === 23;  // ✅ CHANGED FROM 10 TO 23
       },
-      message: 'Journey must have exactly 60 steps'
+      message: 'Journey must have exactly 23 steps'  // ✅ UPDATED MESSAGE
     }
   },
   createdAt: {
@@ -86,15 +130,12 @@ journeySchema.index({ 'steps.status': 1 });
 journeySchema.index({ updatedAt: -1 });
 
 // ===== PRE-SAVE MIDDLEWARE =====
-// Update timestamp on save
 journeySchema.pre('save', function(next) {
   this.updatedAt = new Date();
   next();
 });
 
 // ===== INSTANCE METHODS =====
-
-// Get journey progress percentage
 journeySchema.methods.getProgress = function() {
   const completedSteps = this.steps.filter(s => s.status === 'completed').length;
   const totalSteps = this.steps.length;
@@ -105,35 +146,28 @@ journeySchema.methods.getProgress = function() {
   };
 };
 
-// Get current step (first in-progress or pending step)
 journeySchema.methods.getCurrentStep = function() {
   const currentStep = this.steps.find(s => s.status === 'in-progress');
   if (currentStep) return currentStep;
-  
   return this.steps.find(s => s.status === 'pending') || null;
 };
 
-// Get next pending step
 journeySchema.methods.getNextStep = function() {
   return this.steps.find(s => s.status === 'not-started' || s.status === 'pending') || null;
 };
 
-// Get all completed steps
 journeySchema.methods.getCompletedSteps = function() {
   return this.steps.filter(s => s.status === 'completed');
 };
 
-// Get steps by status
 journeySchema.methods.getStepsByStatus = function(status) {
   return this.steps.filter(s => s.status === status);
 };
 
-// Check if journey is complete
 journeySchema.methods.isComplete = function() {
   return this.steps.every(s => s.status === 'completed');
 };
 
-// Get estimated completion date (latest estimated date)
 journeySchema.methods.getEstimatedCompletion = function() {
   const datesWithEstimates = this.steps
     .filter(s => s.estimatedDate && s.status !== 'completed')
@@ -144,18 +178,14 @@ journeySchema.methods.getEstimatedCompletion = function() {
 };
 
 // ===== STATIC METHODS =====
-
-// Find journey by client ID
 journeySchema.statics.findByClientId = function(clientId) {
   return this.findOne({ clientId })
     .populate('clientId', 'name email clientCode unitNumber')
     .populate('steps.updatedBy', 'name email');
 };
 
-// Get all journeys with pagination
 journeySchema.statics.getAllWithPagination = function(page = 1, limit = 10) {
   const skip = (page - 1) * limit;
-  
   return this.find()
     .populate('clientId', 'name email clientCode unitNumber')
     .sort({ updatedAt: -1 })
@@ -163,10 +193,8 @@ journeySchema.statics.getAllWithPagination = function(page = 1, limit = 10) {
     .limit(limit);
 };
 
-// Get journey statistics
 journeySchema.statics.getStatistics = async function() {
   const journeys = await this.find();
-  
   const stats = {
     total: journeys.length,
     completed: 0,
@@ -176,42 +204,29 @@ journeySchema.statics.getStatistics = async function() {
   };
   
   let totalProgress = 0;
-  
   journeys.forEach(journey => {
     const progress = journey.getProgress();
     totalProgress += progress.percentage;
     
-    if (progress.percentage === 100) {
-      stats.completed++;
-    } else if (progress.percentage > 0) {
-      stats.inProgress++;
-    } else {
-      stats.notStarted++;
-    }
+    if (progress.percentage === 100) stats.completed++;
+    else if (progress.percentage > 0) stats.inProgress++;
+    else stats.notStarted++;
   });
   
-  stats.averageProgress = journeys.length > 0 
-    ? Math.round(totalProgress / journeys.length) 
-    : 0;
-  
+  stats.averageProgress = journeys.length > 0 ? Math.round(totalProgress / journeys.length) : 0;
   return stats;
 };
 
 // ===== VIRTUALS =====
-
-// Virtual for progress percentage
 journeySchema.virtual('progressPercentage').get(function() {
   return this.getProgress().percentage;
 });
 
-// Virtual for current step
 journeySchema.virtual('currentStep').get(function() {
   return this.getCurrentStep();
 });
 
-// Ensure virtuals are included in JSON
 journeySchema.set('toJSON', { virtuals: true });
 journeySchema.set('toObject', { virtuals: true });
 
-// ===== EXPORT MODEL =====
 module.exports = mongoose.model('Journey', journeySchema);

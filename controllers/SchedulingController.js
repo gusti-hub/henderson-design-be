@@ -12,6 +12,46 @@ const {
 const { getDayOfWeek, addDays } = require('../utils/date');
 
 // ========================
+// BLOCKED DATES & TIMES
+// ========================
+
+// Full-day blocked dates (YYYY-MM-DD)
+const BLOCKED_DATES = new Set([
+  "2025-11-27",
+  "2025-11-28",
+
+  "2025-12-22",
+  "2025-12-23",
+  "2025-12-24",
+  "2025-12-25",
+  "2025-12-26",
+  "2025-12-29",
+  "2025-12-30",
+  "2025-12-31",
+
+  "2026-01-01",
+  "2026-01-02",
+  "2026-01-05"
+]);
+
+// Partial block per time slot
+// Wednesday 26 – 1:00, 3:00 → 13:00 & 15:00
+const PARTIAL_BLOCKED_SLOTS = {
+  "2025-11-26": new Set(["13:00", "15:00"])
+};
+
+function isBlockedDate(dateStr) {
+  return BLOCKED_DATES.has(dateStr);
+}
+
+function isBlockedSlot(dateStr, timeStr) {
+  const blockedTimes = PARTIAL_BLOCKED_SLOTS[dateStr];
+  if (!blockedTimes) return false;
+  return blockedTimes.has(timeStr);
+}
+
+
+// ========================
 // Ensure Friday exists
 // ========================
 async function getActiveConfig() {
@@ -71,16 +111,28 @@ const getAvailableDates = async (req, res) => {
     const results = [];
 
     while (current <= end) {
+      // 🚫 Skip if full-day blocked
+      if (isBlockedDate(current)) {
+        current = addDays(current, 1);
+        continue;
+      }
+
       const weekday = getDayOfWeek(current); // 0=Sun
 
       if (cfg.availableDays.includes(weekday)) {
-        const slots = await Appointment.getAvailableSlots(current);
+        // Ambil semua slot untuk hari itu
+        const rawSlots = await Appointment.getAvailableSlots(current);
 
-        if (slots.length > 0) {
+        // Filter slot yang tidak diblok
+        const availableSlots = rawSlots.filter(
+          (t) => !isBlockedSlot(current, t)
+        );
+
+        if (availableSlots.length > 0) {
           results.push({
             date: current,
             dayOfWeek: weekday,
-            availableSlotsCount: slots.length
+            availableSlotsCount: availableSlots.length
           });
         }
       }
@@ -97,6 +149,8 @@ const getAvailableDates = async (req, res) => {
 };
 
 
+
+
 // ========================
 // GET AVAILABLE SLOTS
 // ========================
@@ -110,9 +164,16 @@ const getAvailableSlots = async (req, res) => {
       });
     }
 
+    // 🚫 Full-day blocked date → langsung tolak
+    if (isBlockedDate(date)) {
+      return res.status(400).json({
+        success: false,
+        message: 'This date is blocked for appointments'
+      });
+    }
+
     const cfg = await getActiveConfig();
 
-    // day-of-week dihitung dari string YYYY-MM-DD (tanpa normalizeDate)
     const weekday = getDayOfWeek(date);
 
     if (!cfg.availableDays.includes(weekday)) {
@@ -122,16 +183,21 @@ const getAvailableSlots = async (req, res) => {
       });
     }
 
-    // langsung pakai date string "YYYY-MM-DD"
-    const slots = await Appointment.getAvailableSlots(date);
+    // Ambil slot mentah dari DB / Appointment model
+    const rawSlots = await Appointment.getAvailableSlots(date);
+
+    // Filter slot yang tidak diblok (partial)
+    const availableSlots = rawSlots.filter(
+      (t) => !isBlockedSlot(date, t)
+    );
 
     res.json({
       success: true,
       date,
-      count: slots.length,
-      data: slots.map(t => ({
+      count: availableSlots.length,
+      data: availableSlots.map(t => ({
         time: t,
-        displayTime: t, // kalau mau bisa di-format lagi, tapi FE sudah handle sendiri
+        displayTime: t,
         durationOptions: cfg.durationOptions,
         defaultDuration: cfg.defaultDuration
       }))
@@ -142,6 +208,8 @@ const getAvailableSlots = async (req, res) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
+
+
 
 
 
@@ -195,6 +263,16 @@ const bookAppointment = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Please provide a valid email address'
+      });
+    }
+
+    // ============================
+    // HOLIDAY / BLOCKED DATE & TIME CHECK
+    // ============================
+    if (isBlockedDate(appointmentDate) || isBlockedSlot(appointmentDate, appointmentTime)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selected date and time are not available. Please choose another schedule.'
       });
     }
 

@@ -37,6 +37,12 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: false
   },
+  // ✅ NEW: Property Type field
+  propertyType: {
+    type: String,
+    enum: ['Lock 2025 Pricing', 'Design Hold Fee'],
+    required: false
+  },
   floorPlan: {
     type: String,
     required: false,
@@ -49,83 +55,60 @@ const userSchema = new mongoose.Schema({
     ]
   },
   
-  // ✅ NEW: Down Payment & Transaction Information
+  // Down Payment & Transaction Information
   paymentInfo: {
-    // Total transaction value
     totalAmount: {
       type: Number,
       default: 0,
       min: 0
     },
-    
-    // Down payment amount
     downPaymentAmount: {
       type: Number,
       default: 0,
       min: 0
     },
-    
-    // Down payment percentage (e.g., 30%)
     downPaymentPercentage: {
       type: Number,
       default: 30,
       min: 0,
       max: 100
     },
-    
-    // Down payment status
     downPaymentStatus: {
       type: String,
       enum: ['not-paid', 'partial', 'paid', 'overdue'],
       default: 'not-paid'
     },
-    
-    // Down payment date
     downPaymentDate: {
       type: Date,
       default: null
     },
-    
-    // Payment due date
     downPaymentDueDate: {
       type: Date,
       default: null
     },
-    
-    // Remaining balance
     remainingBalance: {
       type: Number,
       default: 0,
       min: 0
     },
-    
-    // Payment method
     paymentMethod: {
       type: String,
       enum: ['bank-transfer', 'credit-card', 'check', 'cash', 'other'],
       default: null
     },
-    
-    // Transaction/Reference number
     transactionReference: {
       type: String,
       default: ''
     },
-    
-    // Payment notes
     paymentNotes: {
       type: String,
       default: ''
     },
-    
-    // Who recorded the payment
     recordedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       default: null
     },
-    
-    // When payment was recorded
     recordedAt: {
       type: Date,
       default: null
@@ -230,7 +213,7 @@ userSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-// ✅ NEW: Method to record down payment
+// Method to record down payment
 userSchema.methods.recordDownPayment = function(paymentData, adminId) {
   this.paymentInfo.downPaymentAmount = paymentData.amount;
   this.paymentInfo.downPaymentDate = paymentData.date || new Date();
@@ -251,12 +234,12 @@ userSchema.methods.recordDownPayment = function(paymentData, adminId) {
   return this.save();
 };
 
-// ✅ NEW: Method to check if DP is paid
+// Method to check if DP is paid
 userSchema.methods.hasDownPayment = function() {
   return this.paymentInfo.downPaymentStatus === 'paid';
 };
 
-// ✅ NEW: Method to get payment summary
+// Method to get payment summary
 userSchema.methods.getPaymentSummary = function() {
   const requiredDP = this.paymentInfo.totalAmount * (this.paymentInfo.downPaymentPercentage / 100);
   const paidDP = this.paymentInfo.downPaymentAmount;

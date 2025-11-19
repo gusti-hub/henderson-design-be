@@ -1,519 +1,125 @@
 const User = require('../models/User');
-const bcrypt = require('bcryptjs');
 const { sendApprovalEmail, sendRejectionEmail } = require('./authController');
+const crypto = require('crypto');
 
-// Get all clients (including pending registrations)
-const getClients = async (req, res) => {
+// @desc    Get all clients (pending, approved, rejected)
+// @route   GET /api/clients
+// @access  Private (Admin)
+const getAllClients = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const search = req.query.search || '';
-    const status = req.query.status;
-    const skip = (page - 1) * limit;
-
-    let searchQuery = { role: 'user' };
-
+    
+    const { status, registrationType, page = 1, limit = 10, search = '' } = req.query;
+    
+    // Build filter
+    let filter = {};
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+    if (registrationType) {
+      filter.registrationType = registrationType;
+    }
+    
+    // Add search filter
     if (search) {
-      searchQuery.$or = [
-        { clientCode: { $regex: search, $options: 'i' } },
+      filter.$or = [
         { name: { $regex: search, $options: 'i' } },
         { email: { $regex: search, $options: 'i' } },
         { unitNumber: { $regex: search, $options: 'i' } },
-        { floorPlan: { $regex: search, $options: 'i' } }
+        { clientCode: { $regex: search, $options: 'i' } }
       ];
-    }
-
-    if (status && status !== 'all') {
-      searchQuery.status = status;
-    }
-
-    const total = await User.countDocuments(searchQuery);
-    const clients = await User.find(searchQuery)
+    }    
+    
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get total count
+    const total = await User.countDocuments(filter);
+    
+    // Get clients
+    const clients = await User.find(filter)
       .select('-password')
-      .populate('approvedBy', 'name')
-      .populate('rejectedBy', 'name')
-      .populate('paymentInfo.recordedBy', 'name')
+      .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 });
-
-    res.json({
-      clients,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit)
-    });
+      .limit(parseInt(limit));
+    
+    
+    // CRITICAL: Return in exact format frontend expects
+    const response = {
+      success: true,
+      count: total,
+      data: clients,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(total / parseInt(limit))
+    };
+    
+    res.json(response);
+    
   } catch (error) {
-    console.error('Error in getClients:', error);
-    res.status(500).json({ message: 'Error fetching clients' });
+    console.error('❌ Get all clients error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
   }
 };
 
-// Get single client
-const getClient = async (req, res) => {
+// @desc    Get pending registrations
+// @route   GET /api/clients/pending
+// @access  Private (Admin)
+const getPendingClients = async (req, res) => {
   try {
-    const client = await User.findById(req.params.id)
+    const pendingClients = await User.find({ 
+      status: 'pending',
+      registrationType: 'self-registered'
+    })
       .select('-password')
-      .populate('approvedBy', 'name')
-      .populate('rejectedBy', 'name')
-      .populate('paymentInfo.recordedBy', 'name');
-    
-    if (!client) {
-      return res.status(404).json({ message: 'Client not found' });
-    }
-    
-    // Add payment summary
-    const paymentSummary = client.getPaymentSummary();
+      .sort({ createdAt: -1 });
     
     res.json({
-      ...client.toObject(),
-      paymentSummary
+      success: true,
+      count: pendingClients.length,
+      data: pendingClients
     });
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching client' });
-  }
-};
-
-// Create client (admin only)
-const createClient = async (req, res) => {
-  try {
-    const { 
-      clientCode, name, email, password, unitNumber, floorPlan,
-      totalAmount, downPaymentPercentage 
-    } = req.body;
-
-    if (!clientCode || !name || !email || !password || !unitNumber || !floorPlan) {
-      return res.status(400).json({ 
-        message: 'Please provide all required fields' 
-      });
-    }
-
-    const clientCodeExists = await User.findOne({ clientCode });
-    if (clientCodeExists) {
-      return res.status(400).json({ message: 'Client code already exists' });
-    }
-
-    const emailExists = await User.findOne({ email });
-    if (emailExists) {
-      return res.status(400).json({ message: 'Email already registered' });
-    }
-
-    const clientData = {
-      clientCode,
-      name,
-      email,
-      password,
-      unitNumber,
-      floorPlan,
-      role: 'user',
-      registrationType: 'admin-created',
-      status: 'approved'
-    };
-
-    // ✅ Add payment info if provided
-    if (totalAmount) {
-      clientData.paymentInfo = {
-        totalAmount: totalAmount,
-        downPaymentPercentage: downPaymentPercentage || 30,
-        downPaymentAmount: 0,
-        downPaymentStatus: 'not-paid',
-        remainingBalance: totalAmount
-      };
-    }
-
-    const client = await User.create(clientData);
-
-    res.status(201).json({
-      _id: client._id,
-      clientCode: client.clientCode,
-      name: client.name,
-      email: client.email,
-      unitNumber: client.unitNumber,
-      floorPlan: client.floorPlan,
-      role: client.role,
-      status: client.status,
-      paymentInfo: client.paymentInfo
+    console.error('Get pending clients error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server Error' 
     });
-  } catch (error) {
-    console.error('Error in createClient:', error);
-    if (error.code === 11000) {
-      return res.status(400).json({ message: 'Client code or email already exists' });
-    }
-    res.status(500).json({ message: 'Error creating client' });
   }
 };
 
-// Update client
-const updateClient = async (req, res) => {
-  try {
-    const { 
-      clientCode, name, email, password, unitNumber, floorPlan,
-      totalAmount, downPaymentPercentage 
-    } = req.body;
-    
-    const client = await User.findById(req.params.id);
-
-    if (!client) {
-      return res.status(404).json({ message: 'Client not found' });
-    }
-
-    if (clientCode && clientCode !== client.clientCode) {
-      const clientCodeExists = await User.findOne({ clientCode });
-      if (clientCodeExists) {
-        return res.status(400).json({ message: 'Client code already exists' });
-      }
-    }
-
-    if (email && email !== client.email) {
-      const emailExists = await User.findOne({ email });
-      if (emailExists) {
-        return res.status(400).json({ message: 'Email already in use' });
-      }
-    }
-
-    const updateData = {
-      clientCode: clientCode || client.clientCode,
-      name: name || client.name,
-      email: email || client.email,
-      unitNumber: unitNumber || client.unitNumber,
-      floorPlan: floorPlan || client.floorPlan
-    };
-
-    // ✅ Update payment info
-    if (totalAmount !== undefined) {
-      updateData['paymentInfo.totalAmount'] = totalAmount;
-      updateData['paymentInfo.remainingBalance'] = 
-        totalAmount - (client.paymentInfo?.downPaymentAmount || 0);
-    }
-    
-    if (downPaymentPercentage !== undefined) {
-      updateData['paymentInfo.downPaymentPercentage'] = downPaymentPercentage;
-    }
-
-    if (password) {
-      const salt = await bcrypt.genSalt(10);
-      updateData.password = await bcrypt.hash(password, salt);
-    }
-
-    const updatedClient = await User.findByIdAndUpdate(
-      client._id,
-      updateData,
-      { new: true, runValidators: true }
-    ).select('-password');
-
-    res.json(updatedClient);
-  } catch (error) {
-    console.error('Error in updateClient:', error);
-    res.status(500).json({ message: 'Error updating client' });
-  }
-};
-
-// ✅ NEW: Record down payment
-const recordDownPayment = async (req, res) => {
-  try {
-    const { 
-      amount, 
-      paymentDate, 
-      paymentMethod, 
-      transactionReference, 
-      notes 
-    } = req.body;
-
-    const client = await User.findById(req.params.id);
-
-    if (!client) {
-      return res.status(404).json({ message: 'Client not found' });
-    }
-
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ message: 'Valid payment amount is required' });
-    }
-
-    // Record the payment
-    await client.recordDownPayment({
-      amount,
-      date: paymentDate || new Date(),
-      method: paymentMethod,
-      reference: transactionReference,
-      notes
-    }, req.user.id);
-
-    const paymentSummary = client.getPaymentSummary();
-
-    res.json({
-      message: 'Down payment recorded successfully',
-      client: {
-        _id: client._id,
-        name: client.name,
-        email: client.email,
-        paymentInfo: client.paymentInfo
-      },
-      paymentSummary
-    });
-  } catch (error) {
-    console.error('Error recording down payment:', error);
-    res.status(500).json({ message: 'Error recording down payment' });
-  }
-};
-
-// ✅ NEW: Update down payment status
-const updateDownPaymentStatus = async (req, res) => {
-  try {
-    const { status, notes } = req.body;
-
-    const client = await User.findById(req.params.id);
-
-    if (!client) {
-      return res.status(404).json({ message: 'Client not found' });
-    }
-
-    const validStatuses = ['not-paid', 'partial', 'paid', 'overdue'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ message: 'Invalid status' });
-    }
-
-    client.paymentInfo.downPaymentStatus = status;
-    if (notes) {
-      client.paymentInfo.paymentNotes = notes;
-    }
-    
-    await client.save();
-
-    res.json({
-      message: 'Payment status updated successfully',
-      paymentInfo: client.paymentInfo
-    });
-  } catch (error) {
-    console.error('Error updating payment status:', error);
-    res.status(500).json({ message: 'Error updating payment status' });
-  }
-};
-
-// ✅ NEW: Get payment summary
-const getPaymentSummary = async (req, res) => {
-  try {
-    const client = await User.findById(req.params.id);
-
-    if (!client) {
-      return res.status(404).json({ message: 'Client not found' });
-    }
-
-    const paymentSummary = client.getPaymentSummary();
-
-    res.json({
-      clientId: client._id,
-      clientName: client.name,
-      clientCode: client.clientCode,
-      paymentSummary
-    });
-  } catch (error) {
-    console.error('Error getting payment summary:', error);
-    res.status(500).json({ message: 'Error getting payment summary' });
-  }
-};
-
-// Delete client
-const deleteClient = async (req, res) => {
-  try {
-    const client = await User.findById(req.params.id);
-    if (!client) {
-      return res.status(404).json({ message: 'Client not found' });
-    }
-
-    await User.deleteOne({ _id: req.params.id });
-    res.json({ message: 'Client deleted successfully' });
-  } catch (error) {
-    console.error('Error in deleteClient:', error);
-    res.status(500).json({ message: 'Error deleting client' });
-  }
-};
-
-// Approve client registration
-const approveClient = async (req, res) => {
-  try {
-    const { clientCode, floorPlan } = req.body;
-    const client = await User.findById(req.params.id);
-
-    if (!client) {
-      return res.status(404).json({ message: 'Client not found' });
-    }
-
-    if (client.status === 'approved') {
-      return res.status(400).json({ message: 'Client is already approved' });
-    }
-
-    if (!clientCode || !floorPlan) {
-      return res.status(400).json({ 
-        message: 'Client code and floor plan are required' 
-      });
-    }
-
-    if (clientCode) {
-      const clientCodeExists = await User.findOne({ 
-        clientCode, 
-        _id: { $ne: client._id } 
-      });
-      if (clientCodeExists) {
-        return res.status(400).json({ message: 'Client code already exists' });
-      }
-    }
-
-    const updateData = {
-      status: 'approved',
-      approvedBy: req.user.id,
-      approvedAt: new Date(),
-      clientCode: clientCode,
-      floorPlan: floorPlan
-    };
-
-    const updatedClient = await User.findByIdAndUpdate(
-      client._id,
-      updateData,
-      { new: true, runValidators: true }
-    ).select('-password');
-
-    try {
-      await sendApprovalEmail(client.email, client.name);
-    } catch (emailError) {
-      console.error('Failed to send approval email:', emailError);
-    }
-
-    res.json({
-      message: 'Client approved successfully',
-      client: updatedClient
-    });
-  } catch (error) {
-    console.error('Error in approveClient:', error);
-    res.status(500).json({ message: 'Error approving client' });
-  }
-};
-
-// Reject client registration
-const rejectClient = async (req, res) => {
-  try {
-    const { reason } = req.body;
-    const client = await User.findById(req.params.id);
-
-    if (!client) {
-      return res.status(404).json({ message: 'Client not found' });
-    }
-
-    if (client.status === 'rejected') {
-      return res.status(400).json({ message: 'Client is already rejected' });
-    }
-
-    if (client.status === 'approved') {
-      return res.status(400).json({ message: 'Cannot reject an approved client' });
-    }
-
-    const updatedClient = await User.findByIdAndUpdate(
-      client._id,
-      {
-        status: 'rejected',
-        rejectedBy: req.user.id,
-        rejectedAt: new Date(),
-        rejectionReason: reason || 'No reason provided'
-      },
-      { new: true, runValidators: true }
-    ).select('-password');
-
-    try {
-      await sendRejectionEmail(client.email, client.name, reason);
-    } catch (emailError) {
-      console.error('Failed to send rejection email:', emailError);
-    }
-
-    res.json({
-      message: 'Client rejected successfully',
-      client: updatedClient
-    });
-  } catch (error) {
-    console.error('Error in rejectClient:', error);
-    res.status(500).json({ message: 'Error rejecting client' });
-  }
-};
-
-// Get pending registrations count
+// @desc    Get pending count
+// @route   GET /api/clients/pending-count
+// @access  Private (Admin)
 const getPendingCount = async (req, res) => {
   try {
-    const pendingCount = await User.countDocuments({ 
-      role: 'user', 
+    const count = await User.countDocuments({ 
       status: 'pending',
       registrationType: 'self-registered'
     });
     
-    res.json({ pendingCount });
+    res.json({
+      success: true,
+      count: count
+    });
   } catch (error) {
-    console.error('Error in getPendingCount:', error);
-    res.status(500).json({ message: 'Error getting pending count' });
+    console.error('Get pending count error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server Error' 
+    });
   }
 };
 
-// Get registration statistics
-const getRegistrationStats = async (req, res) => {
-  try {
-    const stats = await User.aggregate([
-      { $match: { role: 'user' } },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    const registrationTypeStats = await User.aggregate([
-      { $match: { role: 'user' } },
-      {
-        $group: {
-          _id: '$registrationType',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    // ✅ NEW: Payment statistics
-    const paymentStats = await User.aggregate([
-      { $match: { role: 'user' } },
-      {
-        $group: {
-          _id: '$paymentInfo.downPaymentStatus',
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$paymentInfo.totalAmount' },
-          totalPaid: { $sum: '$paymentInfo.downPaymentAmount' }
-        }
-      }
-    ]);
-
-    const formattedStats = {
-      byStatus: stats.reduce((acc, item) => {
-        acc[item._id] = item.count;
-        return acc;
-      }, {}),
-      byType: registrationTypeStats.reduce((acc, item) => {
-        acc[item._id] = item.count;
-        return acc;
-      }, {}),
-      byPaymentStatus: paymentStats.reduce((acc, item) => {
-        acc[item._id || 'not-set'] = {
-          count: item.count,
-          totalAmount: item.totalAmount,
-          totalPaid: item.totalPaid
-        };
-        return acc;
-      }, {})
-    };
-
-    res.json(formattedStats);
-  } catch (error) {
-    console.error('Error in getRegistrationStats:', error);
-    res.status(500).json({ message: 'Error getting statistics' });
-  }
-};
-
-// Get floor plans
+// @desc    Get floor plans (unique floor plans from users)
+// @route   GET /api/clients/floor-plans
+// @access  Private (Admin)
 const getFloorPlans = async (req, res) => {
   try {
+    // Get distinct floor plans from users
     const floorPlans = [
       "Residence 00A", "Residence 01B", "Residence 03A",
       "Residence 05A", "Residence 08", "Residence 10A/12A",
@@ -522,126 +128,493 @@ const getFloorPlans = async (req, res) => {
       "Residence 13A"
     ];
     
-    res.json(floorPlans);
-  } catch (error) {
-    console.error('Error in getFloorPlans:', error);
-    res.status(500).json({ message: 'Error fetching floor plans' });
-  }
-};
-
-// Reset client password
-const resetClientPassword = async (req, res) => {
-  try {
-    const { newPassword } = req.body;
-    const client = await User.findById(req.params.id);
-
-    if (!client) {
-      return res.status(404).json({ message: 'Client not found' });
-    }
-
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ 
-        message: 'Password must be at least 6 characters' 
-      });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
-
-    await User.findByIdAndUpdate(client._id, { password: hashedPassword });
-
-    res.json({ message: 'Password reset successfully' });
-  } catch (error) {
-    console.error('Error in resetClientPassword:', error);
-    res.status(500).json({ message: 'Error resetting password' });
-  }
-};
-
-// Bulk approve clients
-const bulkApproveClients = async (req, res) => {
-  try {
-    const { clientIds, defaultClientCodePrefix, defaultFloorPlan } = req.body;
-
-    if (!clientIds || !Array.isArray(clientIds) || clientIds.length === 0) {
-      return res.status(400).json({ message: 'Client IDs array is required' });
-    }
-
-    const results = [];
+    // Filter out null/undefined values
+    const validFloorPlans = floorPlans.filter(fp => fp);
     
-    for (let i = 0; i < clientIds.length; i++) {
-      try {
-        const clientId = clientIds[i];
-        const client = await User.findById(clientId);
-        
-        if (!client) {
-          results.push({ clientId, status: 'error', message: 'Not found' });
-          continue;
-        }
-
-        if (client.status !== 'pending') {
-          results.push({ clientId, status: 'skipped', message: 'Not pending' });
-          continue;
-        }
-
-        const clientCode = defaultClientCodePrefix 
-          ? `${defaultClientCodePrefix}${String(i + 1).padStart(3, '0')}`
-          : `CL${Date.now()}${i}`;
-
-        const codeExists = await User.findOne({ clientCode });
-        if (codeExists) {
-          results.push({ clientId, status: 'error', message: 'Code exists' });
-          continue;
-        }
-
-        await User.findByIdAndUpdate(clientId, {
-          status: 'approved',
-          approvedBy: req.user.id,
-          approvedAt: new Date(),
-          clientCode: clientCode,
-          floorPlan: defaultFloorPlan || 'Residence 00A'
-        });
-
-        try {
-          await sendApprovalEmail(client.email, client.name);
-        } catch (emailError) {
-          console.error(`Email failed for ${client.email}`);
-        }
-
-        results.push({ clientId, status: 'approved', clientCode });
-      } catch (error) {
-        results.push({ 
-          clientId: clientIds[i], 
-          status: 'error', 
-          message: error.message 
-        });
-      }
-    }
-
     res.json({
-      message: 'Bulk approval completed',
-      results
+      success: true,
+      data: validFloorPlans
     });
   } catch (error) {
-    console.error('Error in bulkApproveClients:', error);
-    res.status(500).json({ message: 'Error in bulk approval' });
+    console.error('Get floor plans error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server Error' 
+    });
+  }
+};
+
+// @desc    Get client by ID
+// @route   GET /api/clients/:id
+// @access  Private (Admin)
+const getClientById = async (req, res) => {
+  try {
+    const client = await User.findById(req.params.id).select('-password');
+    
+    if (!client) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Client not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: client
+    });
+  } catch (error) {
+    console.error('Get client by ID error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server Error' 
+    });
+  }
+};
+
+// @desc    Approve client registration
+// @route   PUT /api/clients/:id/approve
+// @access  Private (Admin)
+const approveClient = async (req, res) => {
+  try {
+    const client = await User.findById(req.params.id);
+    
+    if (!client) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Client not found' 
+      });
+    }
+    
+    if (client.status === 'approved') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Client is already approved' 
+      });
+    }
+    
+    // Generate temporary password (8 characters, alphanumeric)
+    const temporaryPassword = crypto.randomBytes(4).toString('hex').toUpperCase();
+    
+    // Update client password with temporary password
+    client.password = temporaryPassword; // Will be hashed by pre-save hook
+    
+    // Approve the client
+    await client.approve(req.user.id);
+    
+    // Send approval email with credentials
+    try {
+      await sendApprovalEmail(client, temporaryPassword);
+      console.log(`✅ Approval email sent to ${client.email}`);
+    } catch (emailError) {
+      console.error('❌ Failed to send approval email:', emailError);
+      // Continue even if email fails
+    }
+    
+    res.json({
+      success: true,
+      message: 'Client approved successfully and notification email sent',
+      data: {
+        _id: client._id,
+        name: client.name,
+        email: client.email,
+        status: client.status,
+        approvedAt: client.approvedAt
+      }
+    });
+  } catch (error) {
+    console.error('Approve client error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to approve client' 
+    });
+  }
+};
+
+// @desc    Reject client registration
+// @route   PUT /api/clients/:id/reject
+// @access  Private (Admin)
+const rejectClient = async (req, res) => {
+  try {
+    const { reason } = req.body;
+    
+    const client = await User.findById(req.params.id);
+    
+    if (!client) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Client not found' 
+      });
+    }
+    
+    if (client.status === 'rejected') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Client is already rejected' 
+      });
+    }
+    
+    // Reject the client
+    await client.reject(req.user.id, reason);
+    
+    // Send rejection email
+    try {
+      await sendRejectionEmail(client.email, client.name, reason);
+      console.log(`✅ Rejection email sent to ${client.email}`);
+    } catch (emailError) {
+      console.error('❌ Failed to send rejection email:', emailError);
+      // Continue even if email fails
+    }
+    
+    res.json({
+      success: true,
+      message: 'Client rejected and notification email sent',
+      data: {
+        _id: client._id,
+        name: client.name,
+        email: client.email,
+        status: client.status,
+        rejectedAt: client.rejectedAt,
+        rejectionReason: client.rejectionReason
+      }
+    });
+  } catch (error) {
+    console.error('Reject client error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to reject client' 
+    });
+  }
+};
+
+const recordPayment = async (req, res) => {
+  try {
+    console.log('💰 Recording payment for client:', req.params.id);
+    console.log('Payment data:', req.body);
+    
+    const {
+      amount,
+      paymentDate,
+      paymentMethod,
+      transactionReference,
+      notes
+    } = req.body;
+    
+    // Validate required fields
+    if (!amount || !paymentDate || !paymentMethod) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide amount, payment date, and payment method'
+      });
+    }
+    
+    // Find client
+    const client = await User.findById(req.params.id);
+    
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: 'Client not found'
+      });
+    }
+    
+    // Initialize paymentInfo if it doesn't exist
+    if (!client.paymentInfo) {
+      client.paymentInfo = {
+        totalAmount: 0,
+        downPaymentPercentage: 30,
+        amountPaid: 0,
+        payments: []
+      };
+    }
+    
+    if (!Array.isArray(client.paymentInfo.payments)) {
+      client.paymentInfo.payments = [];
+    }
+
+
+    // Create payment record
+    const payment = {
+      amount: parseFloat(amount),
+      paymentDate: new Date(paymentDate),
+      paymentMethod: paymentMethod,
+      transactionReference: transactionReference || '',
+      notes: notes || '',
+      recordedBy: req.user.name || req.user.email,
+      recordedAt: new Date()
+    };
+    
+    // Add payment to payments array
+    client.paymentInfo.payments.push(payment);
+    
+    // Update total amount paid
+    const previousAmountPaid = client.paymentInfo.amountPaid || 0;
+    client.paymentInfo.amountPaid = previousAmountPaid + parseFloat(amount);
+    
+    // Calculate required down payment
+    const requiredDP = (client.paymentInfo.totalAmount || 0) * 
+      ((client.paymentInfo.downPaymentPercentage || 30) / 100);
+    
+    // Update down payment status
+    if (client.paymentInfo.amountPaid >= requiredDP) {
+      client.paymentInfo.downPaymentStatus = 'paid';
+    } else if (client.paymentInfo.amountPaid > 0) {
+      client.paymentInfo.downPaymentStatus = 'partial';
+    } else {
+      client.paymentInfo.downPaymentStatus = 'not-paid';
+    }
+    
+    // Save client
+    await client.save();
+    
+    console.log('✅ Payment recorded successfully');
+    console.log('Amount paid:', client.paymentInfo.amountPaid);
+    console.log('Status:', client.paymentInfo.downPaymentStatus);
+
+    res.json({
+      success: true,
+      message: 'Payment recorded successfully',
+      data: {
+        clientId: client._id,
+        clientName: client.name,
+        payment: payment,
+        totalAmountPaid: client.paymentInfo.amountPaid,
+        downPaymentStatus: client.paymentInfo.downPaymentStatus
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Record payment error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to record payment',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Create new client (admin-created)
+// @route   POST /api/clients
+// @access  Private (Admin)
+const createClient = async (req, res) => {
+  try {
+    console.log('📝 Creating new client...');
+    console.log('Request body:', req.body);
+    
+    const {
+      clientCode,
+      name,
+      email,
+      password,
+      unitNumber,
+      phoneNumber,
+      floorPlan,
+      propertyType,
+      totalAmount,
+      downPaymentPercentage
+    } = req.body;
+    
+    // Validate required fields
+    if (!clientCode || !name || !email || !password || !unitNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide all required fields'
+      });
+    }
+    
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User with this email already exists'
+      });
+    }
+    
+    // Create user
+    const user = await User.create({
+      clientCode,
+      name,
+      email,
+      password, // Will be hashed by pre-save hook
+      unitNumber,
+      phoneNumber: phoneNumber || '',
+      floorPlan: floorPlan || '',
+      propertyType: propertyType || '',
+      registrationType: 'admin-created',
+      status: 'approved', // Admin-created clients are auto-approved
+      approvedAt: new Date(),
+      approvedBy: req.user.id, // Admin who created it
+      paymentInfo: {
+        totalAmount: totalAmount || 0,
+        downPaymentPercentage: downPaymentPercentage || 30,
+        downPaymentStatus: 'not-paid',
+        amountPaid: 0,
+        payments: []
+      }
+    });
+    
+
+    console.log('✅ Client created:', user._id);
+    await sendApprovalEmail(user, password);
+    
+    res.status(201).json({
+      success: true,
+      message: 'Client created successfully',
+      data: {
+        _id: user._id,
+        clientCode: user.clientCode,
+        name: user.name,
+        email: user.email,
+        unitNumber: user.unitNumber,
+        status: user.status
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Create client error:', error);
+    
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({
+        success: false,
+        message: `${field} already exists`
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create client',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Update client information
+// @route   PUT /api/clients/:id
+// @access  Private (Admin)
+const updateClient = async (req, res) => {
+  try {
+    const allowedUpdates = [
+      'name', 'email', 'unitNumber', 'phoneNumber', 'propertyType',
+      'floorPlan', 'questionnaire', 'paymentInfo'
+    ];
+    
+    const updates = {};
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    });
+    
+    const client = await User.findByIdAndUpdate(
+      req.params.id,
+      updates,
+      { new: true, runValidators: true }
+    ).select('-password');
+    
+    if (!client) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Client not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Client updated successfully',
+      data: client
+    });
+  } catch (error) {
+    console.error('Update client error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to update client' 
+    });
+  }
+};
+
+// @desc    Delete client
+// @route   DELETE /api/clients/:id
+// @access  Private (Admin)
+const deleteClient = async (req, res) => {
+  try {
+    const client = await User.findById(req.params.id);
+    
+    if (!client) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Client not found' 
+      });
+    }
+    
+    await client.deleteOne();
+    
+    res.json({
+      success: true,
+      message: 'Client deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete client error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to delete client' 
+    });
+  }
+};
+
+// @desc    Get client statistics
+// @route   GET /api/clients/stats
+// @access  Private (Admin)
+const getClientStats = async (req, res) => {
+  try {
+    const stats = await User.aggregate([
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    const formattedStats = {
+      total: 0,
+      pending: 0,
+      approved: 0,
+      rejected: 0
+    };
+    
+    stats.forEach(stat => {
+      if (stat._id) {
+        formattedStats[stat._id] = stat.count;
+        formattedStats.total += stat.count;
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: formattedStats
+    });
+  } catch (error) {
+    console.error('Get client stats error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server Error' 
+    });
   }
 };
 
 module.exports = {
-  getClients,
-  getClient,
+  getAllClients,
+  getPendingClients,
+  getPendingCount,        // ✅ Added
+  getFloorPlans,          // ✅ Added
+  getClientById,
+  approveClient,
+  rejectClient,
   createClient,
   updateClient,
   deleteClient,
-  approveClient,
-  rejectClient,
-  getPendingCount,
-  getRegistrationStats,
-  getFloorPlans,
-  resetClientPassword,
-  bulkApproveClients,
-  // ✅ NEW exports
-  recordDownPayment,
-  updateDownPaymentStatus,
-  getPaymentSummary
+  getClientStats,
+  recordPayment
 };

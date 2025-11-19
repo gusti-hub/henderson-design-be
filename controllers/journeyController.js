@@ -3,6 +3,8 @@
 
 const Journey = require('../models/Journey');
 const User = require('../models/User');
+const sendEmail = require('../utils/sendEmail');
+const { journeyStepEmailTemplate } = require('../utils/journeyEmailTemplates');
 
 // Import all 65 steps from data file
 const JOURNEY_STEPS = require('../data/journeySteps');
@@ -34,12 +36,10 @@ const getClientJourney = async (req, res) => {
   }
 };
 
-// ===== CREATE CLIENT JOURNEY =====
 const createClientJourney = async (req, res) => {
   try {
     const { clientId } = req.params;
     
-    // Check if journey already exists
     const existingJourney = await Journey.findOne({ clientId });
     if (existingJourney) {
       return res.status(400).json({ 
@@ -48,25 +48,29 @@ const createClientJourney = async (req, res) => {
       });
     }
     
-    // Verify client exists and has paid
     const client = await User.findById(clientId);
     if (!client) {
       return res.status(404).json({ message: 'Client not found' });
     }
 
-    // Optional: Check if client has paid
     if (client.paymentInfo && client.paymentInfo.downPaymentStatus !== 'paid') {
       return res.status(400).json({ 
         message: 'Client must complete down payment before journey can be initialized' 
       });
     }
     
-    // Create journey with all 65 steps from data file
+    // Create journey with all 23 steps from data file
     const journey = await Journey.create({
       clientId,
-      steps: JOURNEY_STEPS.map(step => ({
-        ...step,
+      steps: JOURNEY_STEPS.map(stepData => ({
+        step: stepData.step,
+        title: stepData.title,
+        description: stepData.description,
+        phase: stepData.phase,
         status: 'not-started',
+        email: stepData.email || false,
+        clientAction: stepData.clientAction || false,
+        subSteps: stepData.subSteps || [],
         estimatedDate: null,
         actualDate: null,
         notes: '',
@@ -75,7 +79,6 @@ const createClientJourney = async (req, res) => {
       }))
     });
     
-    // Populate for response
     await journey.populate('clientId', 'name email clientCode unitNumber');
     
     res.status(201).json({
@@ -88,62 +91,95 @@ const createClientJourney = async (req, res) => {
   }
 };
 
-// ===== UPDATE JOURNEY STEP =====
+// Update updateJourneyStep to handle both main step and substep updates:
 const updateJourneyStep = async (req, res) => {
   try {
     const { clientId, stepNumber } = req.params;
-    const { status, estimatedDate, actualDate, notes } = req.body;
+    const { status, estimatedDate, actualDate, notes, subStepIndex, subStepCompleted, sendEmailNotification } = req.body;
     
-    // Find journey
-    const journey = await Journey.findOne({ clientId });
+    const journey = await Journey.findOne({ clientId }).populate('clientId', 'name email unitNumber');
     if (!journey) {
       return res.status(404).json({ message: 'Journey not found' });
     }
     
-    // Find step by stepNumber
     const stepIndex = journey.steps.findIndex(
-      s => s.stepNumber === parseFloat(stepNumber)
+      s => s.step === parseInt(stepNumber)
     );
     
     if (stepIndex === -1) {
       return res.status(404).json({ message: `Step ${stepNumber} not found` });
     }
     
-    // Update step fields
+    const step = journey.steps[stepIndex];
+    const oldStatus = step.status;
+    
+    // Update substep if specified
+    if (subStepIndex !== undefined) {
+      if (step.subSteps[subStepIndex]) {
+        step.subSteps[subStepIndex].completed = subStepCompleted;
+        if (subStepCompleted) {
+          step.subSteps[subStepIndex].completedAt = new Date();
+        }
+      }
+    }
+    
+    // Update main step
     if (status) {
       const validStatuses = ['not-started', 'pending', 'in-progress', 'completed'];
       if (!validStatuses.includes(status)) {
         return res.status(400).json({ message: 'Invalid status' });
       }
-      journey.steps[stepIndex].status = status;
+      step.status = status;
       
-      // If marking as completed, set actualDate
-      if (status === 'completed' && !journey.steps[stepIndex].actualDate) {
-        journey.steps[stepIndex].actualDate = new Date();
+      if (status === 'completed' && !step.actualDate) {
+        step.actualDate = new Date();
       }
     }
     
     if (estimatedDate !== undefined) {
-      journey.steps[stepIndex].estimatedDate = estimatedDate || null;
+      step.estimatedDate = estimatedDate || null;
     }
     
     if (actualDate !== undefined) {
-      journey.steps[stepIndex].actualDate = actualDate || null;
+      step.actualDate = actualDate || null;
     }
     
     if (notes !== undefined) {
-      journey.steps[stepIndex].notes = notes;
+      step.notes = notes;
     }
     
-    // Update metadata
-    journey.steps[stepIndex].updatedBy = req.user.id;
-    journey.steps[stepIndex].updatedAt = new Date();
+    step.updatedBy = req.user.id;
+    step.updatedAt = new Date();
     
-    // Save journey
     await journey.save();
-    
-    // Populate for response
     await journey.populate('steps.updatedBy', 'name email');
+    
+    // Send email notification if requested and status changed
+    if (sendEmailNotification && oldStatus !== step.status) {
+      try {
+        const actionRequired = step.status === 'pending' || step.clientAction;
+        
+        await sendEmail({
+          to: journey.clientId.email,
+          toName: journey.clientId.name,
+          subject: `Journey Update: Step ${step.step} - ${step.title}`,
+          htmlContent: journeyStepEmailTemplate({
+            clientName: journey.clientId.name,
+            stepNumber: step.step,
+            stepTitle: step.title,
+            stepDescription: step.description,
+            adminMessage: notes,
+            estimatedDate: estimatedDate,
+            actionRequired
+          })
+        });
+        
+        console.log(`✅ Email notification sent to ${journey.clientId.email}`);
+      } catch (emailError) {
+        console.error('❌ Error sending email notification:', emailError);
+        // Don't fail the request if email fails
+      }
+    }
     
     res.json({
       message: 'Step updated successfully',
@@ -155,28 +191,33 @@ const updateJourneyStep = async (req, res) => {
   }
 };
 
-// ===== COMPLETE JOURNEY STEP =====
+// Update completeJourneyStep:
 const completeJourneyStep = async (req, res) => {
   try {
     const { clientId, stepNumber } = req.params;
     const { notes } = req.body;
     
-    // Find journey
     const journey = await Journey.findOne({ clientId });
     if (!journey) {
       return res.status(404).json({ message: 'Journey not found' });
     }
     
-    // Find step
     const stepIndex = journey.steps.findIndex(
-      s => s.stepNumber === parseFloat(stepNumber)
+      s => s.step === parseInt(stepNumber)
     );
     
     if (stepIndex === -1) {
       return res.status(404).json({ message: `Step ${stepNumber} not found` });
     }
     
-    // Mark as completed
+    // Mark all substeps as completed
+    if (journey.steps[stepIndex].subSteps) {
+      journey.steps[stepIndex].subSteps.forEach(subStep => {
+        subStep.completed = true;
+        subStep.completedAt = new Date();
+      });
+    }
+    
     journey.steps[stepIndex].status = 'completed';
     journey.steps[stepIndex].actualDate = new Date();
     if (notes) {
@@ -185,10 +226,7 @@ const completeJourneyStep = async (req, res) => {
     journey.steps[stepIndex].updatedBy = req.user.id;
     journey.steps[stepIndex].updatedAt = new Date();
     
-    // Save
     await journey.save();
-    
-    // Populate for response
     await journey.populate('steps.updatedBy', 'name email');
     
     res.json({

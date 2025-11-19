@@ -7,6 +7,7 @@ const profileRoutes = require('./routes/profileRoutes');
 const trackActivity = require('./middleware/activityTracker');
 const schedulingRoutes = require('./routes/schedulingRoutes');
 const journeyRoutes = require('./routes/journeyRoutes');
+const journeyChatRoutes = require('./routes/journeyChatRoutes');
 
 
 // Load env vars
@@ -52,6 +53,7 @@ app.use('/api/next-steps', require('./routes/NextstepsRoutes'));
 app.use('/api/profile', profileRoutes);
 app.use('/api/scheduling', schedulingRoutes);
 app.use('/api/journeys', journeyRoutes);
+app.use('/api/journey-chat', journeyChatRoutes);
 
 
 // Enhanced error handling
