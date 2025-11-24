@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const ActivityLog = require('../models/ActivityLog');
+const { generateClientCode } = require('../utils/clientCodeGenerator');
 
 // Generate JWT Token
 const generateToken = (id) => {

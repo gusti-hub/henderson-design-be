@@ -10,7 +10,8 @@ const {
   getAllJourneys,
   deleteJourney,
   getStepDocument,
-  getPendingClientActions
+  getPendingClientActions,
+  generateStepPdf
 } = require('../controllers/journeyController');
 
 // ===== PROTECT ALL ROUTES =====
@@ -41,5 +42,11 @@ router.get('/', authorize('admin', 'designer'), getAllJourneys);
 
 // Delete journey
 router.delete('/client/:clientId', authorize('admin'), deleteJourney);
+
+router.post(
+  '/client/:clientId/step/:stepNumber/generate-pdf',
+  authorize('admin', 'designer'),
+  generateStepPdf
+);
 
 module.exports = router;

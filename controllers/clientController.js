@@ -392,16 +392,28 @@ const recordPayment = async (req, res) => {
   }
 };
 
+const generateClientCode = async () => {
+  const lastUser = await User.findOne({ clientCode: { $regex: /^ALI\d+$/ } })
+    .sort({ clientCode: -1 });
+
+  if (!lastUser || !lastUser.clientCode) {
+    return "ALI001";
+  }
+
+  const lastNumber = parseInt(lastUser.clientCode.replace("ALI", ""), 10);
+  const newNumber = lastNumber + 1;
+
+  return "ALI" + String(newNumber).padStart(3, "0");
+};
+
 // @desc    Create new client (admin-created)
 // @route   POST /api/clients
 // @access  Private (Admin)
 const createClient = async (req, res) => {
   try {
     console.log('📝 Creating new client...');
-    console.log('Request body:', req.body);
-    
+
     const {
-      clientCode,
       name,
       email,
       password,
@@ -412,16 +424,16 @@ const createClient = async (req, res) => {
       totalAmount,
       downPaymentPercentage
     } = req.body;
-    
-    // Validate required fields
-    if (!clientCode || !name || !email || !password || !unitNumber) {
+
+    // Required fields
+    if (!name || !email || !password || !unitNumber) {
       return res.status(400).json({
         success: false,
         message: 'Please provide all required fields'
       });
     }
-    
-    // Check if user already exists
+
+    // Check duplicate email
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
@@ -429,21 +441,24 @@ const createClient = async (req, res) => {
         message: 'User with this email already exists'
       });
     }
-    
+
+    // AUTO GENERATE CLIENT CODE
+    const clientCode = await generateClientCode();
+
     // Create user
     const user = await User.create({
       clientCode,
       name,
       email,
-      password, // Will be hashed by pre-save hook
+      password,
       unitNumber,
       phoneNumber: phoneNumber || '',
       floorPlan: floorPlan || '',
       propertyType: propertyType || '',
       registrationType: 'admin-created',
-      status: 'approved', // Admin-created clients are auto-approved
+      status: 'approved',
       approvedAt: new Date(),
-      approvedBy: req.user.id, // Admin who created it
+      approvedBy: req.user.id,
       paymentInfo: {
         totalAmount: totalAmount || 0,
         downPaymentPercentage: downPaymentPercentage || 30,
@@ -452,11 +467,11 @@ const createClient = async (req, res) => {
         payments: []
       }
     });
-    
 
-    console.log('✅ Client created:', user._id);
+    console.log('✅ Client created:', user.clientCode);
+
     await sendApprovalEmail(user, password);
-    
+
     res.status(201).json({
       success: true,
       message: 'Client created successfully',
@@ -469,11 +484,10 @@ const createClient = async (req, res) => {
         status: user.status
       }
     });
-    
+
   } catch (error) {
     console.error('❌ Create client error:', error);
-    
-    // Handle duplicate key errors
+
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({
@@ -481,7 +495,7 @@ const createClient = async (req, res) => {
         message: `${field} already exists`
       });
     }
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to create client',
@@ -489,6 +503,7 @@ const createClient = async (req, res) => {
     });
   }
 };
+
 
 // @desc    Update client information
 // @route   PUT /api/clients/:id

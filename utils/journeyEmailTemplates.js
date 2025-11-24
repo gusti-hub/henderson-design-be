@@ -53,7 +53,7 @@ const portalButton = () => `
   <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 30px 0;">
     <tr>
       <td align="center">
-        <a href="${process.env.FRONTEND_URL || 'https://alia.henderson.house'}/portal-login" 
+        <a href="${process.env.FRONTEND_URL || 'https://de-cora.com'}/portal-login" 
            style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #005670 0%, #007a9a 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: bold;">
           👉 View Your Portal
         </a>
