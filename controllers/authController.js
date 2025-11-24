@@ -282,7 +282,7 @@ const sendApprovalEmail = async (user, temporaryPassword) => {
     const { userApprovalTemplate } = require('../utils/emailTemplates');
     const sendEmail = require('../utils/sendEmail');
 
-    const loginUrl = process.env.FRONTEND_URL || 'https://alia.henderson.house';
+    const loginUrl = process.env.FRONTEND_URL || 'https://de-cora.com/';
 
     const htmlContent = userApprovalTemplate({
       userName: user.name,
