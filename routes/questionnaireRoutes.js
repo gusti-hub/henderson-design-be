@@ -65,4 +65,11 @@ router.put(
   questionnaireController.updateQuestionnaireStatus
 );
 
+router.get(
+  '/client/:clientId',
+  protect,
+  authorize('admin', 'designer'),
+  questionnaireController.getQuestionnaireByClientId
+);
+
 module.exports = router;

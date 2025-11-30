@@ -462,4 +462,49 @@ exports.deleteQuestionnaire = async (req, res) => {
   }
 };
 
+/**
+ * Get questionnaire by clientId (admin tool)
+ * @route GET /api/questionnaires/client/:clientId
+ */
+exports.getQuestionnaireByClientId = async (req, res) => {
+  try {
+    const clientId = req.params.clientId;
+
+    if (!clientId) {
+      return res.status(400).json({
+        success: false,
+        message: "clientId is required"
+      });
+    }
+
+    console.log("📥 Fetching questionnaire for client:", clientId);
+
+    // Return only latest questionnaire
+    const questionnaire = await ClientQuestionnaire.findOne({ userId: clientId })
+      .sort({ updatedAt: -1 });
+
+    if (!questionnaire) {
+      return res.status(404).json({
+        success: false,
+        message: "No questionnaire found for this client"
+      });
+    }
+
+    return res.json({
+      success: true,
+      questionnaire
+    });
+
+  } catch (error) {
+    console.error("❌ Error getQuestionnaireByClientId:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error retrieving questionnaire by clientId",
+      error: error.message
+    });
+  }
+};
+
+
+
 module.exports = exports;
