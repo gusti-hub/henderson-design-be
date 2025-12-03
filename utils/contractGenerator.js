@@ -1,284 +1,105 @@
-// utils/contractGenerator.js
-// PDF Contract Generator using pdfkit
+const fs = require('fs').promises;
+const path = require('path');
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
 
-const PDFDocument = require('pdfkit');
-const { Readable } = require('stream');
+const generateContractPDF = async (client, step) => {
+  console.log(">>> GENERATING CONTRACT DOCX <<<");
 
-/**
- * Generate Contract PDF
- * @param {Object} data - Contract data
- * @returns {Promise<Buffer>} - PDF as Buffer
- */
-const generateContractPDF = async (data) => {
-  return new Promise((resolve, reject) => {
-    try {
-      const {
-        clientName,
-        clientEmail,
-        unitNumber,
-        floorPlan,
-        contractAmount,
-        downPaymentAmount,
-        contractDate,
-        contractType = 'Design Fee', // 'Design Fee' or 'Production'
-        clientCode
-      } = data;
+  try {
+    const templatePath = path.join(__dirname, 'templates', 'Design_Fee_Agreement_Template.docx');
+    const tempDir = '/tmp/contract-generator';
+    const timestamp = Date.now();
+    const outputDocx = path.join(tempDir, `contract_${timestamp}.docx`);
 
-      // Create PDF document
-      const doc = new PDFDocument({
-        size: 'LETTER',
-        margins: { top: 72, bottom: 72, left: 72, right: 72 }
-      });
+    await fs.mkdir(tempDir, { recursive: true });
+    await fs.access(templatePath);
 
-      // Collect buffer chunks
-      const buffers = [];
-      doc.on('data', buffers.push.bind(buffers));
-      doc.on('end', () => {
-        const pdfBuffer = Buffer.concat(buffers);
-        resolve(pdfBuffer);
-      });
-      doc.on('error', reject);
+    const clientData = {
+      effectiveDate: '11.30.25',
+      clientName: client?.name || 'Client Name',
+      unitNumber: client?.unitNumber || '________',
+      invoiceRef: client?.clientCode || 'Invoice #ALIA0006',
+      bedroomCount: '1 bedroom',
+      packageType: 'Nalu package',
+      designFeeAmount: '$5,000',
+      collectionType: 'Nalu'
+    };
 
-      // ==========================================
-      // HEADER
-      // ==========================================
-      doc.fontSize(24)
-         .font('Helvetica-Bold')
-         .fillColor('#005670')
-         .text('Henderson Design Group', { align: 'center' });
-      
-      doc.fontSize(12)
-         .font('Helvetica')
-         .fillColor('#333333')
-         .text('Ālia Collections', { align: 'center' });
-      
-      doc.moveDown();
-      doc.fontSize(18)
-         .font('Helvetica-Bold')
-         .fillColor('#005670')
-         .text(`${contractType} Contract`, { align: 'center' });
-      
-      doc.moveDown(2);
+    // Save to JSON file
+    const dataPath = path.join(tempDir, `data_${timestamp}.json`);
+    await fs.writeFile(dataPath, JSON.stringify(clientData));
 
-      // ==========================================
-      // CONTRACT DETAILS BOX
-      // ==========================================
-      const boxTop = doc.y;
-      doc.rect(50, boxTop, 495, 120)
-         .fillAndStroke('#f8f9fa', '#dee2e6');
-      
-      doc.fillColor('#333333')
-         .fontSize(10)
-         .font('Helvetica-Bold')
-         .text('Contract Information', 70, boxTop + 15);
-      
-      doc.fontSize(9)
-         .font('Helvetica')
-         .text(`Contract Date: ${contractDate || new Date().toLocaleDateString()}`, 70, boxTop + 35);
-      
-      doc.text(`Contract Type: ${contractType}`, 70, boxTop + 50);
-      
-      if (clientCode) {
-        doc.text(`Client Code: ${clientCode}`, 70, boxTop + 65);
-      }
-      
-      doc.text(`Unit Number: ${unitNumber || 'N/A'}`, 70, boxTop + 80);
-      doc.text(`Floor Plan: ${floorPlan || 'N/A'}`, 70, boxTop + 95);
-      
-      doc.moveDown(3);
+    const pythonScript = `
+import json
+from docx import Document
 
-      // ==========================================
-      // PARTIES
-      // ==========================================
-      doc.fontSize(14)
-         .font('Helvetica-Bold')
-         .fillColor('#005670')
-         .text('Contract Between:', { underline: true });
-      
-      doc.moveDown(0.5);
-      
-      // HDG Details
-      doc.fontSize(10)
-         .font('Helvetica-Bold')
-         .fillColor('#333333')
-         .text('Provider:');
-      
-      doc.fontSize(9)
-         .font('Helvetica')
-         .text('Henderson Design Group');
-      doc.text('Ālia Collections');
-      doc.text('Email: aloha@henderson.house');
-      doc.text('Website: henderson.house');
-      
-      doc.moveDown(1);
-      
-      // Client Details
-      doc.fontSize(10)
-         .font('Helvetica-Bold')
-         .text('Client:');
-      
-      doc.fontSize(9)
-         .font('Helvetica')
-         .text(clientName || 'Client Name');
-      doc.text(`Email: ${clientEmail || 'client@email.com'}`);
-      if (unitNumber) doc.text(`Unit: ${unitNumber}`);
-      
-      doc.moveDown(2);
+with open("${dataPath.replace(/\\/g, '/')}", 'r') as f:
+    data = json.load(f)
 
-      // ==========================================
-      // PAYMENT TERMS
-      // ==========================================
-      doc.fontSize(14)
-         .font('Helvetica-Bold')
-         .fillColor('#005670')
-         .text('Payment Terms:', { underline: true });
-      
-      doc.moveDown(0.5);
-      
-      // Payment Amount Box
-      const paymentBoxTop = doc.y;
-      doc.rect(50, paymentBoxTop, 495, 80)
-         .fillAndStroke('#e8f5f9', '#bee5eb');
-      
-      doc.fontSize(11)
-         .font('Helvetica-Bold')
-         .fillColor('#005670')
-         .text('Total Contract Amount:', 70, paymentBoxTop + 15);
-      
-      doc.fontSize(18)
-         .text(`$${contractAmount ? contractAmount.toLocaleString() : '___________'}`, 70, paymentBoxTop + 35);
-      
-      if (downPaymentAmount) {
-        doc.fontSize(10)
-           .font('Helvetica')
-           .fillColor('#333333')
-           .text(`Initial Payment Due: $${downPaymentAmount.toLocaleString()}`, 70, paymentBoxTop + 60);
-      }
-      
-      doc.moveDown(3);
+doc = Document("${templatePath.replace(/\\/g, '/')}")
 
-      // ==========================================
-      // TERMS & CONDITIONS
-      // ==========================================
-      doc.fontSize(14)
-         .font('Helvetica-Bold')
-         .fillColor('#005670')
-         .text('Terms & Conditions:', { underline: true });
-      
-      doc.moveDown(0.5);
-      
-      const terms = contractType === 'Design Fee' ? [
-        '1. This contract covers the design fee for custom furniture design services.',
-        '2. The design fee is non-refundable once the design process has begun.',
-        '3. The client will receive up to 3 design presentations with revisions.',
-        '4. Upon final design approval, a separate production contract will be issued.',
-        '5. Design files and specifications remain the property of Henderson Design Group.',
-        '6. Timeline estimates are approximate and subject to change based on project complexity.',
-        '7. Any additional design work beyond 3 presentations may incur additional fees.'
-      ] : [
-        '1. This contract covers the production and delivery of custom furniture as specified.',
-        '2. Payment schedule: 50% upon contract signing, 25% progress payment, 25% final balance.',
-        '3. Production timeline estimates are approximate and subject to vendor availability.',
-        '4. All materials and finishes are as specified in the approved design.',
-        '5. Installation and delivery are included as outlined in the proposal.',
-        '6. Client is responsible for site preparation and access arrangements.',
-        '7. Final walkthrough and approval required upon installation completion.',
-        '8. Warranty terms apply as specified in the detailed proposal documentation.'
-      ];
-      
-      doc.fontSize(9)
-         .font('Helvetica')
-         .fillColor('#333333');
-      
-      terms.forEach((term, index) => {
-        doc.text(term, {
-          indent: 10,
-          width: 475,
-          align: 'left'
-        });
-        if (index < terms.length - 1) doc.moveDown(0.3);
-      });
-      
-      doc.moveDown(2);
+# Replace {{placeholders}} in paragraphs
+for p in doc.paragraphs:
+    for key, value in data.items():
+        placeholder = "{{" + key + "}}"
+        if placeholder in p.text:
+            for run in p.runs:
+                if placeholder in run.text:
+                    run.text = run.text.replace(placeholder, value)
 
-      // ==========================================
-      // SIGNATURE SECTION
-      // ==========================================
-      if (doc.y > 650) {
-        doc.addPage();
-      }
-      
-      doc.fontSize(14)
-         .font('Helvetica-Bold')
-         .fillColor('#005670')
-         .text('Signatures:', { underline: true });
-      
-      doc.moveDown(2);
-      
-      // Client Signature
-      doc.fontSize(10)
-         .font('Helvetica')
-         .fillColor('#333333')
-         .text('Client Signature:', 70);
-      
-      doc.moveTo(70, doc.y + 30)
-         .lineTo(270, doc.y + 30)
-         .stroke();
-      
-      doc.text('', 70, doc.y + 35);
-      doc.fontSize(8)
-         .text(`Name: ${clientName || '____________________'}`, 70);
-      doc.text('Date: ____________________', 70);
-      
-      // HDG Signature
-      doc.fontSize(10)
-         .text('Henderson Design Group Representative:', 320, doc.y - 75);
-      
-      doc.moveTo(320, doc.y + 30)
-         .lineTo(520, doc.y + 30)
-         .stroke();
-      
-      doc.text('', 320, doc.y + 35);
-      doc.fontSize(8)
-         .text('Name: ____________________', 320);
-      doc.text('Date: ____________________', 320);
-      
-      doc.moveDown(3);
+# Replace {{placeholders}} in tables
+for table in doc.tables:
+    for row in table.rows:
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                for key, value in data.items():
+                    placeholder = "{{" + key + "}}"
+                    if placeholder in p.text:
+                        for run in p.runs:
+                            if placeholder in run.text:
+                                run.text = run.text.replace(placeholder, value)
 
-      // ==========================================
-      // FOOTER
-      // ==========================================
-      const footerTop = 720;
-      doc.fontSize(8)
-         .font('Helvetica')
-         .fillColor('#888888')
-         .text(
-           'Henderson Design Group | Ālia Collections | aloha@henderson.house | henderson.house',
-           72,
-           footerTop,
-           {
-             align: 'center',
-             width: 450
-           }
-         );
+doc.save("${outputDocx.replace(/\\/g, '/')}")
+print("SUCCESS")
+`;
 
-      // Finalize PDF
-      doc.end();
+    const scriptPath = path.join(tempDir, `modify_${timestamp}.py`);
+    await fs.writeFile(scriptPath, pythonScript);
 
-    } catch (error) {
-      reject(error);
+    const pythonCmd = 'python3';
+    const { stdout, stderr } = await execPromise(`${pythonCmd} "${scriptPath}"`);
+
+    if (!stdout.includes('SUCCESS')) {
+      throw new Error(`Python failed: ${stderr}`);
     }
-  });
+
+    console.log('✓ DOCX created');
+
+    const docxBuffer = await fs.readFile(outputDocx);
+
+    // Cleanup
+    await fs.unlink(scriptPath).catch(() => {});
+    await fs.unlink(dataPath).catch(() => {});
+    await fs.unlink(outputDocx).catch(() => {});
+
+    return docxBuffer;
+
+  } catch (error) {
+    console.error('Error:', error.message);
+    throw error;
+  }
 };
 
 /**
- * Generate Proposal/Production Contract PDF (more detailed)
- * @param {Object} data - Proposal data
- * @returns {Promise<Buffer>} - PDF as Buffer
+ * Generate Proposal/Production Contract PDF
  */
 const generateProposalPDF = async (data) => {
   return new Promise((resolve, reject) => {
     try {
+      const PDFDocument = require('pdfkit');
+      
       const {
         clientName,
         clientEmail,
@@ -299,10 +120,7 @@ const generateProposalPDF = async (data) => {
 
       const buffers = [];
       doc.on('data', buffers.push.bind(buffers));
-      doc.on('end', () => {
-        const pdfBuffer = Buffer.concat(buffers);
-        resolve(pdfBuffer);
-      });
+      doc.on('end', () => resolve(Buffer.concat(buffers)));
       doc.on('error', reject);
 
       // HEADER
@@ -314,7 +132,7 @@ const generateProposalPDF = async (data) => {
       doc.fontSize(12)
          .font('Helvetica')
          .fillColor('#333333')
-         .text('Ālia Collections', { align: 'center' });
+         .text('Alia Collections', { align: 'center' });
       
       doc.moveDown();
       doc.fontSize(18)
@@ -497,7 +315,7 @@ const generateProposalPDF = async (data) => {
          .font('Helvetica')
          .fillColor('#888888')
          .text(
-           'Henderson Design Group | Ālia Collections | aloha@henderson.house | henderson.house',
+           'Henderson Design Group | Alia Collections | aloha@henderson.house | henderson.house',
            72,
            footerTop,
            { align: 'center', width: 450 }

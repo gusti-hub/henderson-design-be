@@ -1,6 +1,6 @@
 FROM node:18-alpine
 
-# Install Chrome and dependencies
+# Install Python, LibreOffice, dan dependencies
 RUN apk add --no-cache \
     chromium \
     nss \
@@ -9,8 +9,10 @@ RUN apk add --no-cache \
     harfbuzz \
     ca-certificates \
     ttf-freefont \
-    nodejs \
-    yarn
+    python3 \
+    py3-pip \
+    libreoffice \
+    && pip3 install python-docx --break-system-packages
 
 # Set environment variables for Chrome
 ENV CHROME_BIN=/usr/bin/chromium-browser \
@@ -29,6 +31,9 @@ RUN npm install
 
 # Copy app files
 COPY . .
+
+# Create temp directory
+RUN mkdir -p temp
 
 # Expose port
 EXPOSE 5000

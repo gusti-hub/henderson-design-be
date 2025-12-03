@@ -390,43 +390,44 @@ const generateStepPdf = async (req, res) => {
       return res.status(400).json({ message: 'This step has no PDF generation feature' });
     }
 
-    // ===== PDF TEMPLATE SELECTOR =====
-    let pdfBuffer = null;
+    // ===== GENERATE DOCX (bukan PDF) =====
+    let docxBuffer = null; // ← Rename variable
     if (step.adminDescription.includes("Contract")) {
-      pdfBuffer = await generateContractPDF(journey.clientId, step);
+      docxBuffer = await generateContractPDF(journey.clientId, step);
     }
     else if (step.adminDescription.includes("Proposal")) {
-      pdfBuffer = await generateProposalPDF(journey.clientId, step);
+      docxBuffer = await generateProposalPDF(journey.clientId, step);
     }
     else if (step.step === 15) {
-      pdfBuffer = await generateContractPDF(journey.clientId, step);
+      console.log('iam here')
+      docxBuffer = await generateContractPDF(journey.clientId, step);
     }
     else {
       return res.status(400).json({ 
-        message: 'No PDF generator assigned for this step'
+        message: 'No document generator assigned for this step'
       });
     }
 
     // ===== SAVE INTO MONGODB =====
     if (!step.generatedDocuments) step.generatedDocuments = [];
 
-    const filename = `client_${clientId}_step_${stepNumber}_${Date.now()}.pdf`;
+    const filename = `Step_${stepNumber}_${Date.now()}.docx`; // ← Ganti .pdf jadi .docx
 
     step.generatedDocuments.push({
       filename,
-      data: pdfBuffer
+      data: docxBuffer // ← Ganti pdfBuffer jadi docxBuffer
     });
 
     await journey.save();
 
-    // ===== RETURN PDF FILE =====
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(pdfBuffer);
+    // ===== RETURN DOCX FILE =====
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`); // ← Pakai filename yang sudah dibuat
+    res.send(docxBuffer); // ← Ganti pdfBuffer jadi docxBuffer
 
   } catch (error) {
-    console.error('PDF generation error:', error);
-    res.status(500).json({ message: 'PDF generation error', error: error.message });
+    console.error('Document generation error:', error);
+    res.status(500).json({ message: 'Document generation error', error: error.message });
   }
 };
 
