@@ -8,7 +8,9 @@ const trackActivity = require('./middleware/activityTracker');
 const schedulingRoutes = require('./routes/schedulingRoutes');
 const journeyRoutes = require('./routes/journeyRoutes');
 const journeyChatRoutes = require('./routes/journeyChatRoutes');
-
+const invoiceRoutes = require('./routes/invoiceRoutes');
+const quickbooksRoutes = require('./routes/quickbooksRoutes');
+const agreementRoutes = require('./routes/agreementRoutes');
 
 // Load env vars
 dotenv.config();
@@ -17,6 +19,22 @@ dotenv.config();
 connectDB();
 
 const app = express();
+
+const { loadTokensFromDatabase } = require('./controllers/quickbooksController');
+
+const initializeQuickBooks = async () => {
+  console.log('Initializing QuickBooks...');
+  const loaded = await loadTokensFromDatabase();
+  if (loaded) {
+    console.log('✅ QuickBooks tokens loaded successfully');
+  } else {
+    console.log('⚠️  QuickBooks not connected - connect via /admin/quickbooks');
+  }
+};
+
+setTimeout(() => {
+  initializeQuickBooks();
+}, 1000); // Wait 1 second for DB connection
 
 // Configure timeouts and limits for PDF generation
 app.use((req, res, next) => {
@@ -54,7 +72,9 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/scheduling', schedulingRoutes);
 app.use('/api/journeys', journeyRoutes);
 app.use('/api/journey-chat', journeyChatRoutes);
-
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/quickbooks', quickbooksRoutes);
+app.use('/api/agreements', agreementRoutes);
 
 // Enhanced error handling
 app.use((err, req, res, next) => {
