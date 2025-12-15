@@ -737,7 +737,7 @@ const userApprovalTemplate = ({
     ? 'Design Hold Fee' 
     : propertyType;
 
-  return `<!DOCTYPE html>
+return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -749,7 +749,7 @@ const userApprovalTemplate = ({
     <tr>
       <td align="center" style="padding: 40px 0;">
         <table role="presentation" style="width: 600px; max-width: 100%; border-collapse: collapse; background-color: #ffffff; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-          
+
           <!-- Header -->
           <tr>
             <td style="padding: 40px 30px; background: linear-gradient(135deg, #005670 0%, #007a9a 100%); text-align: center;">
@@ -770,7 +770,7 @@ const userApprovalTemplate = ({
               </p>
 
               <p style="margin: 0 0 30px 0; color: #555555; line-height: 1.6;">
-                Great news! Your Henderson Design Group account has been approved and is now active. You can now access your personalized client portal to explore our curated furniture collections and begin designing your perfect Ālia home.
+                Great news! Your Henderson Design Group account has been approved and is now active. You can now access your personalized client portal to monitor your project progress and stay informed throughout each stage of your Ālia furnishing journey.
               </p>
 
               <!-- Account Information -->
@@ -780,7 +780,7 @@ const userApprovalTemplate = ({
                     <h2 style="margin: 0 0 20px 0; color: #005670; font-size: 18px; font-weight: bold;">
                       🔑 Your Login Credentials
                     </h2>
-                    
+
                     <table style="width: 100%; border-collapse: collapse;">
                       <tr>
                         <td style="padding: 8px 0; color: #666666; font-weight: bold; width: 35%;">Email:</td>
@@ -788,7 +788,7 @@ const userApprovalTemplate = ({
                       </tr>
                       <tr>
                         <td style="padding: 8px 0; color: #666666; font-weight: bold;">Password:</td>
-                        <td style="padding: 8px 0; color: #333333; font-family: 'Courier New', monospace; background-color: #fff3cd; padding: 8px; border-radius: 4px;">
+                        <td style="padding: 8px 0; color: #333333; font-family: 'Courier New', monospace; background-color: #fff3cd; border-radius: 4px;">
                           <strong>${temporaryPassword}</strong>
                         </td>
                       </tr>
@@ -811,7 +811,7 @@ const userApprovalTemplate = ({
                   <td style="padding: 20px;">
                     <p style="margin: 0; color: #856404; line-height: 1.6;">
                       <strong>🔒 Security Reminder:</strong><br>
-                      For your security, we recommend changing your password after your first login. You can do this from your account settings once logged in.
+                      For your security, we recommend changing your password after your first login via Account Settings.
                     </p>
                   </td>
                 </tr>
@@ -821,7 +821,7 @@ const userApprovalTemplate = ({
               <table role="presentation" style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
                 <tr>
                   <td align="center" style="padding: 20px 0;">
-                    <a href="${loginUrl}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #005670 0%, #007a9a 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                    <a href="${loginUrl}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #005670 0%, #007a9a 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">
                       🚀 Login to Your Account
                     </a>
                   </td>
@@ -843,11 +843,11 @@ const userApprovalTemplate = ({
                       ✨ What You Can Do Now
                     </h2>
                     <ul style="margin: 0; padding-left: 20px; color: #555555; line-height: 1.8;">
-                      <li style="margin-bottom: 10px;">Browse our curated furniture collections</li>
-                      <li style="margin-bottom: 10px;">View 3D visualizations of your unit with selected furniture</li>
-                      <li style="margin-bottom: 10px;">Create and save your favorite design combinations</li>
-                      <li style="margin-bottom: 10px;">Schedule consultations with our design team</li>
-                      <li>Track your project progress and timeline</li>
+                      <li>Track your project status and overall progress in real time</li>
+                      <li>Review completed, ongoing, and upcoming milestones</li>
+                      <li>View proposals, documents, and approvals related to your project</li>
+                      <li>Monitor timelines and updates from the HDG design team</li>
+                      <li>Access all project-related information in one centralized portal</li>
                     </ul>
                   </td>
                 </tr>
@@ -861,21 +861,18 @@ const userApprovalTemplate = ({
                       <strong>📋 Next Steps:</strong>
                     </p>
                     <ol style="margin: 0; padding-left: 20px; color: #155724; line-height: 1.8;">
-                      <li style="margin-bottom: 8px;">Click the login button above to access your portal</li>
-                      <li style="margin-bottom: 8px;">Complete any additional profile information</li>
-                      <li style="margin-bottom: 8px;">Review your design preferences questionnaire</li>
-                      <li>Start exploring furniture options for your unit</li>
+                      <li>Log in to your client portal using the credentials above</li>
+                      <li>Review your current project status and timeline</li>
+                      <li>Monitor progress updates and any required actions</li>
+                      <li>Stay informed as your project moves through each stage</li>
                     </ol>
                   </td>
                 </tr>
               </table>
 
-              <p style="margin: 0 0 20px 0; color: #555555; line-height: 1.6;">
-                Our design team has reviewed your preferences and is excited to help you create a space that reflects your unique style and meets your functional needs. If you have any questions or need assistance getting started, please don't hesitate to reach out.
-              </p>
-
               <p style="margin: 0; color: #555555; line-height: 1.6;">
-                Welcome to the Henderson Design Group family!<br><br>
+                We look forward to guiding you through each step of your project and ensuring a smooth, transparent experience.
+                <br><br>
                 <strong>Henderson Design Group Team</strong><br>
                 <em>Ālia Collections</em>
               </p>
@@ -893,7 +890,7 @@ const userApprovalTemplate = ({
                 74-5518 Kaiwi Street Suite B, Kailua Kona, HI, 96740-3145
               </p>
               <p style="margin: 0; color: #888888; font-size: 12px;">
-                <a href="mailto:aloha@henderson.house" style="color: #005670; text-decoration: none;">aloha@henderson.house</a> | 
+                <a href="mailto:aloha@henderson.house" style="color: #005670; text-decoration: none;">aloha@henderson.house</a> |
                 Phone: (808) 315-8782
               </p>
               <p style="margin: 10px 0 0 0; color: #888888; font-size: 12px;">
@@ -908,6 +905,8 @@ const userApprovalTemplate = ({
   </table>
 </body>
 </html>`;
+
+
 };
 
 // ============================================

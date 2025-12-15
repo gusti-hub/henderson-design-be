@@ -150,6 +150,11 @@ const login = async (req, res) => {
       return res.status(403).json({ message });
     }
 
+    // Update last login info
+    user.lastLogin = new Date();
+    user.lastLoginIp = req.ip;
+    await user.save();
+
     // Log activity
     await ActivityLog.create({
       userId: user._id,
@@ -282,7 +287,7 @@ const sendApprovalEmail = async (user, temporaryPassword) => {
     const { userApprovalTemplate } = require('../utils/emailTemplates');
     const sendEmail = require('../utils/sendEmail');
 
-    const loginUrl = process.env.FRONTEND_URL || 'https://de-cora.com/';
+    const loginUrl = process.env.FRONTEND_URL || 'https://de-cora.com/portal-login';
 
     const htmlContent = userApprovalTemplate({
       userName: user.name,

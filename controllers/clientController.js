@@ -11,12 +11,13 @@ const getAllClients = async (req, res) => {
   try {
     
     const { status, registrationType, page = 1, limit = 10, search = '' } = req.query;
-    
+    console.log(registrationType);
     // Build filter
-    let filter = {};
+    let filter = {role: 'user'};
     if (status && status !== 'all') {
       filter.status = status;
     }
+
     if (registrationType) {
       filter.registrationType = registrationType;
     }

@@ -11,7 +11,8 @@ const {
   updatePaymentStatus,
   generateOrderPDF,
   generateProposal,
-  generateOrderSummary
+  generateOrderSummary,
+  getOrdersByClient
 } = require('../controllers/orderController');
 const orderController = require('../controllers/orderController');
 const multer = require('multer');
@@ -57,6 +58,6 @@ router.post('/:id/proposal', protect, generateProposal);
 router.get('/:id/generate-version-pdf/:version', protect, proposalVersionController.generateVersionPdf);
 router.get('/:orderId/proposal-versions', protect, proposalVersionController.getProposalVersions);
 //router.put('/:orderId/proposal-versions/:version/status', protect, proposalVersionController.updateProposalVersionStatus);
-
+router.get('/client/:clientId', protect, orderController.getOrdersByClient);
 
 module.exports = router;

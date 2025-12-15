@@ -910,6 +910,47 @@ const sendOrderConfirmationEmail = async (userEmail, orderDetails) => {
   }
 };
 
+const getOrdersByClient = async (req, res) => {
+  try {
+    const { clientId } = req.params;
+
+    // Cari user berdasarkan clientId
+    const user = await User.findById(clientId);
+    if (!user) {
+      return res.status(404).json({ message: 'Client not found' });
+    }
+
+    // Cari order terakhir milik user
+    let order = await Order.findOne({ user: user._id })
+      .sort({ createdAt: -1 });
+
+    // ✅ AUTO CREATE kalau belum ada
+    if (!order) {
+      order = await Order.create({
+        user: user._id,
+        clientInfo: {
+          name: user.name,
+          unitNumber: user.unitNumber
+        },
+        selectedProducts: [],
+        occupiedSpots: {},
+        status: 'ongoing',
+        step: 1
+      });
+    }
+
+    res.json({
+      success: true,
+      orders: [order] // frontend kamu expect array
+    });
+
+  } catch (error) {
+    console.error('Error getOrdersByClient:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
 module.exports = {
   createOrder,
   getOrders,
@@ -920,5 +961,6 @@ module.exports = {
   generateOrderPDF,
   getCurrentUserOrder,
   generateProposal,
-  generateOrderSummary
+  generateOrderSummary,
+  getOrdersByClient
 };

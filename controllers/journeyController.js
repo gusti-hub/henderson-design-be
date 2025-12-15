@@ -25,7 +25,7 @@ const getClientJourney = async (req, res) => {
 
     let journey = await Journey.findOne({ clientId })
       .populate('steps.updatedBy', 'name email')
-      .populate('clientId', 'name email clientCode unitNumber floorPlan');
+      .populate('clientId', 'name email clientCode unitNumber floorPlan propertyType');
     
     if (!journey) {
       return res.status(404).json({ message: 'Journey not found for this client' });

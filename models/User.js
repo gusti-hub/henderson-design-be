@@ -1,3 +1,5 @@
+// backend/models/User.js - UPDATED VERSION WITH NEW QUESTIONNAIRE STRUCTURE
+
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
@@ -29,6 +31,14 @@ const userSchema = new mongoose.Schema({
     enum: ['user', 'admin'],
     default: 'user'
   },
+  lastLogin: {
+    type: Date,
+    default: null
+  },
+  lastLoginIp: {
+    type: String,
+    default: null
+  },
   unitNumber: {
     type: String,
     required: [false, 'Please add a unit number']
@@ -54,7 +64,6 @@ const userSchema = new mongoose.Schema({
     ]
   },
   
-  // ===== NEW FIELDS FOR PRICING =====
   collection: {
     type: String,
     enum: ['Nalu Foundation Collection', 'Nalu Collection', 'Lani'],
@@ -66,7 +75,6 @@ const userSchema = new mongoose.Schema({
     required: false
   },
   
-  // Down Payment & Transaction Information
   paymentInfo: {
     totalAmount: {
       type: Number,
@@ -89,7 +97,6 @@ const userSchema = new mongoose.Schema({
       enum: ['not-paid', 'partial', 'paid', 'overdue'],
       default: 'not-paid'
     },
-    // Array untuk track semua payment (30%, 20%, 25%, 25%)
     payments: [{
       amount: {
         type: Number,
@@ -123,7 +130,6 @@ const userSchema = new mongoose.Schema({
     }]
   },
   
-  // ===== NEW: INVOICES ARRAY =====
   invoices: [{
     invoiceNumber: {
       type: String,
@@ -165,13 +171,12 @@ const userSchema = new mongoose.Schema({
     },
     documentPath: {
       type: String,
-      required: true
+      required: false
     },
     documentBuffer: {
       type: Buffer,
       required: false
     },
-    // QuickBooks Integration
     quickbooksId: {
       type: String,
       default: null
@@ -189,7 +194,6 @@ const userSchema = new mongoose.Schema({
       type: String,
       default: null
     },
-    // Payment tracking
     paid: {
       type: Boolean,
       default: false
@@ -204,8 +208,7 @@ const userSchema = new mongoose.Schema({
     }
   }],
 
-  agreements: [
-  {
+  agreements: [{
     agreementNumber: String,
     agreementType: {
       type: String,
@@ -225,10 +228,8 @@ const userSchema = new mongoose.Schema({
       enum: ['generated', 'signed', 'cancelled'],
       default: 'generated'
     }
-  }
-],
+  }],
   
-  // Registration and approval status
   status: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],
@@ -240,51 +241,97 @@ const userSchema = new mongoose.Schema({
     default: 'admin-created'
   },
   
-  // Questionnaire responses
+  // ✅ UPDATED: New questionnaire structure matching frontend payload
   questionnaire: {
-    designStyle: [{
-      type: String,
-      enum: ['Modern/Contemporary', 'Minimalist', 'Beachy/Hawaiian']
-    }],
-    colorPalette: [{
-      type: String,
-      enum: [
-        'Tone-on-tone -- Dark', 'Tone-on-tone -- Light/Medium',
-        'Ocean Blue', 'Navy Blue', 'Green', 'Coral/Orange', 'Yellow', 'Tan'
-      ]
-    }],
-    patterns: [{
-      type: String,
-      enum: [
-        'No pattern -- just texture', 'Subtle patterns',
-        'Bold/Geometric patterns', 'Floral/Tropical patterns',
-        'Organic/Natural patterns'
-      ]
-    }],
-    personalTouches: {
-      type: String,
-      enum: ['Yes', 'No']
-    },
-    personalArtworkDetails: String,
-    primaryUse: [{
-      type: String,
-      enum: [
-        'Personal use', 'Entertaining', 'Working from home',
-        'Short-term/Vacation rental', 'Long-term rental'
-      ]
-    }],
-    occupants: String,
-    lifestyleNeeds: String,
-    desiredCompletionDate: Date,
-    budgetFlexibility: {
-      type: String,
-      enum: ['Very flexible', 'Somewhat flexible', 'Not flexible']
-    },
-    technologyIntegration: String,
-    additionalThoughts: String
+    // Client Info
+    clientName: String,
+    unitNumber: String,
+    
+    // Step 1: Home & Lifestyle
+    purpose_of_residence: [String],
+    who_will_use: [String],
+    family_members: String,
+    children_ages: String,
+    has_renters: Boolean,
+    has_pets: Boolean,
+    pet_details: String,
+    living_envision: [String],
+    home_feeling: [String],
+    
+    // Step 2: Daily Living
+    work_from_home: [String],
+    entertain_frequency: [String],
+    gathering_types: [String],
+    outdoor_lanai_use: [String],
+    
+    // Step 3: Design Aesthetic
+    unit_options: [String],
+    preferred_collection: [String],
+    style_direction: [String],
+    main_upholstery_color: [String],
+    accent_fabric_color: [String],
+    metal_tone: [String],
+    tone_preference: [String],
+    colors_to_avoid: String,
+    
+    // Step 4: Bedrooms
+    bed_sizes: [String],
+    mattress_firmness: [String],
+    bedding_type: [String],
+    bedding_material_color: [String],
+    lighting_mood: [String],
+    
+    // Step 5: Art & Finishing
+    art_style: [String],
+    art_coverage: [String],
+    accessories_styling: [String],
+    decorative_pillows: [String],
+    special_zones: [String],
+    existing_furniture: [String],
+    existing_furniture_details: String,
+    additional_notes: String,
+    
+    // Step 6: Add-On Services - Closet Solutions
+    closet_interested: Boolean,
+    closet_use: [String],
+    organization_style: [String],
+    closet_additional_needs: [String],
+    closet_finish: [String],
+    closet_locations: [String],
+    closet_locking_section: Boolean,
+    
+    // Step 6: Add-On Services - Window Coverings
+    window_interested: Boolean,
+    window_treatment: [String],
+    window_operation: [String],
+    light_quality: [String],
+    shade_material: [String],
+    shade_style: [String],
+    window_locations: [String],
+    
+    // Step 6: Add-On Services - Audio/Visual
+    av_interested: Boolean,
+    av_usage: [String],
+    av_areas: [String],
+    
+    // Step 6: Add-On Services - Greenery
+    greenery_interested: Boolean,
+    plant_type: [String],
+    plant_areas: [String],
+    
+    // Step 6: Add-On Services - Kitchen Essentials
+    kitchen_interested: Boolean,
+    kitchen_essentials: [String],
+    
+    // Liked Designs (from image selection)
+    likedDesigns: [Number],
+    
+    // Meta
+    isFirstTimeComplete: Boolean,
+    submittedAt: Date,
+    updatedAt: Date
   },
   
-  // Admin approval tracking
   approvedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -334,20 +381,20 @@ userSchema.methods.reject = function(adminId, reason) {
   return this.save();
 };
 
-// ===== NEW METHOD: Generate next invoice number =====
+// Generate next invoice number
 userSchema.methods.generateInvoiceNumber = function() {
   const invoiceCount = this.invoices ? this.invoices.length : 0;
   const invoiceNumber = String(invoiceCount + 1).padStart(2, '0');
   return `${this.clientCode}-${invoiceNumber}`;
 };
 
-// ===== NEW METHOD: Get invoice by number =====
+// Get invoice by number
 userSchema.methods.getInvoiceByNumber = function(invoiceNumber) {
   if (!this.invoices) return null;
   return this.invoices.find(inv => inv.invoiceNumber === invoiceNumber);
 };
 
-// ===== NEW METHOD: Get invoices by step =====
+// Get invoices by step
 userSchema.methods.getInvoicesByStep = function(stepNumber) {
   if (!this.invoices) return [];
   return this.invoices.filter(inv => inv.stepNumber === stepNumber);

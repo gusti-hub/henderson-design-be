@@ -1,189 +1,139 @@
-// backend/controllers/questionnaireController.js - COMPLETE VERSION WITH ALL HANDLERS
-const ClientQuestionnaire = require('../models/ClientQuestionnaire');
+// backend/controllers/questionnaireController.js - FIXED VERSION
+// ✅ Saves questionnaire directly to User.questionnaire field
+
 const User = require('../models/User');
 
 /**
- * Save questionnaire draft (auto-save)
- * NOT USED IN CURRENT IMPLEMENTATION but kept for compatibility
+ * Submit questionnaire - saves to User.questionnaire field
+ * @route POST /api/questionnaires/submit
  */
-exports.saveQuestionnaireDraft = async (req, res) => {
+const submitQuestionnaire = async (req, res) => {
   try {
-    const questionnaireData = req.body;
-    let userId;
-
-    if (req.user) {
-      userId = req.user.id;
-    } else {
-      const { email, unitNumber } = req.body;
-      
-      if (!email || !unitNumber) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email and unit number are required'
-        });
-      }
-
-      const user = await User.findOne({ 
-        email: email.toLowerCase(), 
-        unitNumber
-      });
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-      }
-
-      userId = user._id;
-    }
-
-    console.log('\n💾 Saving questionnaire draft...');
-    console.log('User ID:', userId);
-
-    const questionnaire = await ClientQuestionnaire.findOneAndUpdate(
-      { userId: userId },
-      {
-        ...questionnaireData,
-        userId: userId,
-        status: 'draft',
-        updatedAt: new Date()
-      },
-      {
-        new: true,
-        upsert: true,
-        runValidators: true
-      }
-    );
-
-    console.log('✅ Draft saved/updated successfully');
-
-    res.json({
-      success: true,
-      message: 'Draft saved successfully',
-      questionnaire: questionnaire
-    });
-  } catch (error) {
-    console.error('❌ Save draft error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error saving draft',
-      error: error.message
-    });
-  }
-};
-
-/**
- * Submit completed questionnaire
- * ✅ FIXED: Ensures likedDesigns is saved
- * ✅ FIXED: 1 user = 1 questionnaire (always update, never duplicate)
- */
-exports.submitQuestionnaire = async (req, res) => {
-  try {
-    const questionnaireData = req.body;
-    let userId, user;
-
-    if (req.user) {
-      userId = req.user.id;
-      user = await User.findById(userId);
-    } else {
-      const { email, unitNumber } = req.body;
-      
-      if (!email || !unitNumber) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email and unit number are required'
-        });
-      }
-
-      user = await User.findOne({ 
-        email: email.toLowerCase(), 
-        unitNumber
-      });
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-      }
-
-      userId = user._id;
-    }
+    const { email, unitNumber, ...questionnaireData } = req.body;
 
     console.log('\n📝 Submitting questionnaire...');
-    console.log('User:', user.name);
-    console.log('Email:', user.email);
-    console.log('Unit Number:', questionnaireData.unitNumber);
-    console.log('Liked Designs:', questionnaireData.likedDesigns);
+    console.log('Email:', email);
+    console.log('Unit Number:', unitNumber);
+    console.log('Payload keys:', Object.keys(questionnaireData));
 
-    const dataToSave = {
+    // Find user by email and unitNumber
+    const user = await User.findOne({ 
+      email: email.toLowerCase(), 
+      unitNumber
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found with this email and unit number'
+      });
+    }
+
+    console.log('✅ User found:', user.name);
+
+    // ✅ Save ALL questionnaire data to user.questionnaire
+    user.questionnaire = {
       clientName: questionnaireData.clientName || user.name,
-      unitNumber: questionnaireData.unitNumber || user.unitNumber,
-      email: user.email,
-      userId: userId,
+      unitNumber: unitNumber,
       
-      // ✅ CRITICAL: Explicitly save likedDesigns
+      // Step 1: Home & Lifestyle
+      purpose_of_residence: questionnaireData.purpose_of_residence || [],
+      who_will_use: questionnaireData.who_will_use || [],
+      family_members: questionnaireData.family_members || '',
+      children_ages: questionnaireData.children_ages || '',
+      has_renters: questionnaireData.has_renters || false,
+      has_pets: questionnaireData.has_pets || false,
+      pet_details: questionnaireData.pet_details || '',
+      living_envision: questionnaireData.living_envision || [],
+      home_feeling: questionnaireData.home_feeling || [],
+      
+      // Step 2: Daily Living
+      work_from_home: questionnaireData.work_from_home || [],
+      entertain_frequency: questionnaireData.entertain_frequency || [],
+      gathering_types: questionnaireData.gathering_types || [],
+      outdoor_lanai_use: questionnaireData.outdoor_lanai_use || [],
+      
+      // Step 3: Design Aesthetic
+      unit_options: questionnaireData.unit_options || [],
+      preferred_collection: questionnaireData.preferred_collection || [],
+      style_direction: questionnaireData.style_direction || [],
+      main_upholstery_color: questionnaireData.main_upholstery_color || [],
+      accent_fabric_color: questionnaireData.accent_fabric_color || [],
+      metal_tone: questionnaireData.metal_tone || [],
+      tone_preference: questionnaireData.tone_preference || [],
+      colors_to_avoid: questionnaireData.colors_to_avoid || '',
+      
+      // Step 4: Bedrooms
+      bed_sizes: questionnaireData.bed_sizes || [],
+      mattress_firmness: questionnaireData.mattress_firmness || [],
+      bedding_type: questionnaireData.bedding_type || [],
+      bedding_material_color: questionnaireData.bedding_material_color || [],
+      lighting_mood: questionnaireData.lighting_mood || [],
+      
+      // Step 5: Art & Finishing
+      art_style: questionnaireData.art_style || [],
+      art_coverage: questionnaireData.art_coverage || [],
+      accessories_styling: questionnaireData.accessories_styling || [],
+      decorative_pillows: questionnaireData.decorative_pillows || [],
+      special_zones: questionnaireData.special_zones || [],
+      existing_furniture: questionnaireData.existing_furniture || [],
+      existing_furniture_details: questionnaireData.existing_furniture_details || '',
+      additional_notes: questionnaireData.additional_notes || '',
+      
+      // Step 6: Add-On Services - Closet
+      closet_interested: questionnaireData.closet_interested || false,
+      closet_use: questionnaireData.closet_use || [],
+      organization_style: questionnaireData.organization_style || [],
+      closet_additional_needs: questionnaireData.closet_additional_needs || [],
+      closet_finish: questionnaireData.closet_finish || [],
+      closet_locations: questionnaireData.closet_locations || [],
+      closet_locking_section: questionnaireData.closet_locking_section || false,
+      
+      // Step 6: Add-On Services - Window Coverings
+      window_interested: questionnaireData.window_interested || false,
+      window_treatment: questionnaireData.window_treatment || [],
+      window_operation: questionnaireData.window_operation || [],
+      light_quality: questionnaireData.light_quality || [],
+      shade_material: questionnaireData.shade_material || [],
+      shade_style: questionnaireData.shade_style || [],
+      window_locations: questionnaireData.window_locations || [],
+      
+      // Step 6: Add-On Services - Audio/Visual
+      av_interested: questionnaireData.av_interested || false,
+      av_usage: questionnaireData.av_usage || [],
+      av_areas: questionnaireData.av_areas || [],
+      
+      // Step 6: Add-On Services - Greenery
+      greenery_interested: questionnaireData.greenery_interested || false,
+      plant_type: questionnaireData.plant_type || [],
+      plant_areas: questionnaireData.plant_areas || [],
+      
+      // Step 6: Add-On Services - Kitchen
+      kitchen_interested: questionnaireData.kitchen_interested || false,
+      kitchen_essentials: questionnaireData.kitchen_essentials || [],
+      
+      // Liked Designs
       likedDesigns: questionnaireData.likedDesigns || [],
       
-      // Form data
-      primary_use: questionnaireData.primary_use,
-      occupancy: questionnaireData.occupancy,
-      lifestyle: questionnaireData.lifestyle,
-      entertaining: questionnaireData.entertaining,
-      entertaining_style: questionnaireData.entertaining_style,
-      design_style: questionnaireData.design_style,
-      color_preference: questionnaireData.color_preference,
-      atmosphere: questionnaireData.atmosphere,
-      bedroom_use: questionnaireData.bedroom_use,
-      work_from_home: questionnaireData.work_from_home,
-      dining: questionnaireData.dining,
-      bed_size: questionnaireData.bed_size,
-      guest_bed: questionnaireData.guest_bed,
-      tv_preference: questionnaireData.tv_preference,
-      artwork: questionnaireData.artwork,
-      window_treatment: questionnaireData.window_treatment,
-      pets: questionnaireData.pets,
-      pet_details: questionnaireData.pet_details,
-      activities: questionnaireData.activities,
-      collection_interest: questionnaireData.collection_interest,
-      move_in: questionnaireData.move_in,
-      must_haves: questionnaireData.must_haves,
-      special_requests: questionnaireData.special_requests,
-      
-      // Status
-      status: 'submitted',
+      // Meta
+      isFirstTimeComplete: questionnaireData.isFirstTimeComplete || true,
       submittedAt: new Date(),
-      updatedAt: new Date(),
-      isFirstTimeComplete: true,
-      completionPercentage: 100
+      updatedAt: new Date()
     };
 
-    console.log('📦 Data to save:', dataToSave);
+    await user.save();
 
-    // ✅ CRITICAL: Use findOneAndUpdate with upsert
-    const questionnaire = await ClientQuestionnaire.findOneAndUpdate(
-      { userId: userId },
-      dataToSave,
-      {
-        new: true,
-        upsert: true,
-        runValidators: true,
-        setDefaultsOnInsert: true
-      }
-    );
-
-    console.log('✅ Questionnaire submitted successfully');
-    console.log('   Questionnaire ID:', questionnaire._id);
-    console.log('   Status:', questionnaire.status);
-    console.log('   Liked Designs Count:', questionnaire.likedDesigns?.length || 0);
+    console.log('✅ Questionnaire saved successfully');
+    console.log('   User ID:', user._id);
+    console.log('   Fields saved:', Object.keys(user.questionnaire).length);
 
     res.json({
       success: true,
       message: 'Questionnaire submitted successfully',
-      questionnaire: questionnaire,
+      questionnaire: user.questionnaire,
       isFirstTimeComplete: true
     });
+
   } catch (error) {
     console.error('❌ Submit questionnaire error:', error);
     res.status(500).json({
@@ -195,42 +145,42 @@ exports.submitQuestionnaire = async (req, res) => {
 };
 
 /**
- * Get questionnaire by ID
+ * Get questionnaire by clientId (for admin)
+ * @route GET /api/questionnaires/client/:clientId
  */
-exports.getQuestionnaire = async (req, res) => {
+const getQuestionnaireByClientId = async (req, res) => {
   try {
-    const questionnaireId = req.params.id;
-    const questionnaire = await ClientQuestionnaire.findById(questionnaireId)
-      .populate('userId', 'name email phoneNumber')
-      .populate('reviewedBy', 'name email');
+    const clientId = req.params.clientId;
 
-    if (!questionnaire) {
+    console.log('📥 Fetching questionnaire for client:', clientId);
+
+    const user = await User.findById(clientId).select('questionnaire name email unitNumber');
+
+    if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'Questionnaire not found'
+        message: 'User not found'
       });
     }
 
-    if (req.user) {
-      const userId = req.user.id;
-      const userRole = req.user.role;
-
-      if (questionnaire.userId._id.toString() !== userId && 
-          !['admin', 'designer'].includes(userRole)) {
-        return res.status(403).json({
-          success: false,
-          message: 'Access denied'
-        });
-      }
+    // Check if questionnaire exists and has data
+    if (!user.questionnaire || Object.keys(user.questionnaire).length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No questionnaire found for this client'
+      });
     }
 
-    res.json({
+    console.log('✅ Questionnaire found');
+
+    return res.json({
       success: true,
-      questionnaire: questionnaire
+      questionnaire: user.questionnaire
     });
+
   } catch (error) {
-    console.error('Get questionnaire error:', error);
-    res.status(500).json({
+    console.error('❌ Error getQuestionnaireByClientId:', error);
+    return res.status(500).json({
       success: false,
       message: 'Error retrieving questionnaire',
       error: error.message
@@ -239,54 +189,44 @@ exports.getQuestionnaire = async (req, res) => {
 };
 
 /**
- * Get user's questionnaires
- * ✅ FIXED: Returns only ONE questionnaire per user
+ * Get user's questionnaire (for user portal)
+ * @route GET /api/questionnaires/my-questionnaires
  */
-exports.getUserQuestionnaires = async (req, res) => {
+const getUserQuestionnaires = async (req, res) => {
   try {
-    let userId;
+    const { email, unitNumber } = req.query;
 
-    if (req.user) {
-      userId = req.user.id;
-    } else {
-      const { email, unitNumber } = req.query;
-      
-      if (!email || !unitNumber) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email and unit number are required'
-        });
-      }
-
-      const user = await User.findOne({ 
-        email: email.toLowerCase(), 
-        unitNumber
+    if (!email || !unitNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and unit number are required'
       });
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-      }
-
-      userId = user._id;
     }
 
-    const questionnaires = await ClientQuestionnaire.find({ userId: userId })
-      .sort({ updatedAt: -1 })
-      .limit(1);
+    const user = await User.findOne({ 
+      email: email.toLowerCase(), 
+      unitNumber
+    }).select('questionnaire');
 
-    const hasCompletedQuestionnaire = questionnaires.some(
-      q => q.status === 'submitted' || q.status === 'under-review' || q.status === 'approved'
-    );
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    const hasQuestionnaire =
+      user.questionnaire &&
+      typeof user.questionnaire === 'object' &&
+      Object.keys(user.questionnaire).length > 0;
+
 
     res.json({
       success: true,
-      questionnaires: questionnaires,
-      hasCompletedQuestionnaire: hasCompletedQuestionnaire,
-      needsQuestionnaire: !hasCompletedQuestionnaire
+      questionnaires: hasQuestionnaire ? [user.questionnaire] : [],
+      hasCompletedQuestionnaire: hasQuestionnaire,
+      needsQuestionnaire: !hasQuestionnaire
     });
+
   } catch (error) {
     console.error('Get user questionnaires error:', error);
     res.status(500).json({
@@ -298,23 +238,33 @@ exports.getUserQuestionnaires = async (req, res) => {
 };
 
 /**
- * Get all questionnaires (Admin/Designer only)
+ * Get all questionnaires (Admin only)
+ * @route GET /api/questionnaires/all
  */
-exports.getAllQuestionnaires = async (req, res) => {
+const getAllQuestionnaires = async (req, res) => {
   try {
-    const { status, page = 1, limit = 20 } = req.query;
+    const { page = 1, limit = 20 } = req.query;
 
-    const query = {};
-    if (status) query.status = status;
-
-    const questionnaires = await ClientQuestionnaire.find(query)
-      .populate('userId', 'name email phoneNumber unitNumber')
-      .populate('reviewedBy', 'name email')
-      .sort({ submittedAt: -1, updatedAt: -1 })
+    // Find all users who have questionnaire data
+    const users = await User.find({ 
+      'questionnaire.submittedAt': { $exists: true } 
+    })
+      .select('name email unitNumber questionnaire')
+      .sort({ 'questionnaire.submittedAt': -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
-    const count = await ClientQuestionnaire.countDocuments(query);
+    const count = await User.countDocuments({ 
+      'questionnaire.submittedAt': { $exists: true } 
+    });
+
+    const questionnaires = users.map(user => ({
+      userId: user._id,
+      clientName: user.name,
+      email: user.email,
+      unitNumber: user.unitNumber,
+      ...user.questionnaire.toObject()
+    }));
 
     res.json({
       success: true,
@@ -323,6 +273,7 @@ exports.getAllQuestionnaires = async (req, res) => {
       currentPage: page,
       total: count
     });
+
   } catch (error) {
     console.error('Get all questionnaires error:', error);
     res.status(500).json({
@@ -333,178 +284,10 @@ exports.getAllQuestionnaires = async (req, res) => {
   }
 };
 
-/**
- * Update questionnaire status (Admin/Designer only)
- */
-exports.updateQuestionnaireStatus = async (req, res) => {
-  try {
-    const questionnaireId = req.params.id;
-    const { status, designerNotes } = req.body;
-
-    const questionnaire = await ClientQuestionnaire.findById(questionnaireId);
-
-    if (!questionnaire) {
-      return res.status(404).json({
-        success: false,
-        message: 'Questionnaire not found'
-      });
-    }
-
-    questionnaire.status = status;
-    if (designerNotes) questionnaire.designerNotes = designerNotes;
-    questionnaire.reviewedAt = new Date();
-    questionnaire.reviewedBy = req.user.id;
-
-    await questionnaire.save();
-
-    res.json({
-      success: true,
-      message: 'Questionnaire status updated',
-      questionnaire: questionnaire
-    });
-  } catch (error) {
-    console.error('Update status error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating questionnaire',
-      error: error.message
-    });
-  }
+// ✅ FIXED: Proper exports
+module.exports = {
+  submitQuestionnaire,
+  getQuestionnaireByClientId,
+  getUserQuestionnaires,
+  getAllQuestionnaires
 };
-
-/**
- * Delete questionnaire (Admin only)
- */
-exports.deleteQuestionnaire = async (req, res) => {
-  try {
-    const questionnaireId = req.params.id;
-
-    // Allow both admin and user to delete (user only their own drafts)
-    if (req.user) {
-      const questionnaire = await ClientQuestionnaire.findById(questionnaireId);
-
-      if (!questionnaire) {
-        return res.status(404).json({
-          success: false,
-          message: 'Questionnaire not found'
-        });
-      }
-
-      // Admin can delete any, user can only delete their own drafts
-      if (req.user.role !== 'admin') {
-        if (questionnaire.userId.toString() !== req.user.id || questionnaire.status !== 'draft') {
-          return res.status(403).json({
-            success: false,
-            message: 'Access denied'
-          });
-        }
-      }
-
-      await questionnaire.deleteOne();
-
-      res.json({
-        success: true,
-        message: 'Questionnaire deleted'
-      });
-    } else {
-      // Non-authenticated request
-      const { email, unitNumber } = req.query;
-      
-      if (!email || !unitNumber) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email and unit number are required'
-        });
-      }
-
-      const user = await User.findOne({ 
-        email: email.toLowerCase(), 
-        unitNumber
-      });
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-      }
-
-      const questionnaire = await ClientQuestionnaire.findById(questionnaireId);
-
-      if (!questionnaire) {
-        return res.status(404).json({
-          success: false,
-          message: 'Questionnaire not found'
-        });
-      }
-
-      if (questionnaire.userId.toString() !== user._id.toString() || questionnaire.status !== 'draft') {
-        return res.status(403).json({
-          success: false,
-          message: 'Access denied'
-        });
-      }
-
-      await questionnaire.deleteOne();
-
-      res.json({
-        success: true,
-        message: 'Questionnaire deleted'
-      });
-    }
-  } catch (error) {
-    console.error('Delete questionnaire error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting questionnaire',
-      error: error.message
-    });
-  }
-};
-
-/**
- * Get questionnaire by clientId (admin tool)
- * @route GET /api/questionnaires/client/:clientId
- */
-exports.getQuestionnaireByClientId = async (req, res) => {
-  try {
-    const clientId = req.params.clientId;
-
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: "clientId is required"
-      });
-    }
-
-    console.log("📥 Fetching questionnaire for client:", clientId);
-
-    // Return only latest questionnaire
-    const questionnaire = await ClientQuestionnaire.findOne({ userId: clientId })
-      .sort({ updatedAt: -1 });
-
-    if (!questionnaire) {
-      return res.status(404).json({
-        success: false,
-        message: "No questionnaire found for this client"
-      });
-    }
-
-    return res.json({
-      success: true,
-      questionnaire
-    });
-
-  } catch (error) {
-    console.error("❌ Error getQuestionnaireByClientId:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Error retrieving questionnaire by clientId",
-      error: error.message
-    });
-  }
-};
-
-
-
-module.exports = exports;
