@@ -139,7 +139,7 @@ const userSchema = new mongoose.Schema({
     stepNumber: {
       type: Number,
       required: true,
-      enum: [15, 43, 58, 67]
+      enum: [16, 43, 58, 67]
     },
     invoiceType: {
       type: String,

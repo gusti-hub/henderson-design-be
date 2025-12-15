@@ -9,7 +9,7 @@ const execPromise = util.promisify(exec);
  * Invoice Configuration
  */
 const INVOICE_CONFIGS = {
-  15: {
+  16: {
     type: 'design-fee',
     title: 'Design Fee Invoice (30%)',
     percentage: 30,
@@ -46,7 +46,7 @@ const INVOICE_CONFIGS = {
 /**
  * Generate Invoice DOCX
  * @param {Object} client - User/Client object
- * @param {Number} stepNumber - Step number (15, 43, 58, or 67)
+ * @param {Number} stepNumber - Step number (16, 43, 58, or 67)
  * @param {String} invoiceNumber - Generated invoice number (e.g., ALIA0006-01)
  * @returns {Buffer} - DOCX file buffer
  */
@@ -55,8 +55,8 @@ const generateInvoiceDOCX = async (client, stepNumber, invoiceNumber) => {
 
   try {
     // Validate step number
-    if (![15, 43, 58, 67].includes(stepNumber)) {
-      throw new Error(`Invalid step number: ${stepNumber}. Must be 15, 43, 58, or 67`);
+    if (![16, 43, 58, 67].includes(stepNumber)) {
+      throw new Error(`Invalid step number: ${stepNumber}. Must be 16, 43, 58, or 67`);
     }
 
     const config = INVOICE_CONFIGS[stepNumber];
@@ -81,7 +81,7 @@ const generateInvoiceDOCX = async (client, stepNumber, invoiceNumber) => {
     
     // Calculate cumulative total paid including this invoice
     let cumulativePercentage = 0;
-    if (stepNumber === 15) cumulativePercentage = 30;
+    if (stepNumber === 16) cumulativePercentage = 30;
     else if (stepNumber === 43) cumulativePercentage = 50;
     else if (stepNumber === 58) cumulativePercentage = 75;
     else if (stepNumber === 67) cumulativePercentage = 100;
@@ -322,7 +322,7 @@ const calculateInvoiceAmount = (totalAmount, stepNumber) => {
   const invoiceAmount = Math.round(totalAmount * (config.percentage / 100));
   
   let cumulativePercentage = 0;
-  if (stepNumber === 15) cumulativePercentage = 30;
+  if (stepNumber === 16) cumulativePercentage = 30;
   else if (stepNumber === 43) cumulativePercentage = 50;
   else if (stepNumber === 58) cumulativePercentage = 75;
   else if (stepNumber === 67) cumulativePercentage = 100;

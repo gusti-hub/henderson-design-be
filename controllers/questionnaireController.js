@@ -214,11 +214,11 @@ const getUserQuestionnaires = async (req, res) => {
         message: 'User not found'
       });
     }
-    const hasQuestionnaire =
-      user.questionnaire &&
-      typeof user.questionnaire === 'object' &&
-      Object.keys(user.questionnaire).length > 0;
+const hasQuestionnaire =
+  Array.isArray(user.questionnaire?.purpose_of_residence) &&
+  user.questionnaire.purpose_of_residence.length > 0;
 
+      console.log('Has questionnaire:', hasQuestionnaire);
 
     res.json({
       success: true,

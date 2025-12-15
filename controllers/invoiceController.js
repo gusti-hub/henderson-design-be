@@ -3,7 +3,7 @@ const User = require('../models/User');
 
 // Invoice Configuration
 const INVOICE_CONFIGS = {
-  15: {
+  16: {
     type: 'design-fee',
     title: '30% Deposit Invoice',
     percentage: 30,
@@ -41,7 +41,7 @@ function calculateInvoiceAmount(totalAmount, stepNumber) {
   const invoiceAmount = Math.round(totalAmount * (config.percentage / 100));
   
   let cumulativePercentage = 0;
-  if (stepNumber === 15) cumulativePercentage = 30;
+  if (stepNumber === 16) cumulativePercentage = 30;
   else if (stepNumber === 43) cumulativePercentage = 50;
   else if (stepNumber === 58) cumulativePercentage = 75;
   else if (stepNumber === 67) cumulativePercentage = 100;
@@ -70,9 +70,9 @@ exports.generateInvoice = async (req, res) => {
     console.log(`[INVOICE] Generating for client ${clientId}, step ${stepNumber}`);
 
     const step = parseInt(stepNumber);
-    if (![15, 43, 58, 67].includes(step)) {
+    if (![16, 43, 58, 67].includes(step)) {
       return res.status(400).json({ 
-        message: 'Invalid step number. Must be 15, 43, 58, or 67' 
+        message: 'Invalid step number. Must be 16, 43, 58, or 67' 
       });
     }
 
