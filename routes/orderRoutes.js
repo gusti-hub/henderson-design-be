@@ -12,7 +12,8 @@ const {
   generateOrderPDF,
   generateProposal,
   generateOrderSummary,
-  getOrdersByClient
+  getOrdersByClient,
+  saveFurniturePlacements
 } = require('../controllers/orderController');
 const orderController = require('../controllers/orderController');
 const multer = require('multer');
@@ -38,6 +39,7 @@ router.get('/user-order', protect, orderController.getCurrentUserOrder);
 router.get('/:id/proposal', protect, generateProposal);
 router.get('/:id/summary', protect, generateOrderSummary);
 
+
 router.route('/')
   .get(getOrders)
   .post(createOrder);
@@ -59,5 +61,6 @@ router.get('/:id/generate-version-pdf/:version', protect, proposalVersionControl
 router.get('/:orderId/proposal-versions', protect, proposalVersionController.getProposalVersions);
 //router.put('/:orderId/proposal-versions/:version/status', protect, proposalVersionController.updateProposalVersionStatus);
 router.get('/client/:clientId', protect, orderController.getOrdersByClient);
+router.put('/:orderId/furniture-placements', protect, orderController.saveFurniturePlacements);
 
 module.exports = router;

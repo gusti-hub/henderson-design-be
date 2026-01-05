@@ -1,3 +1,6 @@
+// backend/models/Order.js
+// UPDATE YOUR ORDER SCHEMA TO INCLUDE THESE FIELDS
+
 const mongoose = require('mongoose');
 
 const orderSchema = new mongoose.Schema({
@@ -6,6 +9,20 @@ const orderSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  
+  // ✅ ADD THIS NEW FIELD
+  packageType: {
+    type: String,
+    enum: ['investor', 'custom', 'library'],
+    default: 'investor'
+  },
+  
+  clientInfo: {
+    name: String,
+    unitNumber: String,
+    floorPlan: String
+  },
+  
   selectedPlan: {
     id: String,
     title: String,
@@ -18,69 +35,90 @@ const orderSchema = new mongoose.Schema({
       floorPlan: String
     }
   },
-  clientInfo: {
-    name: String,
-    unitNumber: String,
-    floorPlan: String
-  },
+  
+  Package: String,
+  
   selectedProducts: [{
-    _id: String,
+    product_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product'
+    },
     name: String,
-    product_id: String,
-    spotId: String,
-    spotName: String,
+    category: String,
+    basePrice: Number,
+    selectedOptions: mongoose.Schema.Types.Mixed,
     finalPrice: Number,
-    quantity: Number,
-    unitPrice: Number,   
-    selectedOptions: {
-      finish: String,
-      fabric: String,
-      size: String,
-      insetPanel: String,
-      image: String // Store selected variant image URL here
+    quantity: {
+      type: Number,
+      default: 1
+    },
+    // ✅ FOR LIBRARY: Store placement info
+    placement: {
+      spotKey: String,
+      coordinates: {
+        x: Number,
+        y: Number,
+        width: Number,
+        height: Number,
+        rotation: { type: Number, default: 0 }
+      }
     }
   }],
+  
+  // ✅ ENHANCED FOR LIBRARY: Store dynamic furniture placements
   occupiedSpots: {
     type: Map,
-    of: String
+    of: {
+      furnitureId: String,
+      label: String,
+      area: String,
+      coordinates: mongoose.Schema.Types.Mixed, // ✅ Allow any shape (polygon, curve, arc, rectangle)
+      originalCoordinates: mongoose.Schema.Types.Mixed, // ✅ Store original shape
+      rotation: { type: Number, default: 0 },
+      isPlaced: Boolean,
+      sourceConfig: String,
+      sourceSpot: String,
+      product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' }
+    },
+    default: {}
   },
+  
+  status: {
+    type: String,
+    enum: ['ongoing', 'completed', 'confirmed', 'cancelled', 'review'],
+    default: 'ongoing'
+  },
+  
   step: {
     type: Number,
     default: 1
   },
-  Package: {
-    type: String
+  
+  proposalVersions: [{
+    version: Number,
+    notes: String,
+    createdAt: Date,
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }
+  }],
+  
+  createdAt: {
+    type: Date,
+    default: Date.now
   },
-  status: {
-    type: String,
-    enum: ['ongoing', 'completed', 'cancelled', 'confirmed', 'review'],
-    default: 'ongoing'
-  },
-  paymentDetails: {
-    method: {
-      type: String,
-      enum: ['bank_transfer', 'wire_transfer', 'cheque', '']
-    },
-    installments: [{
-      percent: Number,
-      dueDate: Date,
-      amount: Number,
-      status: {
-        type: String,
-        enum: ['pending', 'uploaded', 'verified', 'rejected'],
-        default: 'pending'
-      },
-      proofOfPayment: {
-        filename: String,
-        url: String,
-        key: String,
-        uploadDate: Date
-      }
-    }]
+  
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
-}, {
-  timestamps: true
 });
 
-const Order = mongoose.model('Order', orderSchema);
-module.exports = Order;
+// Update timestamp on save
+orderSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
+});
+
+module.exports = mongoose.model('Order', orderSchema);

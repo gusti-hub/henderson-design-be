@@ -1,18 +1,77 @@
 const User = require('../models/User');
 const Journey = require('../models/Journey');
-const JOURNEY_STEPS = require('../data/journeySteps');
+const Order = require('../models/Order');
+const { JOURNEY_STEPS } = require('../data/journeySteps');
 const { sendApprovalEmail, sendRejectionEmail } = require('./authController');
 const crypto = require('crypto');
+
+// ✅ HELPER: Get image path based on config ID
+const getFloorPlanImagePath = (configId) => {
+  const imageMap = {
+    'investor-a': '/images/investor_plan/Alia_05A.png',
+    'investor-b': '/images/investor_plan/Alia_03A.png',
+    'investor-c': '/images/investor_plan/Alia_03B.png',
+    'custom-a': '/images/custom_plan/Alia_05A.png',
+    'custom-b': '/images/custom_plan/Alia_03A.png',
+    'custom-c': '/images/custom_plan/Alia_03B.png',
+  };
+  
+  return imageMap[configId] || '/images/investor_plan/investor_1.png';
+};
+
+// ✅ HELPER: Map Residence + Collection + PackageType to Config ID
+const getFloorPlanConfigId = (floorPlan, collection, packageType = 'investor') => {
+  if (!floorPlan) return 'investor-a';
+  
+  // For library, always use investor floor plans
+  if (packageType === 'library') {
+    const residenceMap = {
+      'Residence 05A': 'investor-a',
+      'Residence 03A': 'investor-b',
+      'Residence 03B': 'investor-c',
+      'Residence 00A': 'investor-a',
+      'Residence 01B': 'investor-b',
+      'Residence 05B': 'investor-b',
+      'Residence 07B': 'investor-b',
+      'Residence 08': 'investor-c',
+      'Residence 09B': 'investor-b',
+      'Residence 10/12': 'investor-c',
+      'Residence 10A/12A': 'investor-a',
+      'Residence 11B': 'investor-b',
+      'Residence 13A': 'investor-a',
+    };
+    return residenceMap[floorPlan] || 'investor-a';
+  }
+  
+  // For custom/investor, use collection to determine
+  const isLani = collection?.includes('Lani');
+  
+  const residenceMap = {
+    'Residence 05A': isLani ? 'custom-a' : 'investor-a',
+    'Residence 03A': isLani ? 'custom-b' : 'investor-b',
+    'Residence 03B': isLani ? 'custom-c' : 'investor-c',
+    'Residence 00A': 'investor-a',
+    'Residence 01B': 'investor-b',
+    'Residence 05B': 'investor-b',
+    'Residence 07B': 'custom-b',
+    'Residence 08': 'custom-c',
+    'Residence 09B': 'investor-b',
+    'Residence 10/12': 'custom-c',
+    'Residence 10A/12A': 'custom-a',
+    'Residence 11B': 'custom-b',
+    'Residence 13A': 'custom-a',
+  };
+
+  return residenceMap[floorPlan] || 'investor-a';
+};
 
 // @desc    Get all clients (pending, approved, rejected)
 // @route   GET /api/clients
 // @access  Private (Admin)
 const getAllClients = async (req, res) => {
   try {
-    
     const { status, registrationType, page = 1, limit = 10, search = '' } = req.query;
-    console.log(registrationType);
-    // Build filter
+    
     let filter = {role: 'user'};
     if (status && status !== 'all') {
       filter.status = status;
@@ -22,7 +81,6 @@ const getAllClients = async (req, res) => {
       filter.registrationType = registrationType;
     }
     
-    // Add search filter
     if (search) {
       filter.$or = [
         { name: { $regex: search, $options: 'i' } },
@@ -32,21 +90,15 @@ const getAllClients = async (req, res) => {
       ];
     }    
     
-    // Calculate pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    // Get total count
     const total = await User.countDocuments(filter);
     
-    // Get clients
     const clients = await User.find(filter)
       .select('-password')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
     
-    
-    // CRITICAL: Return in exact format frontend expects
     const response = {
       success: true,
       count: total,
@@ -117,12 +169,11 @@ const getPendingCount = async (req, res) => {
   }
 };
 
-// @desc    Get floor plans (unique floor plans from users)
+// @desc    Get floor plans
 // @route   GET /api/clients/floor-plans
 // @access  Private (Admin)
 const getFloorPlans = async (req, res) => {
   try {
-    // Get distinct floor plans from users
     const floorPlans = [
       "Residence 00A", "Residence 01B", "Residence 03A",
       "Residence 05A", "Residence 08", "Residence 10A/12A",
@@ -131,7 +182,6 @@ const getFloorPlans = async (req, res) => {
       "Residence 13A"
     ];
     
-    // Filter out null/undefined values
     const validFloorPlans = floorPlans.filter(fp => fp);
     
     res.json({
@@ -195,22 +245,15 @@ const approveClient = async (req, res) => {
       });
     }
     
-    // Generate temporary password (8 characters, alphanumeric)
     const temporaryPassword = crypto.randomBytes(4).toString('hex').toUpperCase();
-    
-    // Update client password with temporary password
-    client.password = temporaryPassword; // Will be hashed by pre-save hook
-    
-    // Approve the client
+    client.password = temporaryPassword;
     await client.approve(req.user.id);
     
-    // Send approval email with credentials
     try {
       await sendApprovalEmail(client, temporaryPassword);
       console.log(`✅ Approval email sent to ${client.email}`);
     } catch (emailError) {
       console.error('❌ Failed to send approval email:', emailError);
-      // Continue even if email fails
     }
     
     res.json({
@@ -239,7 +282,6 @@ const approveClient = async (req, res) => {
 const rejectClient = async (req, res) => {
   try {
     const { reason } = req.body;
-    
     const client = await User.findById(req.params.id);
     
     if (!client) {
@@ -256,16 +298,13 @@ const rejectClient = async (req, res) => {
       });
     }
     
-    // Reject the client
     await client.reject(req.user.id, reason);
     
-    // Send rejection email
     try {
       await sendRejectionEmail(client.email, client.name, reason);
       console.log(`✅ Rejection email sent to ${client.email}`);
     } catch (emailError) {
       console.error('❌ Failed to send rejection email:', emailError);
-      // Continue even if email fails
     }
     
     res.json({
@@ -292,7 +331,6 @@ const rejectClient = async (req, res) => {
 const recordPayment = async (req, res) => {
   try {
     console.log('💰 Recording payment for client:', req.params.id);
-    console.log('Payment data:', req.body);
     
     const {
       amount,
@@ -302,7 +340,6 @@ const recordPayment = async (req, res) => {
       notes
     } = req.body;
     
-    // Validate required fields
     if (!amount || !paymentDate || !paymentMethod) {
       return res.status(400).json({
         success: false,
@@ -310,7 +347,6 @@ const recordPayment = async (req, res) => {
       });
     }
     
-    // Find client
     const client = await User.findById(req.params.id);
     
     if (!client) {
@@ -320,7 +356,6 @@ const recordPayment = async (req, res) => {
       });
     }
     
-    // Initialize paymentInfo if it doesn't exist
     if (!client.paymentInfo) {
       client.paymentInfo = {
         totalAmount: 0,
@@ -334,8 +369,6 @@ const recordPayment = async (req, res) => {
       client.paymentInfo.payments = [];
     }
 
-
-    // Create payment record
     const payment = {
       amount: parseFloat(amount),
       paymentDate: new Date(paymentDate),
@@ -346,18 +379,14 @@ const recordPayment = async (req, res) => {
       recordedAt: new Date()
     };
     
-    // Add payment to payments array
     client.paymentInfo.payments.push(payment);
     
-    // Update total amount paid
     const previousAmountPaid = client.paymentInfo.amountPaid || 0;
     client.paymentInfo.amountPaid = previousAmountPaid + parseFloat(amount);
     
-    // Calculate required down payment
     const requiredDP = (client.paymentInfo.totalAmount || 0) * 
       ((client.paymentInfo.downPaymentPercentage || 30) / 100);
     
-    // Update down payment status
     if (client.paymentInfo.amountPaid >= requiredDP) {
       client.paymentInfo.downPaymentStatus = 'paid';
     } else if (client.paymentInfo.amountPaid > 0) {
@@ -366,12 +395,9 @@ const recordPayment = async (req, res) => {
       client.paymentInfo.downPaymentStatus = 'not-paid';
     }
     
-    // Save client
     await client.save();
     
     console.log('✅ Payment recorded successfully');
-    console.log('Amount paid:', client.paymentInfo.amountPaid);
-    console.log('Status:', client.paymentInfo.downPaymentStatus);
 
     res.json({
       success: true,
@@ -409,12 +435,12 @@ const generateClientCode = async () => {
   return "ALI" + String(newNumber).padStart(3, "0");
 };
 
-// @desc    Create new client (admin-created) with auto-initialize journey
+// @desc    Create new client with auto-journey and auto-order (LIBRARY SUPPORT)
 // @route   POST /api/clients
 // @access  Private (Admin)
 const createClient = async (req, res) => {
   try {
-    console.log('📝 Creating new client with auto-journey...');
+    console.log('📝 Creating new client with auto-journey and auto-order...');
 
     const {
       name,
@@ -426,17 +452,24 @@ const createClient = async (req, res) => {
       propertyType,
       collection,
       bedroomCount,
+      packageType = 'investor', // ✅ NEW: 'investor', 'custom', or 'library'
     } = req.body;
 
-    // Required fields
-    if (!name || !email || !password || !unitNumber || !collection || !bedroomCount) {
+    if (!name || !email || !password || !unitNumber) {
       return res.status(400).json({
         success: false,
         message: 'Please provide all required fields'
       });
     }
 
-    // Check duplicate email
+    // For library, collection/bedroom not required
+    if (packageType !== 'library' && (!collection || !bedroomCount)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide collection and bedroom count'
+      });
+    }
+
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
@@ -445,23 +478,17 @@ const createClient = async (req, res) => {
       });
     }
 
-    // Calculate totalAmount from pricing table
-    const pricingTable = {
-      'Nalu Foundation Collection': { '1': 2500, '2': 3500, '3': 4500 },
-      'Nalu Collection': { '1': 5000, '2': 7500, '3': 10000 },
-      'Lani': { '1': 10000, '2': 15000, '3': 20000 }
-    };
-
-    const totalAmount = pricingTable[collection]?.[bedroomCount] || 0;
-
-    if (totalAmount === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid collection or bedroom count'
-      });
+    // Calculate totalAmount
+    let totalAmount = 0;
+    if (packageType !== 'library') {
+      const pricingTable = {
+        'Nalu Foundation Collection': { '1': 2500, '2': 3500, '3': 4500 },
+        'Nalu Collection': { '1': 5000, '2': 7500, '3': 10000 },
+        'Lani': { '1': 10000, '2': 15000, '3': 20000 }
+      };
+      totalAmount = pricingTable[collection]?.[bedroomCount] || 0;
     }
 
-    // Auto-generate client code
     const clientCode = await generateClientCode();
 
     // Create user
@@ -474,6 +501,9 @@ const createClient = async (req, res) => {
       phoneNumber: phoneNumber || '',
       floorPlan: floorPlan || '',
       propertyType: propertyType || 'Lock 2025 Pricing',
+      collection: collection || '',
+      bedroomCount: bedroomCount || 0,
+      packageType, // ✅ NEW FIELD
       registrationType: 'admin-created',
       status: 'approved',
       approvedAt: new Date(),
@@ -487,7 +517,7 @@ const createClient = async (req, res) => {
       }
     });
 
-    console.log('✅ Client created:', user.clientCode);
+    console.log('✅ Client created:', user.clientCode, 'Package:', packageType);
 
     // AUTO-INITIALIZE JOURNEY
     const journey = await Journey.create({
@@ -513,12 +543,44 @@ const createClient = async (req, res) => {
 
     console.log('✅ Journey auto-initialized with', JOURNEY_STEPS.length, 'steps');
 
+    // ✅ AUTO-CREATE ORDER with packageType
+    const floorPlanConfigId = getFloorPlanConfigId(user.floorPlan, collection, packageType);
+    const floorPlanImage = getFloorPlanImagePath(floorPlanConfigId);
+    
+    const order = await Order.create({
+      user: user._id,
+      packageType, // ✅ Store package type
+      clientInfo: {
+        name: user.name,
+        unitNumber: user.unitNumber,
+        floorPlan: user.floorPlan
+      },
+      selectedPlan: {
+        id: floorPlanConfigId,
+        title: user.floorPlan || 'Residence',
+        description: collection ? `${collection} - ${bedroomCount} Bedroom` : 'Library Package',
+        image: floorPlanImage,
+        clientInfo: {
+          name: user.name,
+          unitNumber: user.unitNumber,
+          floorPlan: user.floorPlan
+        }
+      },
+      Package: collection ? `${collection} - ${bedroomCount}BR` : 'Library',
+      selectedProducts: [],
+      occupiedSpots: {}, // For library: will store furniture placements
+      status: 'ongoing',
+      step: 1
+    });
+
+    console.log('✅ Order auto-created:', order._id, 'Config:', floorPlanConfigId, 'Package Type:', packageType);
+
     // Send approval email
     await sendApprovalEmail(user, password);
 
     res.status(201).json({
       success: true,
-      message: 'Client created and journey initialized successfully',
+      message: 'Client, journey, and order initialized successfully',
       data: {
         _id: user._id,
         clientCode: user.clientCode,
@@ -526,8 +588,10 @@ const createClient = async (req, res) => {
         email: user.email,
         unitNumber: user.unitNumber,
         status: user.status,
+        packageType: user.packageType,
         totalAmount,
-        journeyId: journey._id
+        journeyId: journey._id,
+        orderId: order._id
       }
     });
 
@@ -550,15 +614,14 @@ const createClient = async (req, res) => {
   }
 };
 
-
-// @desc    Update client information
+// @desc    Update client information (with order sync and library support)
 // @route   PUT /api/clients/:id
 // @access  Private (Admin)
 const updateClient = async (req, res) => {
   try {
     const allowedUpdates = [
       'name', 'email', 'unitNumber', 'phoneNumber', 'propertyType',
-      'floorPlan', 'questionnaire', 'paymentInfo'
+      'floorPlan', 'questionnaire', 'paymentInfo', 'collection', 'bedroomCount', 'packageType'
     ];
     
     const updates = {};
@@ -567,6 +630,10 @@ const updateClient = async (req, res) => {
         updates[field] = req.body[field];
       }
     });
+
+    if (req.body.password && req.body.password.trim() !== '') {
+      updates.password = req.body.password;
+    }
     
     const client = await User.findByIdAndUpdate(
       req.params.id,
@@ -580,6 +647,106 @@ const updateClient = async (req, res) => {
         message: 'Client not found' 
       });
     }
+
+    // ✅ UPDATE ORDER
+    const orderUpdateFields = {};
+    let shouldUpdateOrder = false;
+
+    if (updates.name || updates.unitNumber || updates.floorPlan) {
+      orderUpdateFields.clientInfo = {
+        name: client.name,
+        unitNumber: client.unitNumber,
+        floorPlan: client.floorPlan
+      };
+      shouldUpdateOrder = true;
+    }
+
+    if (updates.collection || updates.bedroomCount || updates.floorPlan || updates.packageType) {
+      const collection = updates.collection || client.collection;
+      const bedroomCount = updates.bedroomCount || client.bedroomCount;
+      const floorPlan = updates.floorPlan || client.floorPlan;
+      const packageType = updates.packageType || client.packageType || 'investor';
+      
+      if (floorPlan) {
+        const floorPlanConfigId = getFloorPlanConfigId(floorPlan, collection, packageType);
+        const floorPlanImage = getFloorPlanImagePath(floorPlanConfigId);
+        
+        orderUpdateFields.packageType = packageType;
+        orderUpdateFields.selectedPlan = {
+          id: floorPlanConfigId,
+          title: floorPlan || 'Residence',
+          description: collection ? `${collection} - ${bedroomCount} Bedroom` : 'Library Package',
+          image: floorPlanImage,
+          clientInfo: {
+            name: client.name,
+            unitNumber: client.unitNumber,
+            floorPlan: floorPlan
+          }
+        };
+        orderUpdateFields.Package = collection ? `${collection} - ${bedroomCount}BR` : 'Library';
+        shouldUpdateOrder = true;
+
+        // Update payment total if not library
+        if (packageType !== 'library' && collection && bedroomCount) {
+          const pricingTable = {
+            'Nalu Foundation Collection': { '1': 2500, '2': 3500, '3': 4500 },
+            'Nalu Collection': { '1': 5000, '2': 7500, '3': 10000 },
+            'Lani': { '1': 10000, '2': 15000, '3': 20000 }
+          };
+
+          const newTotalAmount = pricingTable[collection]?.[bedroomCount] || client.paymentInfo?.totalAmount || 0;
+          
+          await User.findByIdAndUpdate(req.params.id, {
+            'paymentInfo.totalAmount': newTotalAmount
+          });
+        }
+        
+        console.log('✅ Updated to config ID:', floorPlanConfigId, 'Package Type:', packageType);
+      }
+    }
+
+    // Update order if needed
+    if (shouldUpdateOrder) {
+      const order = await Order.findOne({ user: client._id });
+      
+      if (order) {
+        await Order.findByIdAndUpdate(order._id, orderUpdateFields);
+        console.log('✅ Order updated for client:', client.clientCode);
+      } else if (client.status === 'approved') {
+        const collection = client.collection;
+        const floorPlan = client.floorPlan;
+        const packageType = client.packageType || 'investor';
+        const floorPlanConfigId = getFloorPlanConfigId(floorPlan, collection, packageType);
+        const floorPlanImage = getFloorPlanImagePath(floorPlanConfigId);
+        
+        const newOrder = await Order.create({
+          user: client._id,
+          packageType,
+          clientInfo: orderUpdateFields.clientInfo || {
+            name: client.name,
+            unitNumber: client.unitNumber,
+            floorPlan: client.floorPlan
+          },
+          selectedPlan: orderUpdateFields.selectedPlan || {
+            id: floorPlanConfigId,
+            title: client.floorPlan || 'Residence',
+            description: client.collection ? `${client.collection} - ${client.bedroomCount} Bedroom` : 'Library Package',
+            image: floorPlanImage,
+            clientInfo: {
+              name: client.name,
+              unitNumber: client.unitNumber,
+              floorPlan: client.floorPlan
+            }
+          },
+          Package: orderUpdateFields.Package || (client.collection ? `${client.collection} - ${client.bedroomCount}BR` : 'Library'),
+          selectedProducts: [],
+          occupiedSpots: {},
+          status: 'ongoing',
+          step: 1
+        });
+        console.log('✅ Order auto-created for approved client:', client.clientCode);
+      }
+    }
     
     res.json({
       success: true,
@@ -587,15 +754,16 @@ const updateClient = async (req, res) => {
       data: client
     });
   } catch (error) {
-    console.error('Update client error:', error);
+    console.error('❌ Update client error:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Failed to update client' 
+      message: 'Failed to update client',
+      error: error.message
     });
   }
 };
 
-// @desc    Delete client
+// @desc    Delete client (cascade delete order and journey)
 // @route   DELETE /api/clients/:id
 // @access  Private (Admin)
 const deleteClient = async (req, res) => {
@@ -609,17 +777,35 @@ const deleteClient = async (req, res) => {
       });
     }
     
+    console.log('🗑️ Deleting client:', client.clientCode);
+    
+    // ✅ DELETE ASSOCIATED ORDER(S)
+    const deletedOrders = await Order.deleteMany({ user: client._id });
+    console.log(`✅ Deleted ${deletedOrders.deletedCount} order(s) for client ${client.clientCode}`);
+    
+    // ✅ DELETE ASSOCIATED JOURNEY
+    const deletedJourney = await Journey.deleteOne({ clientId: client._id });
+    console.log(`✅ Deleted journey for client ${client.clientCode}`);
+    
+    // ✅ DELETE CLIENT
     await client.deleteOne();
+    console.log(`✅ Client ${client.clientCode} deleted successfully`);
     
     res.json({
       success: true,
-      message: 'Client deleted successfully'
+      message: 'Client and all associated data deleted successfully',
+      deletedData: {
+        client: client.clientCode,
+        orders: deletedOrders.deletedCount,
+        journey: deletedJourney.deletedCount > 0
+      }
     });
   } catch (error) {
-    console.error('Delete client error:', error);
+    console.error('❌ Delete client error:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Failed to delete client' 
+      message: 'Failed to delete client',
+      error: error.message
     });
   }
 };

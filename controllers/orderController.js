@@ -1,5 +1,5 @@
 const Order = require('../models/Order');
-const User = require('../models/User');
+const User = require('../models/User'); // ✅ ADDED
 const ProposalVersion = require('../models/ProposalVersion');
 const { s3Client } = require('../config/s3');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
@@ -910,45 +910,179 @@ const sendOrderConfirmationEmail = async (userEmail, orderDetails) => {
   }
 };
 
+// ✅ HELPERS (same as clientController)
+const getFloorPlanImagePath = (configId) => {
+  const imageMap = {
+    'investor-a': '/images/investor_plan/Alia_05A.png',
+    'investor-b': '/images/investor_plan/Alia_03A.png',
+    'investor-c': '/images/investor_plan/Alia_03B.png',
+    'custom-a': '/images/custom_plan/Alia_05A.png',
+    'custom-b': '/images/custom_plan/Alia_03A.png',
+    'custom-c': '/images/custom_plan/Alia_03B.png',
+  };
+  
+  return imageMap[configId] || '/images/investor_plan/investor_1.png';
+};
+
+const getFloorPlanConfigId = (floorPlan, collection, packageType = 'investor') => {
+  if (!floorPlan) return 'investor-a';
+  
+  if (packageType === 'library') {
+    const residenceMap = {
+      'Residence 05A': 'investor-a',
+      'Residence 03A': 'investor-b',
+      'Residence 03B': 'investor-c',
+      'Residence 00A': 'investor-a',
+      'Residence 01B': 'investor-b',
+      'Residence 05B': 'investor-b',
+      'Residence 07B': 'investor-b',
+      'Residence 08': 'investor-c',
+      'Residence 09B': 'investor-b',
+      'Residence 10/12': 'investor-c',
+      'Residence 10A/12A': 'investor-a',
+      'Residence 11B': 'investor-b',
+      'Residence 13A': 'investor-a',
+    };
+    return residenceMap[floorPlan] || 'investor-a';
+  }
+  
+  const isLani = collection?.includes('Lani');
+  
+  const residenceMap = {
+    'Residence 05A': isLani ? 'custom-a' : 'investor-a',
+    'Residence 03A': isLani ? 'custom-b' : 'investor-b',
+    'Residence 03B': isLani ? 'custom-c' : 'investor-c',
+    'Residence 00A': 'investor-a',
+    'Residence 01B': 'investor-b',
+    'Residence 05B': 'investor-b',
+    'Residence 07B': 'custom-b',
+    'Residence 08': 'custom-c',
+    'Residence 09B': 'investor-b',
+    'Residence 10/12': 'custom-c',
+    'Residence 10A/12A': 'custom-a',
+    'Residence 11B': 'custom-b',
+    'Residence 13A': 'custom-a',
+  };
+
+  return residenceMap[floorPlan] || 'investor-a';
+};
+
+// @desc    Get orders by client (with auto-create for approved clients)
+// @route   GET /api/orders/client/:clientId
+// @access  Private
 const getOrdersByClient = async (req, res) => {
   try {
     const { clientId } = req.params;
 
-    // Cari user berdasarkan clientId
     const user = await User.findById(clientId);
     if (!user) {
-      return res.status(404).json({ message: 'Client not found' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Client not found' 
+      });
     }
 
-    // Cari order terakhir milik user
-    let order = await Order.findOne({ user: user._id })
+    let orders = await Order.find({ user: user._id })
       .sort({ createdAt: -1 });
 
-    // ✅ AUTO CREATE kalau belum ada
-    if (!order) {
-      order = await Order.create({
+    if (orders.length === 0 && user.status === 'approved') {
+      console.log(`📦 Auto-creating order for approved client: ${user.clientCode}`);
+      
+      const packageType = user.packageType || 'investor';
+      const floorPlanConfigId = getFloorPlanConfigId(user.floorPlan, user.collection, packageType);
+      const floorPlanImage = getFloorPlanImagePath(floorPlanConfigId);
+      
+      const newOrder = await Order.create({
         user: user._id,
+        packageType,
         clientInfo: {
           name: user.name,
-          unitNumber: user.unitNumber
+          unitNumber: user.unitNumber,
+          floorPlan: user.floorPlan
         },
+        selectedPlan: {
+          id: floorPlanConfigId,
+          title: user.floorPlan || 'Residence',
+          description: user.collection ? `${user.collection} - ${user.bedroomCount} Bedroom` : 'Library Package',
+          image: floorPlanImage,
+          clientInfo: {
+            name: user.name,
+            unitNumber: user.unitNumber,
+            floorPlan: user.floorPlan
+          }
+        },
+        Package: user.collection ? `${user.collection} - ${user.bedroomCount}BR` : 'Library',
         selectedProducts: [],
         occupiedSpots: {},
         status: 'ongoing',
         step: 1
       });
+
+      orders = [newOrder];
+      console.log('✅ Order created with config ID:', floorPlanConfigId, 'Package Type:', packageType);
     }
 
     res.json({
       success: true,
-      orders: [order] // frontend kamu expect array
+      orders: orders
     });
 
   } catch (error) {
-    console.error('Error getOrdersByClient:', error);
-    res.status(500).json({ message: error.message });
+    console.error('❌ Error getOrdersByClient:', error);
+    res.status(500).json({ 
+      success: false,
+      message: error.message 
+    });
   }
 };
+
+// ✅ NEW: Save furniture placements for library orders
+// @desc    Save furniture placements for library package
+// @route   PUT /api/orders/:orderId/furniture-placements
+// @access  Private (Admin)
+const saveFurniturePlacements = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { placements } = req.body;
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    if (order.packageType !== 'library') {
+      return res.status(400).json({
+        success: false,
+        message: 'This order is not a library package'
+      });
+    }
+
+    // Update occupiedSpots with new placements
+    order.occupiedSpots = placements;
+    await order.save();
+
+    console.log('✅ Furniture placements saved for order:', orderId);
+
+    res.json({
+      success: true,
+      message: 'Furniture placements saved successfully',
+      data: order
+    });
+
+  } catch (error) {
+    console.error('❌ Error saving furniture placements:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to save furniture placements',
+      error: error.message
+    });
+  }
+};
+
 
 
 module.exports = {
@@ -962,5 +1096,6 @@ module.exports = {
   getCurrentUserOrder,
   generateProposal,
   generateOrderSummary,
-  getOrdersByClient
+  getOrdersByClient,
+  saveFurniturePlacements
 };

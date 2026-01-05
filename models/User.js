@@ -52,6 +52,11 @@ const userSchema = new mongoose.Schema({
     enum: ['Lock 2025 Pricing', 'Design Hold Fee'],
     required: false
   },
+  packageType: {
+    type: String,
+    enum: ['investor', 'custom', 'library'],
+    default: 'investor'
+  },
   floorPlan: {
     type: String,
     required: false,

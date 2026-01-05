@@ -1,13 +1,76 @@
 // /backend/data/journeySteps.js
-// Complete Journey Steps based on Excel - Total 84 Steps
-// Sequential process - must be completed in order
+// Journey Steps with 6 Internal Phase Structure
+// Total: 80 Steps organized into 6 manageable phases
+
+// ==========================================
+// INTERNAL PHASE DEFINITIONS
+// Maps to 4 Client-Facing Phases
+// ==========================================
+
+const INTERNAL_PHASES = [
+  {
+    id: 1,
+    name: "Inquiry & Intake",
+    description: "Qualify lead, confirm basics, approve to proceed",
+    clientPhaseId: 1, // Maps to Client Phase 1: Getting Started
+    stepRange: [1, 7],
+    color: "teal"
+  },
+  {
+    id: 2,
+    name: "Portal Setup & Deposit Lock",
+    description: "Portal live, preferences captured, funds secured",
+    clientPhaseId: 1, // Maps to Client Phase 1: Getting Started
+    stepRange: [8, 21],
+    color: "teal"
+  },
+  {
+    id: 3,
+    name: "Design Development",
+    description: "Create, present, and refine design",
+    clientPhaseId: 2, // Maps to Client Phase 2: Design & Approval
+    stepRange: [22, 38],
+    color: "purple"
+  },
+  {
+    id: 4,
+    name: "Final Design Lock & Procurement Authorization",
+    description: "Lock design, pricing, and authorization to order",
+    clientPhaseId: 2, // Maps to Client Phase 2: Design & Approval (transition to 3)
+    stepRange: [39, 46],
+    color: "purple"
+  },
+  {
+    id: 5,
+    name: "Procurement, Production & Logistics",
+    description: "Build, QC, ship, and plan install",
+    clientPhaseId: 3, // Maps to Client Phase 3: Production & Planning
+    stepRange: [47, 66],
+    color: "blue"
+  },
+  {
+    id: 6,
+    name: "Installation, Closeout & Handover",
+    description: "Deliver, install, close cleanly",
+    clientPhaseId: 4, // Maps to Client Phase 4: Delivery & Completion
+    stepRange: [67, 80],
+    color: "amber"
+  }
+];
+
+// ==========================================
+// JOURNEY STEPS
+// Each step now includes internalPhaseId
+// ==========================================
 
 const JOURNEY_STEPS = [
   // ==========================================
-  // Inquiry and Intake (Steps 1-7)
+  // INTERNAL PHASE 1: Inquiry & Intake (Steps 1-7)
+  // Client Phase 1: Getting Started
   // ==========================================
   {
     step: 1,
+    internalPhaseId: 1,
     stage: "Inquiry and Intake",
     owner: "PM + Sales",
     adminDescription: "Lead logged in CRM",
@@ -19,6 +82,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 2,
+    internalPhaseId: 1,
     stage: "Inquiry and Intake",
     owner: "PM + Sales",
     adminDescription: "Sales → PM introduction",
@@ -30,6 +94,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 3,
+    internalPhaseId: 1,
     stage: "Inquiry and Intake",
     owner: "PM + Sales",
     adminDescription: "Intake meeting scheduled",
@@ -41,6 +106,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 4,
+    internalPhaseId: 1,
     stage: "Inquiry and Intake",
     owner: "PM + Sales",
     adminDescription: "Intake meeting completed",
@@ -52,6 +118,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 5,
+    internalPhaseId: 1,
     stage: "Inquiry and Intake",
     owner: "PM + Sales",
     adminDescription: "Unit # confirmed",
@@ -63,6 +130,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 6,
+    internalPhaseId: 1,
     stage: "Inquiry and Intake",
     owner: "PM + Sales",
     adminDescription: "Budget + timeline captured",
@@ -74,6 +142,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 7,
+    internalPhaseId: 1,
     stage: "Inquiry and Intake",
     owner: "PM + Sales",
     adminDescription: "Client record approved to proceed (internal)",
@@ -85,10 +154,12 @@ const JOURNEY_STEPS = [
   },
 
   // ==========================================
-  // Welcome Portal Access (Steps 8-13)
+  // INTERNAL PHASE 2: Portal Setup & Deposit Lock (Steps 8-21)
+  // Client Phase 1: Getting Started
   // ==========================================
   {
     step: 8,
+    internalPhaseId: 2,
     stage: "Welcome Portal Access",
     owner: "PM",
     adminDescription: "Portal user prepared (Register Client)",
@@ -100,6 +171,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 9,
+    internalPhaseId: 2,
     stage: "Welcome Portal Access",
     owner: "PM",
     adminDescription: "Portal invite sent (Auto email to client)",
@@ -111,6 +183,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 10,
+    internalPhaseId: 2,
     stage: "Welcome Portal Access",
     owner: "PM",
     adminDescription: "Client signs into portal",
@@ -122,6 +195,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 11,
+    internalPhaseId: 2,
     stage: "Welcome Portal Access",
     owner: "PM",
     adminDescription: "Client notified: Questionnaire submitted to them",
@@ -133,6 +207,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 12,
+    internalPhaseId: 2,
     stage: "Welcome Portal Access",
     owner: "PM",
     adminDescription: "Client reviews product offering + documents",
@@ -140,11 +215,11 @@ const JOURNEY_STEPS = [
     clientVisible: true,
     autoEmail: false,
     docAutoGenerated: false,
-    clientActionNeeded: true,
-    // notes: "What product offering?"
+    clientActionNeeded: true
   },
   {
     step: 13,
+    internalPhaseId: 2,
     stage: "Welcome Portal Access",
     owner: "PM",
     adminDescription: "Client preference data verified (from questionnaire)",
@@ -154,12 +229,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: true
   },
-
-  // ==========================================
-  // Deposit and Agreements (Steps 14-21)
-  // ==========================================
   {
     step: 14,
+    internalPhaseId: 2,
     stage: "Deposit and Agreements",
     owner: "Finance",
     adminDescription: "PM notifies Finance of deposit intent",
@@ -171,6 +243,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 15,
+    internalPhaseId: 2,
     stage: "Deposit and Agreements",
     owner: "Finance",
     adminDescription: "Finance prepares Pricing Hold Agreement and/or Design Fee Agreement",
@@ -182,6 +255,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 16,
+    internalPhaseId: 2,
     stage: "Deposit and Agreements",
     owner: "Finance",
     adminDescription: "Finance prepares 30% invoice or design-fee-only invoice",
@@ -193,6 +267,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 17,
+    internalPhaseId: 2,
     stage: "Deposit and Agreements",
     owner: "Finance",
     adminDescription: "Client signs Pricing Hold Agreement and/or Design Fee Agreement",
@@ -204,6 +279,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 18,
+    internalPhaseId: 2,
     stage: "Deposit and Agreements",
     owner: "Finance",
     adminDescription: "Client submits 30% payment",
@@ -215,6 +291,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 19,
+    internalPhaseId: 2,
     stage: "Deposit and Agreements",
     owner: "Finance",
     adminDescription: "Finance confirms cleared funds",
@@ -226,6 +303,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 20,
+    internalPhaseId: 2,
     stage: "Deposit and Agreements",
     owner: "Finance",
     adminDescription: "PM notified: Funds may commence",
@@ -237,6 +315,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 21,
+    internalPhaseId: 2,
     stage: "Deposit and Agreements",
     owner: "Finance",
     adminDescription: "Client Funding Confirmation",
@@ -248,10 +327,12 @@ const JOURNEY_STEPS = [
   },
 
   // ==========================================
-  // Design Kickoff - Internal Prep (Steps 22-28)
+  // INTERNAL PHASE 3: Design Development (Steps 22-38)
+  // Client Phase 2: Design & Approval
   // ==========================================
   {
     step: 22,
+    internalPhaseId: 3,
     stage: "Design Kickoff - Internal Prep",
     owner: "Design",
     adminDescription: "Assign Designer + PM coordination",
@@ -263,6 +344,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 23,
+    internalPhaseId: 3,
     stage: "Design Kickoff - Internal Prep",
     owner: "Design",
     adminDescription: "Review questionnaire + identify 4 constraints",
@@ -274,6 +356,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 24,
+    internalPhaseId: 3,
     stage: "Design Kickoff - Internal Prep",
     owner: "Design",
     adminDescription: "Create initial floorplan layouts",
@@ -285,6 +368,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 25,
+    internalPhaseId: 3,
     stage: "Design Kickoff - Internal Prep",
     owner: "Design",
     adminDescription: "Build concept board + color/material direction",
@@ -296,6 +380,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 26,
+    internalPhaseId: 3,
     stage: "Design Kickoff - Internal Prep",
     owner: "Design",
     adminDescription: "Preliminary pricing model started",
@@ -307,6 +392,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 27,
+    internalPhaseId: 3,
     stage: "Design Kickoff - Internal Prep",
     owner: "Design",
     adminDescription: "Internal peer review + corrections",
@@ -318,6 +404,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 28,
+    internalPhaseId: 3,
     stage: "Design Kickoff - Internal Prep",
     owner: "Design",
     adminDescription: "Client notified: Design Round 1 presentation",
@@ -327,12 +414,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: false
   },
-
-  // ==========================================
-  // Design Round 1 - Presentation (Steps 29-32)
-  // ==========================================
   {
     step: 29,
+    internalPhaseId: 3,
     stage: "Design Round 1 - Presentation",
     owner: "Design + PM",
     adminDescription: "Present initial package directions (Lani/Nalu/Fndtn/Cust)",
@@ -344,6 +428,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 30,
+    internalPhaseId: 3,
     stage: "Design Round 1 - Presentation",
     owner: "Design + PM",
     adminDescription: "Capture client feedback + constraints",
@@ -355,6 +440,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 31,
+    internalPhaseId: 3,
     stage: "Design Round 1 - Presentation",
     owner: "Design + PM",
     adminDescription: "Designer + action list created",
@@ -366,6 +452,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 32,
+    internalPhaseId: 3,
     stage: "Design Round 1 - Presentation",
     owner: "Design + PM",
     adminDescription: "Budget updated based on rough scope",
@@ -375,12 +462,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: false
   },
-
-  // ==========================================
-  // Design Round 2 - Revisions (Steps 33-38)
-  // ==========================================
   {
     step: 33,
+    internalPhaseId: 3,
     stage: "Design Round 2 - Revisions",
     owner: "Design",
     adminDescription: "Design revisions executed",
@@ -392,6 +476,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 34,
+    internalPhaseId: 3,
     stage: "Design Round 2 - Revisions",
     owner: "Design",
     adminDescription: "Final material selections locked",
@@ -403,6 +488,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 35,
+    internalPhaseId: 3,
     stage: "Design Round 2 - Revisions",
     owner: "Design",
     adminDescription: "Detailed layout + elevations updated",
@@ -414,6 +500,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 36,
+    internalPhaseId: 3,
     stage: "Design Round 2 - Revisions",
     owner: "Design",
     adminDescription: "Soft pricing update issued",
@@ -425,6 +512,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 37,
+    internalPhaseId: 3,
     stage: "Design Round 2 - Revisions",
     owner: "Design",
     adminDescription: "Designer notified: Round 2 scheduled",
@@ -436,6 +524,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 38,
+    internalPhaseId: 3,
     stage: "Design Round 2 - Revisions",
     owner: "Design",
     adminDescription: "Client feedback logged (second round)",
@@ -447,10 +536,12 @@ const JOURNEY_STEPS = [
   },
 
   // ==========================================
-  // Final Design Approval (Steps 39-42)
+  // INTERNAL PHASE 4: Final Design Lock & Procurement Auth (Steps 39-46)
+  // Client Phase 2: Design & Approval (transition to Phase 3)
   // ==========================================
   {
     step: 39,
+    internalPhaseId: 4,
     stage: "Final Design Approval",
     owner: "Design + PM",
     adminDescription: "Final action list confirmed",
@@ -462,6 +553,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 40,
+    internalPhaseId: 4,
     stage: "Final Design Approval",
     owner: "Design + PM",
     adminDescription: "Final pricing confirmed",
@@ -473,6 +565,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 41,
+    internalPhaseId: 4,
     stage: "Final Design Approval",
     owner: "Design + PM",
     adminDescription: "Client digitally approves Final Design Locked",
@@ -484,6 +577,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 42,
+    internalPhaseId: 4,
     stage: "Final Design Approval",
     owner: "Finance",
     adminDescription: "Finance issues timeline + deposit invoice",
@@ -493,12 +587,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: false
   },
-
-  // ==========================================
-  // Progress Payment for Procurement to 50% (Steps 43-46)
-  // ==========================================
   {
     step: 43,
+    internalPhaseId: 4,
     stage: "Progress Payment for Procurement to 50%",
     owner: "Finance",
     adminDescription: "Client signs Purchase Agreement",
@@ -510,6 +601,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 44,
+    internalPhaseId: 4,
     stage: "Progress Payment for Procurement to 50%",
     owner: "Finance",
     adminDescription: "PM fan received (50% total)",
@@ -521,6 +613,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 45,
+    internalPhaseId: 4,
     stage: "Progress Payment for Procurement to 50%",
     owner: "Finance",
     adminDescription: "PM receives \"Go-ahead to Order\"",
@@ -532,7 +625,8 @@ const JOURNEY_STEPS = [
   },
   {
     step: 46,
-    stage: "Progress Payment for Procurement to 50%",
+    internalPhaseId: 4,
+    stage: "Procurement Prep & Vendor Quotes",
     owner: "Procurement",
     adminDescription: "Vendor list + pricing verified",
     clientDescription: "Vendor list + pricing verified",
@@ -543,10 +637,12 @@ const JOURNEY_STEPS = [
   },
 
   // ==========================================
-  // Procurement Prep & Vendor Quotes (Steps 47-52)
+  // INTERNAL PHASE 5: Procurement, Production & Logistics (Steps 47-66)
+  // Client Phase 3: Production & Planning
   // ==========================================
   {
     step: 47,
+    internalPhaseId: 5,
     stage: "Procurement Prep & Vendor Quotes",
     owner: "Procurement",
     adminDescription: "Logistics requirements verified",
@@ -558,6 +654,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 48,
+    internalPhaseId: 5,
     stage: "Procurement Prep & Vendor Quotes",
     owner: "Procurement",
     adminDescription: "Approvals for any custom/nonspecials",
@@ -569,6 +666,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 49,
+    internalPhaseId: 5,
     stage: "Order Placement & Vendor Deposits",
     owner: "Procurement + Finance",
     adminDescription: "Vendor POs issued",
@@ -580,6 +678,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 50,
+    internalPhaseId: 5,
     stage: "Order Placement & Vendor Deposits",
     owner: "Procurement + Finance",
     adminDescription: "Vendor deposit payments issued",
@@ -591,6 +690,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 51,
+    internalPhaseId: 5,
     stage: "Order Placement & Vendor Deposits",
     owner: "Procurement + Finance",
     adminDescription: "Vendor production timeline uploaded",
@@ -602,6 +702,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 52,
+    internalPhaseId: 5,
     stage: "Order Placement & Vendor Deposits",
     owner: "Procurement + Finance",
     adminDescription: "Client notified: Timeline established",
@@ -611,12 +712,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: false
   },
-
-  // ==========================================
-  // Production - In Progress (Steps 53-56)
-  // ==========================================
   {
     step: 53,
+    internalPhaseId: 5,
     stage: "Production - In Progress",
     owner: "Procurement + QC",
     adminDescription: "QC milestones established",
@@ -628,6 +726,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 54,
+    internalPhaseId: 5,
     stage: "Production - In Progress",
     owner: "Procurement + QC",
     adminDescription: "Production begins",
@@ -639,6 +738,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 55,
+    internalPhaseId: 5,
     stage: "Production - In Progress",
     owner: "Procurement + QC",
     adminDescription: "Mid-production QC check",
@@ -650,6 +750,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 56,
+    internalPhaseId: 5,
     stage: "Production - In Progress",
     owner: "Procurement + QC",
     adminDescription: "Final QC + approvals",
@@ -661,6 +762,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 57,
+    internalPhaseId: 5,
     stage: "Production - In Progress",
     owner: "Procurement + QC",
     adminDescription: "Items packaged + staged for export",
@@ -670,12 +772,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: false
   },
-
-  // ==========================================
-  // Progress Payment to 75% (Steps 58-61)
-  // ==========================================
   {
     step: 58,
+    internalPhaseId: 5,
     stage: "Progress Payment to 75%",
     owner: "Finance",
     adminDescription: "Invoice issued 6 months before delivery",
@@ -687,6 +786,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 59,
+    internalPhaseId: 5,
     stage: "Progress Payment to 75%",
     owner: "Finance",
     adminDescription: "Funds confirmed (75% total)",
@@ -698,6 +798,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 60,
+    internalPhaseId: 5,
     stage: "Logistics & Export",
     owner: "Logistics + Procurement",
     adminDescription: "Freight quote secured/approved",
@@ -709,6 +810,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 61,
+    internalPhaseId: 5,
     stage: "Logistics & Export",
     owner: "Logistics + Procurement",
     adminDescription: "Container booked + loaded",
@@ -720,6 +822,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 62,
+    internalPhaseId: 5,
     stage: "Logistics & Export",
     owner: "Logistics + Procurement",
     adminDescription: "Customs clearance",
@@ -731,6 +834,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 63,
+    internalPhaseId: 5,
     stage: "Logistics & Export",
     owner: "Logistics + Procurement",
     adminDescription: "Freight in-transit + tracking",
@@ -740,12 +844,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: true
   },
-
-  // ==========================================
-  // Arrival QC & Delivery Scheduling (Steps 64-67)
-  // ==========================================
   {
     step: 64,
+    internalPhaseId: 5,
     stage: "Arrival QC & Delivery Scheduling",
     owner: "Logistics + PM",
     adminDescription: "Warehouse arrival + QC hold",
@@ -757,6 +858,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 65,
+    internalPhaseId: 5,
     stage: "Arrival QC & Delivery Scheduling",
     owner: "Logistics + PM",
     adminDescription: "Delivery schedule assigned",
@@ -768,6 +870,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 66,
+    internalPhaseId: 5,
     stage: "Arrival QC & Delivery Scheduling",
     owner: "Logistics + PM",
     adminDescription: "Site access confirmed",
@@ -777,8 +880,14 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: false
   },
+
+  // ==========================================
+  // INTERNAL PHASE 6: Installation, Closeout & Handover (Steps 67-80)
+  // Client Phase 4: Delivery & Completion
+  // ==========================================
   {
     step: 67,
+    internalPhaseId: 6,
     stage: "Final Payment Balance Due for Release of Product",
     owner: "Finance + Logistics",
     adminDescription: "Invoice issued 2 weeks before delivery",
@@ -788,12 +897,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: true,
     clientActionNeeded: true
   },
-
-  // ==========================================
-  // Final Payment Balance (Steps 68-71)
-  // ==========================================
   {
     step: 68,
+    internalPhaseId: 6,
     stage: "Final Payment Balance Due for Release of Product",
     owner: "Finance + Logistics",
     adminDescription: "Payment confirmed before releasing items",
@@ -805,6 +911,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 69,
+    internalPhaseId: 6,
     stage: "Final Payment Balance Due for Release of Product",
     owner: "Finance",
     adminDescription: "Release approved --> Logistics/PM proceed",
@@ -816,6 +923,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 70,
+    internalPhaseId: 6,
     stage: "Installation & Punch List",
     owner: "PM + Install Team",
     adminDescription: "Delivery to unit",
@@ -827,6 +935,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 71,
+    internalPhaseId: 6,
     stage: "Installation & Punch List",
     owner: "PM + Install Team",
     adminDescription: "Installation completed",
@@ -836,12 +945,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: true
   },
-
-  // ==========================================
-  // Installation & Punch List (Steps 72-76)
-  // ==========================================
   {
     step: 72,
+    internalPhaseId: 6,
     stage: "Installation & Punch List",
     owner: "PM + Install Team",
     adminDescription: "Inspect/Punch list created",
@@ -853,9 +959,10 @@ const JOURNEY_STEPS = [
   },
   {
     step: 73,
+    internalPhaseId: 6,
     stage: "Installation & Punch List",
     owner: "PM + Install Team",
-    adminDescription: "Punch list resolved",
+    adminDescription: "Final Adjustments Complete",
     clientDescription: "Final Adjustments Complete",
     clientVisible: true,
     autoEmail: true,
@@ -864,6 +971,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 74,
+    internalPhaseId: 6,
     stage: "Installation & Punch List",
     owner: "PM + Install Team",
     adminDescription: "Client walk-through scheduled",
@@ -873,12 +981,9 @@ const JOURNEY_STEPS = [
     docAutoGenerated: false,
     clientActionNeeded: true
   },
-
-  // ==========================================
-  // Reveal & Closeout (Steps 75-84)
-  // ==========================================
   {
     step: 75,
+    internalPhaseId: 6,
     stage: "Reveal & Closeout",
     owner: "PM + Finance",
     adminDescription: "Styling + Final Reveal",
@@ -890,6 +995,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 76,
+    internalPhaseId: 6,
     stage: "Reveal & Closeout",
     owner: "PM + Finance",
     adminDescription: "Warranty activations",
@@ -901,6 +1007,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 77,
+    internalPhaseId: 6,
     stage: "Reveal & Closeout",
     owner: "PM + Finance",
     adminDescription: "Handover documents provided",
@@ -912,6 +1019,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 78,
+    internalPhaseId: 6,
     stage: "Reveal & Closeout",
     owner: "PM + Finance",
     adminDescription: "CRM marked Project Closed",
@@ -923,6 +1031,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 79,
+    internalPhaseId: 6,
     stage: "Reveal & Closeout",
     owner: "PM + Finance",
     adminDescription: "Post-install feedback collected",
@@ -934,6 +1043,7 @@ const JOURNEY_STEPS = [
   },
   {
     step: 80,
+    internalPhaseId: 6,
     stage: "Reveal & Closeout",
     owner: "PM + Finance",
     adminDescription: "Photo shoot (if client agrees/retail)",
@@ -945,4 +1055,4 @@ const JOURNEY_STEPS = [
   }
 ];
 
-module.exports = JOURNEY_STEPS;
+module.exports = { JOURNEY_STEPS, INTERNAL_PHASES };
