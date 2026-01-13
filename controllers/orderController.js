@@ -55,69 +55,123 @@ const createOrder = async (req, res) => {
   }
 };
 
-// Modify the updateOrder function
 const updateOrder = async (req, res) => {
   try {
+    console.log('📝 updateOrder called for ID:', req.params.id);
+    console.log('📦 Request body keys:', Object.keys(req.body));
+
     const existingOrder = await Order.findById(req.params.id);
     if (!existingOrder) {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    // Clean up selected products if present in request
-    let cleanedData = { ...req.body };
-    if (req.body.selectedProducts) {
-      cleanedData.selectedProducts = req.body.selectedProducts.map(product => ({
-        _id: product._id,
-        name: product.name,
-        product_id: product.product_id,
-        spotId: product.spotId,
-        spotName: product.spotName,
-        finalPrice: product.finalPrice,
-        quantity: product.quantity,
-        unitPrice: product.unitPrice,
-        selectedOptions: {
-          finish: product.selectedOptions?.finish || '',
-          fabric: product.selectedOptions?.fabric || '',
-          size: product.selectedOptions?.size || '',
-          insetPanel: product.selectedOptions?.insetPanel || '',
-          image: product.selectedOptions?.image || ''
+    const updateData = {
+      status: req.body.status,
+      step: req.body.step
+    };
+
+    // ✅ Handle selectedProducts with temporary ID cleanup
+    if (req.body.selectedProducts && Array.isArray(req.body.selectedProducts)) {
+      console.log(`📦 Processing ${req.body.selectedProducts.length} products`);
+      
+      updateData.selectedProducts = req.body.selectedProducts.map(product => {
+        // ✅ Remove _id if it's a temporary ID
+        const cleanProduct = { ...product };
+        
+        if (product._id && typeof product._id === 'string' && product._id.startsWith('temp_')) {
+          delete cleanProduct._id; // Let MongoDB generate new _id
+          console.log(`🔄 Removed temporary ID for product: ${product.name}`);
         }
-      }));
+        
+        return {
+          ...(cleanProduct._id && { _id: cleanProduct._id }), // Only include if valid
+          product_id: product.product_id,
+          name: product.name,
+          category: product.category,
+          spotName: product.spotName,
+          quantity: product.quantity || 1,
+          unitPrice: product.unitPrice || 0,
+          finalPrice: product.finalPrice || 0,
+          sourceType: product.sourceType || 'manual',
+          isEditable: product.isEditable !== undefined ? product.isEditable : true,
+          selectedOptions: {
+            finish: product.selectedOptions?.finish || '',
+            fabric: product.selectedOptions?.fabric || '',
+            size: product.selectedOptions?.size || '',
+            insetPanel: product.selectedOptions?.insetPanel || '',
+            image: product.selectedOptions?.image || '',
+            images: product.selectedOptions?.images || [],
+            links: product.selectedOptions?.links || [],
+            specifications: product.selectedOptions?.specifications || '',
+            notes: product.selectedOptions?.notes || '',
+            uploadedImages: product.selectedOptions?.uploadedImages || [],
+            customAttributes: product.selectedOptions?.customAttributes || {}
+          },
+          placement: product.placement || null
+        };
+      });
     }
 
-    // If floor plan changed, reset products
-    if (existingOrder.selectedPlan?.id !== req.body.selectedPlan?.id) {
-      cleanedData.package = req.body.package;
-      cleanedData.selectedProducts = [];
-      cleanedData.occupiedSpots = {};
+    // ✅ Handle customFloorPlan
+    if (req.body.customFloorPlan) {
+      updateData.customFloorPlan = req.body.customFloorPlan;
+      console.log('📐 Floor plan included in update');
     }
 
-    const order = await Order.findOneAndUpdate(
-      { _id: req.params.id },
-      cleanedData,
-      { new: true }
-    );
+    // Handle occupiedSpots
+    if (req.body.occupiedSpots !== undefined) {
+      updateData.occupiedSpots = req.body.occupiedSpots;
+    }
+
+    // Handle selectedPlan
+    if (req.body.selectedPlan) {
+      updateData.selectedPlan = req.body.selectedPlan;
+    }
+
+    // Handle Package
+    if (req.body.Package) {
+      updateData.Package = req.body.Package;
+    }
+
+    // If floor plan changed, reset products (only for non-custom packages)
+    if (req.body.selectedPlan && 
+        existingOrder.packageType !== 'custom' &&
+        existingOrder.selectedPlan?.id !== req.body.selectedPlan?.id) {
+      console.log('⚠️ Floor plan changed - resetting products');
+      updateData.selectedProducts = [];
+      updateData.occupiedSpots = {};
+    }
+
+    console.log('📦 Final update data keys:', Object.keys(updateData));
+
+    // ✅ Update order using direct assignment instead of findByIdAndUpdate
+    // This avoids casting issues with temporary IDs
+    Object.assign(existingOrder, updateData);
+    const updatedOrder = await existingOrder.save();
+
+    console.log(`✅ Order updated successfully`);
+    console.log(`📦 Final selectedProducts count: ${updatedOrder.selectedProducts?.length || 0}`);
 
     // Check if status changed to confirmed
-    if (cleanedData.status === 'confirmed') {
+    if (updateData.status === 'confirmed' && existingOrder.status !== 'confirmed') {
       try {
         const user = await User.findById(existingOrder.user);
-        if (!user || !user.email) {
-          console.error('User or user email not found');
-          return res.status(400).json({ message: 'User email not found' });
+        if (user && user.email) {
+          console.log('📧 Confirmation email queued');
         }
-
-        // await sendOrderConfirmationEmail(user.email, order);
       } catch (emailError) {
-        console.error('Failed to send confirmation email:', emailError);
-        // Continue with response even if email fails
+        console.error('⚠️ Failed to send confirmation email:', emailError);
       }
     }
 
-    res.json(order);
+    res.json(updatedOrder);
+
   } catch (error) {
-    console.error('Error updating order:', error);
-    res.status(500).json({ message: error.message });
+    console.error('❌ Error updating order:', error);
+    res.status(500).json({ 
+      success: false,
+      message: error.message 
+    });
   }
 };
 
@@ -129,16 +183,14 @@ const getOrders = async (req, res) => {
     const status = req.query.status;
     const skip = (page - 1) * limit;
 
-
-    // Create base query
+    // ✅ Build optimized query
     let searchQuery = {};
 
-    // Add search conditions if search exists
+    // Add search conditions
     if (search) {
       searchQuery.$or = [
-        { 'selectedPlan.clientInfo.name': { $regex: search, $options: 'i' } },
-        { 'selectedPlan.clientInfo.unitNumber': { $regex: search, $options: 'i' } },
-        { 'selectedProducts.name': { $regex: search, $options: 'i' } }
+        { 'clientInfo.name': { $regex: search, $options: 'i' } },
+        { 'clientInfo.unitNumber': { $regex: search, $options: 'i' } }
       ];
     }
 
@@ -147,17 +199,33 @@ const getOrders = async (req, res) => {
       searchQuery.status = status;
     }
 
-    // Execute query
-    const total = await Order.countDocuments(searchQuery);
-    const orders = await Order.find(searchQuery)
-      .populate({
-        path: 'user',
-        select: 'name email'  // Select specific fields you need
-      })
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 });
+    console.log('📊 Query:', searchQuery);
+    console.time('getOrders');
 
+    // ✅ CRITICAL: Exclude heavy fields from list view
+    const excludeFields = {
+      'selectedProducts.selectedOptions.uploadedImages': 0, // Don't load images in list
+      'customFloorPlan.data': 0, // Don't load floor plan in list
+      'occupiedSpots': 0 // Don't need spot data in list
+    };
+
+    // Execute query with lean() for better performance
+    const [total, orders] = await Promise.all([
+      Order.countDocuments(searchQuery),
+      Order.find(searchQuery, excludeFields)
+        .populate({
+          path: 'user',
+          select: 'name email clientCode unitNumber' // Only needed fields
+        })
+        .select('-__v') // Exclude version key
+        .skip(skip)
+        .limit(limit)
+        .sort({ createdAt: -1 })
+        .lean() // ✅ Use lean() for faster queries
+    ]);
+
+    console.timeEnd('getOrders');
+    console.log(`✅ Returned ${orders.length} orders in page ${page}`);
 
     // Send response
     res.json({
@@ -168,22 +236,54 @@ const getOrders = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error in getOrders:', error);
+    console.error('❌ Error in getOrders:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
 const getOrderById = async (req, res) => {
   try {
-    const order = await Order.findOne({
-      _id: req.params.id,
-      //user: req.user.id
-    });
+    console.log('📦 getOrderById called for:', req.params.id);
+    
+    const order = await Order.findById(req.params.id)
+      .populate({
+        path: 'user',
+        select: 'name email clientCode unitNumber'
+      })
+      .lean(); // ✅ Use lean for better performance
+
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
+
+    // ✅ Convert Buffer images to base64 for frontend
+    if (order.selectedProducts?.length > 0) {
+      order.selectedProducts = order.selectedProducts.map(product => {
+        if (product.selectedOptions?.uploadedImages?.length > 0) {
+          product.selectedOptions.uploadedImages = product.selectedOptions.uploadedImages.map(img => {
+            if (img.data && Buffer.isBuffer(img.data)) {
+              return {
+                ...img,
+                data: img.data.toString('base64')
+              };
+            }
+            return img;
+          });
+        }
+        return product;
+      });
+    }
+
+    // ✅ Convert floor plan Buffer to base64
+    if (order.customFloorPlan?.data && Buffer.isBuffer(order.customFloorPlan.data)) {
+      order.customFloorPlan.data = order.customFloorPlan.data.toString('base64');
+    }
+
+    console.log('✅ Order loaded with processed images');
     res.json(order);
+
   } catch (error) {
+    console.error('❌ Error in getOrderById:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -1083,7 +1183,87 @@ const saveFurniturePlacements = async (req, res) => {
   }
 };
 
+// ✅ NEW: Upload custom product images to S3
+const uploadCustomProductImages = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No images uploaded'
+      });
+    }
 
+    // Return S3 URLs and keys
+    const uploadedImages = req.files.map(file => ({
+      filename: file.originalname,
+      url: file.location,
+      key: file.key,
+      contentType: file.contentType,
+      size: file.size,
+      uploadedAt: new Date()
+    }));
+
+    console.log(`✅ Uploaded ${uploadedImages.length} images to S3`);
+
+    res.json({
+      success: true,
+      data: uploadedImages
+    });
+
+  } catch (error) {
+    console.error('❌ Error uploading product images:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// ✅ NEW: Upload floor plan to S3
+const uploadOrderFloorPlan = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { notes } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No floor plan uploaded'
+      });
+    }
+
+    const floorPlanData = {
+      filename: req.file.originalname,
+      url: req.file.location,
+      key: req.file.key,
+      contentType: req.file.contentType,
+      size: req.file.size,
+      notes: notes || '',
+      uploadedAt: new Date()
+    };
+
+    console.log(`✅ Uploaded floor plan to S3: ${req.file.key}`);
+
+    // Update order with floor plan
+    await Order.findByIdAndUpdate(orderId, {
+      customFloorPlan: floorPlanData
+    });
+
+    res.json({
+      success: true,
+      data: floorPlanData
+    });
+
+  } catch (error) {
+    console.error('❌ Error uploading floor plan:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
 
 module.exports = {
   createOrder,
@@ -1097,5 +1277,7 @@ module.exports = {
   generateProposal,
   generateOrderSummary,
   getOrdersByClient,
-  saveFurniturePlacements
+  saveFurniturePlacements,
+  uploadCustomProductImages,  // ✅ NEW
+  uploadOrderFloorPlan, 
 };

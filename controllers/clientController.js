@@ -453,6 +453,7 @@ const createClient = async (req, res) => {
       collection,
       bedroomCount,
       packageType = 'investor', // ✅ NEW: 'investor', 'custom', or 'library'
+      customNotes,
     } = req.body;
 
     if (!name || !email || !password || !unitNumber) {
@@ -463,12 +464,20 @@ const createClient = async (req, res) => {
     }
 
     // For library, collection/bedroom not required
-    if (packageType !== 'library' && (!collection || !bedroomCount)) {
+    if (packageType !== 'custom' && !floorPlan) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide collection and bedroom count'
+        message: 'Floor plan is required for non-custom packages'
       });
     }
+
+        // ✅ UPDATE: Bedroom count TIDAK required untuk custom atau library
+    if (packageType !== 'custom' && packageType !== 'library' && !bedroomCount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Bedroom count is required'
+      });
+    } 
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -504,6 +513,7 @@ const createClient = async (req, res) => {
       collection: collection || '',
       bedroomCount: bedroomCount || 0,
       packageType, // ✅ NEW FIELD
+      customNotes: customNotes || '', // ✅ TAMBAH INI
       registrationType: 'admin-created',
       status: 'approved',
       approvedAt: new Date(),

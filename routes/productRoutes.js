@@ -11,25 +11,37 @@ const {
   deleteProduct,
   getProductsBasicInfo,
   getProductVariants,
-  bulkDeleteProducts
+  bulkDeleteProducts,
+  createProductFromCustomOrder,
+  updateCustomAttributes
 } = require('../controllers/productController');
 
-// Protected routes
+// ✅ IMPORTANT: All routes must be AFTER router.use(protect)
+// but SPECIFIC routes must come BEFORE dynamic routes (/:id)
+
+// Protected routes - require authentication
 router.use(protect);
 
-router.get('/basic-info', protect, getProductsBasicInfo);
-router.get('/:id/variants', protect, getProductVariants);
+// ✅ STEP 1: Static/specific routes FIRST (before /:id)
+router.get('/basic-info', getProductsBasicInfo);
+router.post('/bulk-delete', bulkDeleteProducts);
 
-// Product routes
+// ✅ STEP 2: Custom order routes (specific paths before /:id)
+router.post('/custom-order-product', createProductFromCustomOrder);
+
+// ✅ STEP 3: Routes with specific patterns (before /:id)
+router.get('/:id/variants', getProductVariants);
+router.put('/:id/custom-attributes', updateCustomAttributes);
+
+// ✅ STEP 4: Main collection route
 router.route('/')
   .get(getProducts)
   .post(handleUpload, createProduct);
 
+// ✅ STEP 5: Dynamic ID routes LAST (catches everything else)
 router.route('/:id')
   .get(getProduct)
   .put(handleUpload, updateProduct)
   .delete(deleteProduct);
-
-router.post('/bulk-delete', protect, bulkDeleteProducts);
 
 module.exports = router;

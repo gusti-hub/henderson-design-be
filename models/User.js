@@ -60,24 +60,37 @@ const userSchema = new mongoose.Schema({
   floorPlan: {
     type: String,
     required: false,
-    enum: [
-      "Residence 00A", "Residence 01B", "Residence 03A",
-      "Residence 05A", "Residence 08", "Residence 10A/12A",
-      "Residence 03B", "Residence 05B", "Residence 07B",
-      "Residence 09B", "Residence 10/12", "Residence 11B",
-      "Residence 13A"
-    ]
+    enum: {
+      values: [
+        "Residence 00A", "Residence 01B", "Residence 03A",
+        "Residence 05A", "Residence 08", "Residence 10A/12A",
+        "Residence 03B", "Residence 05B", "Residence 07B",
+        "Residence 09B", "Residence 10/12", "Residence 11B",
+        "Residence 13A",
+        "Custom Project" // ✅ TAMBAH INI
+      ],
+      message: '{VALUE} is not a valid floor plan'
+    },
+    default: null // ✅ TAMBAH INI
   },
   
   collection: {
     type: String,
-    enum: ['Nalu Foundation Collection', 'Nalu Collection', 'Lani'],
+    enum: ['Nalu Foundation Collection', 'Nalu Collection', 'Lani', 'Custom'],
     required: false
+  },
+  customNotes: {
+    type: String,
+    default: ''
   },
   bedroomCount: {
     type: String,
-    enum: ['1', '2', '3'],
-    required: false
+    enum: {
+      values: ['0' ,'1', '2', '3'],
+      message: '{VALUE} is not a valid bedroom count'
+    },
+    required: false,
+    default: null // ✅ TAMBAH INI
   },
   
   paymentInfo: {

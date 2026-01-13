@@ -3,7 +3,6 @@ const mongoose = require('mongoose');
 const variantSchema = new mongoose.Schema({
   finish: {
     type: String,
-    enum: ['Light', 'Dark', 'Medium', ''],
     default: ''
   },
   fabric: {
@@ -29,6 +28,14 @@ const variantSchema = new mongoose.Schema({
   model: {
     url: String,
     key: String
+  },
+  inStock: {
+    type: Boolean,
+    default: true
+  },
+  isDefault: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -45,6 +52,14 @@ const productSchema = new mongoose.Schema({
   description: {
     type: String,
     required: false
+  },
+  category: {
+    type: String,
+    default: 'General'
+  },
+  collection: {
+    type: String,
+    default: 'General'
   },
   dimension: {
     type: String,
@@ -65,6 +80,50 @@ const productSchema = new mongoose.Schema({
     }
   },
   variants: [variantSchema],
+  
+  // ✅ NEW: Support for multiple images
+  images: [{
+    url: String,
+    alt: String,
+    isPrimary: {
+      type: Boolean,
+      default: false
+    }
+  }],
+  
+  // ✅ NEW: Support for uploaded images (binary storage)
+  uploadedImages: [{
+    filename: String,
+    contentType: String,
+    data: Buffer,
+    size: Number,
+    uploadedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  
+  // ✅ NEW: Dynamic custom attributes (flexible key-value pairs)
+  customAttributes: {
+    type: Map,
+    of: mongoose.Schema.Types.Mixed,
+    default: new Map()
+  },
+  
+  // ✅ NEW: Track source
+  sourceType: {
+    type: String,
+    enum: ['admin-created', 'custom-order'],
+    default: 'admin-created'
+  },
+  
+  // ✅ NEW: Link to order if created from custom order
+  createdFromOrder: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Order',
+    default: null
+  },
+  
   createdAt: {
     type: Date,
     default: Date.now
