@@ -204,7 +204,7 @@ const getOrders = async (req, res) => {
 
     // ✅ CRITICAL: Exclude heavy fields from list view
     const excludeFields = {
-      'selectedProducts.selectedOptions.uploadedImages': 0, // Don't load images in list
+      // 'selectedProducts.selectedOptions.uploadedImages': 0, // Don't load images in list
       'customFloorPlan.data': 0, // Don't load floor plan in list
       'occupiedSpots': 0 // Don't need spot data in list
     };
@@ -250,36 +250,63 @@ const getOrderById = async (req, res) => {
         path: 'user',
         select: 'name email clientCode unitNumber'
       })
-      .lean(); // ✅ Use lean for better performance
+      .lean();
 
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    // ✅ Convert Buffer images to base64 for frontend
-    if (order.selectedProducts?.length > 0) {
-      order.selectedProducts = order.selectedProducts.map(product => {
+    // ✅ Handle customFloorPlan - reconstruct URL if missing
+    if (order.customFloorPlan) {
+      console.log('📐 Custom floor plan found:', {
+        hasUrl: !!order.customFloorPlan.url,
+        hasKey: !!order.customFloorPlan.key,
+        hasData: !!order.customFloorPlan.data,
+        filename: order.customFloorPlan.filename
+      });
+      
+      // ✅ If URL is missing but key exists, reconstruct it
+      if (!order.customFloorPlan.url && order.customFloorPlan.key) {
+        const HARDCODED_CONFIG = {
+          region: 'sfo3',
+          bucket: 'hale-project'
+        };
+        order.customFloorPlan.url = `https://${HARDCODED_CONFIG.bucket}.${HARDCODED_CONFIG.region}.digitaloceanspaces.com/${order.customFloorPlan.key}`;
+        console.log('🔧 Reconstructed floor plan URL:', order.customFloorPlan.url);
+      }
+      
+      // ✅ Remove Buffer data to reduce response size
+      if (order.customFloorPlan.data) {
+        delete order.customFloorPlan.data;
+        console.log('🗑️ Removed Buffer data from response');
+      }
+    }
+
+    // ✅ Handle product uploaded images - reconstruct URLs if missing
+    if (order.selectedProducts && order.selectedProducts.length > 0) {
+      order.selectedProducts.forEach((product, idx) => {
         if (product.selectedOptions?.uploadedImages?.length > 0) {
-          product.selectedOptions.uploadedImages = product.selectedOptions.uploadedImages.map(img => {
-            if (img.data && Buffer.isBuffer(img.data)) {
-              return {
-                ...img,
-                data: img.data.toString('base64')
+          product.selectedOptions.uploadedImages.forEach((img, imgIdx) => {
+            // Reconstruct URL if missing
+            if (!img.url && img.key) {
+              const HARDCODED_CONFIG = {
+                region: 'sfo3',
+                bucket: 'hale-project'
               };
+              img.url = `https://${HARDCODED_CONFIG.bucket}.${HARDCODED_CONFIG.region}.digitaloceanspaces.com/${img.key}`;
+              console.log(`🔧 Reconstructed product image URL: Product ${idx}, Image ${imgIdx}`);
             }
-            return img;
+            
+            // Remove Buffer data
+            if (img.data) {
+              delete img.data;
+            }
           });
         }
-        return product;
       });
     }
 
-    // ✅ Convert floor plan Buffer to base64
-    if (order.customFloorPlan?.data && Buffer.isBuffer(order.customFloorPlan.data)) {
-      order.customFloorPlan.data = order.customFloorPlan.data.toString('base64');
-    }
-
-    console.log('✅ Order loaded with processed images');
+    console.log('✅ Order loaded successfully');
     res.json(order);
 
   } catch (error) {
@@ -1195,12 +1222,11 @@ const uploadCustomProductImages = async (req, res) => {
       });
     }
 
-    // Return S3 URLs and keys
     const uploadedImages = req.files.map(file => ({
       filename: file.originalname,
+      contentType: file.contentType,
       url: file.location,
       key: file.key,
-      contentType: file.contentType,
       size: file.size,
       uploadedAt: new Date()
     }));
@@ -1236,9 +1262,9 @@ const uploadOrderFloorPlan = async (req, res) => {
 
     const floorPlanData = {
       filename: req.file.originalname,
+      contentType: req.file.contentType,
       url: req.file.location,
       key: req.file.key,
-      contentType: req.file.contentType,
       size: req.file.size,
       notes: notes || '',
       uploadedAt: new Date()
@@ -1246,7 +1272,6 @@ const uploadOrderFloorPlan = async (req, res) => {
 
     console.log(`✅ Uploaded floor plan to S3: ${req.file.key}`);
 
-    // Update order with floor plan
     await Order.findByIdAndUpdate(orderId, {
       customFloorPlan: floorPlanData
     });
@@ -1264,6 +1289,7 @@ const uploadOrderFloorPlan = async (req, res) => {
     });
   }
 };
+
 
 module.exports = {
   createOrder,

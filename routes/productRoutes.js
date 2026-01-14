@@ -1,8 +1,10 @@
+// routes/productRoutes.js - UPDATED
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
-const multer = require('multer');
-const { handleUpload } = require('../config/s3');
+const { 
+  handleProductImagesUpload  // ✅ CORRECT name from new s3.js
+} = require('../config/s3');
 const {
   getProducts,
   getProduct,
@@ -16,32 +18,29 @@ const {
   updateCustomAttributes
 } = require('../controllers/productController');
 
-// ✅ IMPORTANT: All routes must be AFTER router.use(protect)
-// but SPECIFIC routes must come BEFORE dynamic routes (/:id)
-
-// Protected routes - require authentication
+// Protected routes
 router.use(protect);
 
-// ✅ STEP 1: Static/specific routes FIRST (before /:id)
+// ✅ Static/specific routes FIRST
 router.get('/basic-info', getProductsBasicInfo);
 router.post('/bulk-delete', bulkDeleteProducts);
 
-// ✅ STEP 2: Custom order routes (specific paths before /:id)
+// ✅ Custom order routes
 router.post('/custom-order-product', createProductFromCustomOrder);
 
-// ✅ STEP 3: Routes with specific patterns (before /:id)
+// ✅ Routes with specific patterns
 router.get('/:id/variants', getProductVariants);
 router.put('/:id/custom-attributes', updateCustomAttributes);
 
-// ✅ STEP 4: Main collection route
+// ✅ Main collection route - use handleProductImagesUpload
 router.route('/')
   .get(getProducts)
-  .post(handleUpload, createProduct);
+  .post(handleProductImagesUpload, createProduct);
 
-// ✅ STEP 5: Dynamic ID routes LAST (catches everything else)
+// ✅ Dynamic ID routes LAST
 router.route('/:id')
   .get(getProduct)
-  .put(handleUpload, updateProduct)
+  .put(handleProductImagesUpload, updateProduct)
   .delete(deleteProduct);
 
 module.exports = router;

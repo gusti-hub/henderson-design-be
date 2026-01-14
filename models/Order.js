@@ -1,5 +1,4 @@
-// backend/models/Order.js
-// UPDATE YOUR ORDER SCHEMA TO INCLUDE THESE FIELDS
+// models/Order.js - UPDATE customFloorPlan schema
 
 const mongoose = require('mongoose');
 
@@ -10,16 +9,18 @@ const orderSchema = new mongoose.Schema({
     required: true
   },
 
+  // ✅ UPDATED: Support both Buffer (old) and S3 URL (new)
   customFloorPlan: {
     filename: String,
     contentType: String,
-    data: Buffer,
+    data: Buffer,        // ✅ Keep for backward compatibility
+    url: String,         // ✅ NEW: S3 URL
+    key: String,         // ✅ NEW: S3 key
     size: Number,
     notes: String,
     uploadedAt: Date
   },
   
-  // ✅ ADD THIS NEW FIELD
   packageType: {
     type: String,
     enum: ['investor', 'custom', 'library'],
@@ -47,88 +48,79 @@ const orderSchema = new mongoose.Schema({
   
   Package: String,
   
-selectedProducts: [{
-  _id: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Product'
-  },
-  product_id: String,
-  name: String,
-  category: String,
-  spotName: String,
-  quantity: {
-    type: Number,
-    default: 1
-  },
-  unitPrice: Number,
-  finalPrice: Number,
-  
-  // ✅ Track source type
-  sourceType: {
-    type: String,
-    enum: ['library', 'manual'],
-    default: 'manual'
-  },
-  
-  // ✅ Is this product editable?
-  isEditable: {
-    type: Boolean,
-    default: true
-  },
-  
-  selectedOptions: {
-    finish: String,
-    fabric: String,
-    size: String,
-    insetPanel: String,
-    image: String, // Primary image URL
-    images: [String], // Multiple image URLs
-    links: [String], // Reference links
-    specifications: String,
-    notes: String,
-    
-    // ✅ NEW: Uploaded images stored as binary
-    uploadedImages: [{
-      filename: String,
-      contentType: String,
-      data: Buffer,
-      size: Number,
-      uploadedAt: {
-        type: Date,
-        default: Date.now
+  selectedProducts: [{
+    _id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product'
+    },
+    product_id: String,
+    name: String,
+    category: String,
+    spotName: String,
+    quantity: {
+      type: Number,
+      default: 1
+    },
+    unitPrice: Number,
+    finalPrice: Number,
+    sourceType: {
+      type: String,
+      enum: ['library', 'manual'],
+      default: 'manual'
+    },
+    isEditable: {
+      type: Boolean,
+      default: true
+    },
+    selectedOptions: {
+      finish: String,
+      fabric: String,
+      size: String,
+      insetPanel: String,
+      image: String,
+      images: [String],
+      links: [String],
+      specifications: String,
+      notes: String,
+      // ✅ UPDATED: Support both Buffer and S3 URL for uploaded images
+      uploadedImages: [{
+        filename: String,
+        contentType: String,
+        data: Buffer,      // ✅ Keep for backward compatibility
+        url: String,       // ✅ NEW: S3 URL
+        key: String,       // ✅ NEW: S3 key
+        size: Number,
+        uploadedAt: {
+          type: Date,
+          default: Date.now
+        }
+      }],
+      customAttributes: {
+        type: Map,
+        of: mongoose.Schema.Types.Mixed,
+        default: new Map()
       }
-    }],
-    
-    // ✅ NEW: Custom attributes (flexible)
-    customAttributes: {
-      type: Map,
-      of: mongoose.Schema.Types.Mixed,
-      default: new Map()
+    },
+    placement: {
+      spotKey: String,
+      coordinates: {
+        x: Number,
+        y: Number,
+        width: Number,
+        height: Number,
+        rotation: { type: Number, default: 0 }
+      }
     }
-  },
+  }],
   
-  // For library products - placement info
-  placement: {
-    spotKey: String,
-    coordinates: {
-      x: Number,
-      y: Number,
-      width: Number,
-      height: Number,
-      rotation: { type: Number, default: 0 }
-    }
-  }
-}],
-  
-  // ✅ ENHANCED FOR LIBRARY: Store dynamic furniture placements
   occupiedSpots: {
     type: Map,
     of: {
       furnitureId: String,
       label: String,
       area: String,
-      coordinates: mongoose.Schema.Types.Mixed, // ✅ Allow any shape (polygon, curve, arc, rectangle)
-      originalCoordinates: mongoose.Schema.Types.Mixed, // ✅ Store original shape
+      coordinates: mongoose.Schema.Types.Mixed,
+      originalCoordinates: mongoose.Schema.Types.Mixed,
       rotation: { type: Number, default: 0 },
       isPlaced: Boolean,
       sourceConfig: String,

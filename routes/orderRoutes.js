@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
-const PDFDocument = require('pdfkit');
 const {
   createOrder,
   getOrders,
@@ -13,32 +12,79 @@ const {
   generateProposal,
   generateOrderSummary,
   getOrdersByClient,
-  saveFurniturePlacements
+  saveFurniturePlacements,
+  getCurrentUserOrder,
+  uploadCustomProductImages,  // ✅ ADD
+  uploadOrderFloorPlan         // ✅ ADD
 } = require('../controllers/orderController');
-const orderController = require('../controllers/orderController');
-const multer = require('multer');
-const { handlePaymentProofUpload } = require('../config/s3');
+const { 
+  handlePaymentProofUpload,
+  handleProductImagesUpload,   // ✅ ADD
+  handleFloorPlanUpload         // ✅ ADD
+} = require('../config/s3');
 const proposalVersionController = require('../controllers/proposalVersionController');
 
+// Protect all routes
 router.use(protect);
 
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/') // Make sure this directory exists
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname)
-  }
-});
-const upload = multer({ storage: storage });
+// ===================================
+// ✅ IMAGE & FILE UPLOADS (BEFORE /:id routes)
+// ===================================
 
-router.post('/:id/payment-proof', protect, handlePaymentProofUpload, orderController.uploadPaymentProof);
+// Upload custom product images
+router.post(
+  '/:orderId/custom-product-images', 
+  handleProductImagesUpload, 
+  uploadCustomProductImages
+);
 
-router.get('/user-order', protect, orderController.getCurrentUserOrder);
+// ✅ Upload floor plan - THIS WAS MISSING!
+router.post(
+  '/:orderId/floor-plan', 
+  handleFloorPlanUpload, 
+  uploadOrderFloorPlan
+);
 
-router.get('/:id/proposal', protect, generateProposal);
-router.get('/:id/summary', protect, generateOrderSummary);
+// Upload payment proof
+router.post(
+  '/:id/payment-proof', 
+  handlePaymentProofUpload, 
+  uploadPaymentProof
+);
 
+// ===================================
+// SPECIFIC ROUTES (BEFORE /:id)
+// ===================================
+
+router.get('/user-order', getCurrentUserOrder);
+router.get('/client/:clientId', getOrdersByClient);
+
+// ===================================
+// DOCUMENTS & EXPORTS
+// ===================================
+
+router.get('/:id/proposal', generateProposal);
+router.post('/:id/proposal', generateProposal);
+router.get('/:id/summary', generateOrderSummary);
+router.get('/:id/pdf', generateOrderPDF);
+
+// ===================================
+// PROPOSAL VERSIONS
+// ===================================
+
+router.get(
+  '/:orderId/proposal-versions', 
+  proposalVersionController.getProposalVersions
+);
+
+router.get(
+  '/:id/generate-version-pdf/:version', 
+  proposalVersionController.generateVersionPdf
+);
+
+// ===================================
+// ORDER CRUD
+// ===================================
 
 router.route('/')
   .get(getOrders)
@@ -48,19 +94,16 @@ router.route('/:id')
   .get(getOrderById)
   .put(updateOrder);
 
-router.route('/:id/payment')
-  .post(uploadPaymentProof)
-  .put(updatePaymentStatus);
+// ===================================
+// PAYMENT
+// ===================================
 
-router.get('/:id/pdf', generateOrderPDF);
-router.put('/:id/payment-status', protect, orderController.updatePaymentStatus);
+router.put('/:id/payment-status', updatePaymentStatus);
 
-// Keep/add these routes
-router.post('/:id/proposal', protect, generateProposal);
-router.get('/:id/generate-version-pdf/:version', protect, proposalVersionController.generateVersionPdf);
-router.get('/:orderId/proposal-versions', protect, proposalVersionController.getProposalVersions);
-//router.put('/:orderId/proposal-versions/:version/status', protect, proposalVersionController.updateProposalVersionStatus);
-router.get('/client/:clientId', protect, orderController.getOrdersByClient);
-router.put('/:orderId/furniture-placements', protect, orderController.saveFurniturePlacements);
+// ===================================
+// LIBRARY SPECIFIC
+// ===================================
+
+router.put('/:orderId/furniture-placements', saveFurniturePlacements);
 
 module.exports = router;
