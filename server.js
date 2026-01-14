@@ -11,6 +11,7 @@ const journeyChatRoutes = require('./routes/journeyChatRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const quickbooksRoutes = require('./routes/quickbooksRoutes');
 const agreementRoutes = require('./routes/agreementRoutes');
+const proposalRoutes = require('./routes/proposalRoutes');
 
 // Load env vars
 dotenv.config();
@@ -75,6 +76,7 @@ app.use('/api/journey-chat', journeyChatRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/quickbooks', quickbooksRoutes);
 app.use('/api/agreements', agreementRoutes);
+app.use('/api/proposals', proposalRoutes);
 
 // Enhanced error handling
 app.use((err, req, res, next) => {

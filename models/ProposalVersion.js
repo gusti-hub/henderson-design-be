@@ -1,4 +1,4 @@
-// models/ProposalVersion.js
+// models/ProposalVersion.js - UPDATE
 const mongoose = require('mongoose');
 
 const proposalVersionSchema = new mongoose.Schema({
@@ -8,63 +8,81 @@ const proposalVersionSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  
   version: {
     type: Number,
     required: true
   },
-  selectedPlan: {
-    id: String,
-    title: String,
-    description: String,
-    image: String,
-    details: [String],
-    clientInfo: {
-      name: String,
-      unitNumber: String,
-      floorPlan: String
-    }
-  },
+  
   clientInfo: {
     name: String,
     unitNumber: String,
-    floorPlan: String
+    email: String,
+    address: String,
+    phone: String
   },
+  
   selectedProducts: [{
-    _id: String,
-    name: String,
+    _id: mongoose.Schema.Types.ObjectId,
     product_id: String,
-    spotId: String,
+    name: String,
+    category: String,
     spotName: String,
-    finalPrice: Number,
     quantity: Number,
-    unitPrice: Number,   
+    unitPrice: Number,
+    finalPrice: Number,
     selectedOptions: {
       finish: String,
       fabric: String,
-      image: String
+      size: String,
+      insetPanel: String,
+      image: String,
+      specifications: String,
+      notes: String
     }
   }],
-  occupiedSpots: {
-    type: Map,
-    of: String
+  
+  totals: {
+    subtotal: Number,
+    salesTax: Number,
+    total: Number,
+    deposit: Number
   },
-  notes: String,
+  
+  notes: {
+    type: String,
+    required: true
+  },
+  
   status: {
     type: String,
-    enum: ['draft', 'sent', 'accepted', 'rejected'],
+    enum: ['draft', 'sent', 'approved', 'rejected'],
     default: 'draft'
   },
-  pdfUrl: String,
+  
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
-}, {
-  timestamps: true
 });
 
-// Create compound index for efficient querying
-proposalVersionSchema.index({ orderId: 1, version: 1 }, { unique: true });
+// Compound index for efficient queries
+proposalVersionSchema.index({ orderId: 1, version: -1 });
 
-const ProposalVersion = mongoose.model('ProposalVersion', proposalVersionSchema);
-module.exports = ProposalVersion;
+module.exports = mongoose.model('ProposalVersion', proposalVersionSchema);
