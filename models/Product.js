@@ -81,9 +81,10 @@ const productSchema = new mongoose.Schema({
   },
   variants: [variantSchema],
   
-  // ✅ NEW: Support for multiple images
+  // ✅ Multiple images with URL and key
   images: [{
     url: String,
+    key: String,
     alt: String,
     isPrimary: {
       type: Boolean,
@@ -91,11 +92,12 @@ const productSchema = new mongoose.Schema({
     }
   }],
   
-  // ✅ NEW: Support for uploaded images (binary storage)
+  // ✅ UPDATED: Store uploaded images metadata only (no Buffer)
   uploadedImages: [{
     filename: String,
     contentType: String,
-    data: Buffer,
+    url: String,
+    key: String,
     size: Number,
     uploadedAt: {
       type: Date,
@@ -103,21 +105,21 @@ const productSchema = new mongoose.Schema({
     }
   }],
   
-  // ✅ NEW: Dynamic custom attributes (flexible key-value pairs)
+  // ✅ Dynamic custom attributes (flexible key-value pairs)
   customAttributes: {
     type: Map,
     of: mongoose.Schema.Types.Mixed,
     default: new Map()
   },
   
-  // ✅ NEW: Track source
+  // ✅ Track source
   sourceType: {
     type: String,
     enum: ['admin-created', 'custom-order'],
     default: 'admin-created'
   },
   
-  // ✅ NEW: Link to order if created from custom order
+  // ✅ Link to order if created from custom order
   createdFromOrder: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Order',

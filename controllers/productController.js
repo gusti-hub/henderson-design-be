@@ -31,7 +31,7 @@ const getProducts = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('product_id name description basePrice variants') // hanya field yang dipakai FE
+        .select('product_id name description basePrice variants uploadedImages') // hanya field yang dipakai FE
         .lean()
     ]);
     
@@ -126,14 +126,12 @@ const createProductFromCustomOrder = async (req, res) => {
 
     const { orderId, productData } = req.body;
 
-    // ✅ Better validation with detailed error
+    // Validation
     if (!orderId) {
       console.error('❌ Missing orderId in request body');
-      console.log('Request body keys:', Object.keys(req.body));
       return res.status(400).json({
         success: false,
-        message: 'Order ID is required',
-        received: req.body
+        message: 'Order ID is required'
       });
     }
 
@@ -144,7 +142,6 @@ const createProductFromCustomOrder = async (req, res) => {
       });
     }
 
-    // Validation
     if (!productData.name || !productData.product_id) {
       return res.status(400).json({
         success: false,
@@ -164,7 +161,7 @@ const createProductFromCustomOrder = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `Product ID ${productData.product_id} already exists. Using existing product.`,
-        data: existingProduct // Return existing product
+        data: existingProduct
       });
     }
 
@@ -176,41 +173,65 @@ const createProductFromCustomOrder = async (req, res) => {
       });
     }
 
-    // Prepare images array from URLs
-    const images = (productData.images || []).map((url, index) => ({
-      url,
-      alt: productData.name,
-      isPrimary: index === 0
-    }));
-
-    // Prepare uploaded images (from base64)
-    const uploadedImages = [];
-    if (productData.uploadedImages && Array.isArray(productData.uploadedImages)) {
-      productData.uploadedImages.forEach((img, idx) => {
-        try {
-          let base64Data = img.data;
-          
-          // Remove data URL prefix if present
-          if (typeof base64Data === 'string' && base64Data.includes('base64,')) {
-            base64Data = base64Data.split('base64,')[1];
-          }
-          
-          if (base64Data && typeof base64Data === 'string') {
-            uploadedImages.push({
-              filename: img.filename || `image_${idx}.jpg`,
-              contentType: img.contentType || 'image/jpeg',
-              data: Buffer.from(base64Data, 'base64'),
-              size: img.size || 0,
-              uploadedAt: new Date()
-            });
-          }
-        } catch (imgError) {
-          console.error(`Error processing uploaded image ${idx}:`, imgError.message);
+    // ✅ Prepare images array - gabungkan dari images dan uploadedImages
+    const images = [];
+    
+    // Add from images array
+    if (productData.images && Array.isArray(productData.images)) {
+      productData.images.forEach((img, index) => {
+        if (typeof img === 'string') {
+          // Simple URL string
+          images.push({
+            url: img,
+            alt: productData.name,
+            isPrimary: images.length === 0
+          });
+        } else if (img.url) {
+          // Object with url and key
+          images.push({
+            url: img.url,
+            key: img.key || '',
+            alt: img.alt || productData.name,
+            isPrimary: images.length === 0
+          });
         }
       });
     }
 
-    console.log(`✅ Processed ${uploadedImages.length} uploaded images`);
+    // ✅ Add from uploadedImages (sudah ada URL dari DigitalOcean Spaces)
+    if (productData.uploadedImages && Array.isArray(productData.uploadedImages)) {
+      productData.uploadedImages.forEach((img, index) => {
+        if (img.url) {
+          images.push({
+            url: img.url,
+            key: img.key || '',
+            alt: productData.name,
+            isPrimary: images.length === 0
+          });
+        }
+      });
+    }
+
+    console.log(`✅ Processed ${images.length} total images`);
+
+    // ✅ Prepare uploadedImages metadata (tanpa Buffer)
+    const uploadedImages = [];
+    if (productData.uploadedImages && Array.isArray(productData.uploadedImages)) {
+      productData.uploadedImages.forEach((img) => {
+        if (img.url) {
+          uploadedImages.push({
+            filename: img.filename || 'unknown',
+            contentType: img.contentType || 'image/jpeg',
+            url: img.url,
+            key: img.key || '',
+            size: img.size || 0,
+            uploadedAt: img.uploadedAt || new Date()
+          });
+        }
+      });
+    }
+
+    console.log(`✅ Stored ${uploadedImages.length} uploaded images metadata`);
 
     // Create single variant with manual input data
     const defaultVariant = {
@@ -219,7 +240,10 @@ const createProductFromCustomOrder = async (req, res) => {
       size: productData.size || '',
       insetPanel: '',
       price: parseFloat(productData.unitPrice) || 0,
-      image: images[0] ? { url: images[0].url } : null,
+      image: images[0] ? { 
+        url: images[0].url,
+        key: images[0].key || ''
+      } : null,
       inStock: true,
       isDefault: true
     };
@@ -242,6 +266,7 @@ const createProductFromCustomOrder = async (req, res) => {
     });
 
     console.log('✅ Product created from custom order:', product._id);
+    console.log(`📸 With ${images.length} images and ${uploadedImages.length} uploaded files`);
 
     res.status(201).json({
       success: true,
