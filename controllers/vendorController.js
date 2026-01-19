@@ -1,3 +1,5 @@
+// controllers/vendorController.js
+
 const Vendor = require('../models/Vendor');
 
 // Get all vendors with pagination
@@ -9,7 +11,6 @@ const getVendors = async (req, res) => {
     const status = req.query.status || '';
     const skip = (page - 1) * limit;
 
-    // Build search query
     let searchQuery = {};
     
     if (search) {
@@ -88,19 +89,23 @@ const createVendor = async (req, res) => {
       });
     }
 
-    // Generate vendor code if not provided
-    let finalVendorCode = vendorCode;
-    if (!finalVendorCode) {
-      finalVendorCode = await Vendor.generateNextCode();
-    } else {
-      finalVendorCode = vendorCode.toUpperCase();
-      // Check if vendor code already exists
-      const vendorExists = await Vendor.findOne({ vendorCode: finalVendorCode });
-      if (vendorExists) {
+    // ✅ Generate vendor code if not provided OR auto-generate always
+    let finalVendorCode;
+    
+    if (vendorCode && vendorCode.trim()) {
+      // If user provides code, check uniqueness
+      finalVendorCode = vendorCode.toUpperCase().trim();
+      
+      const codeExists = await Vendor.codeExists(finalVendorCode);
+      if (codeExists) {
         return res.status(400).json({ 
-          message: 'Vendor code already exists' 
+          message: `Vendor code "${finalVendorCode}" already exists` 
         });
       }
+    } else {
+      // Auto-generate if not provided
+      finalVendorCode = await Vendor.generateNextCode();
+      console.log('✅ Auto-generated vendor code:', finalVendorCode);
     }
 
     // Check if email already exists
@@ -137,9 +142,23 @@ const createVendor = async (req, res) => {
       .populate('createdBy', 'name email')
       .populate('modifiedBy', 'name email');
 
+    console.log('✅ Vendor created:', {
+      code: populatedVendor.vendorCode,
+      name: populatedVendor.name
+    });
+
     res.status(201).json(populatedVendor);
   } catch (error) {
     console.error('Error in createVendor:', error);
+    
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({ 
+        message: `${field === 'vendorCode' ? 'Vendor code' : 'Email'} already exists` 
+      });
+    }
+    
     res.status(500).json({ 
       message: 'Error creating vendor',
       error: error.message 
@@ -171,17 +190,22 @@ const updateVendor = async (req, res) => {
       status
     } = req.body;
 
-    // Check vendor code uniqueness if it's being changed
+    // ✅ Check vendor code uniqueness if it's being changed
     if (vendorCode && vendorCode.toUpperCase() !== vendor.vendorCode) {
-      const codeExists = await Vendor.findOne({ vendorCode: vendorCode.toUpperCase() });
+      const codeExists = await Vendor.codeExists(vendorCode);
       if (codeExists) {
-        return res.status(400).json({ message: 'Vendor code already in use' });
+        return res.status(400).json({ 
+          message: `Vendor code "${vendorCode.toUpperCase()}" already in use` 
+        });
       }
     }
 
     // Check email uniqueness if it's being changed
     if (email && email !== vendor.contactInfo.email) {
-      const emailExists = await Vendor.findOne({ 'contactInfo.email': email });
+      const emailExists = await Vendor.findOne({ 
+        'contactInfo.email': email,
+        _id: { $ne: vendor._id } // Exclude current vendor
+      });
       if (emailExists) {
         return res.status(400).json({ message: 'Email already in use' });
       }
@@ -211,9 +235,23 @@ const updateVendor = async (req, res) => {
       .populate('createdBy', 'name email')
       .populate('modifiedBy', 'name email');
 
+    console.log('✅ Vendor updated:', {
+      code: updatedVendor.vendorCode,
+      name: updatedVendor.name
+    });
+
     res.json(updatedVendor);
   } catch (error) {
     console.error('Update vendor error:', error);
+    
+    // Handle duplicate key error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({ 
+        message: `${field === 'vendorCode' ? 'Vendor code' : 'Email'} already in use` 
+      });
+    }
+    
     res.status(500).json({ message: 'Error updating vendor' });
   }
 };
@@ -227,6 +265,7 @@ const deleteVendor = async (req, res) => {
       return res.status(404).json({ message: 'Vendor not found' });
     }
     
+    console.log('✅ Vendor deleted:', vendor.vendorCode);
     res.json({ message: 'Vendor deleted successfully' });
   } catch (error) {
     console.error('Delete vendor error:', error);
@@ -241,7 +280,6 @@ const getVendorStats = async (req, res) => {
     const activeVendors = await Vendor.countDocuments({ status: 'active' });
     const inactiveVendors = await Vendor.countDocuments({ status: 'inactive' });
     
-    // Average markup
     const avgMarkupResult = await Vendor.aggregate([
       {
         $group: {
@@ -265,7 +303,6 @@ const getVendorStats = async (req, res) => {
   }
 };
 
-// PENTING: Export semua fungsi
 module.exports = {
   getVendors,
   getVendorById,

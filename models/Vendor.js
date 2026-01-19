@@ -1,3 +1,5 @@
+// models/Vendor.js
+
 const mongoose = require('mongoose');
 
 const vendorSchema = new mongoose.Schema({
@@ -91,16 +93,30 @@ vendorSchema.pre('save', function(next) {
   next();
 });
 
-// Generate next vendor code
+// ✅ Generate next vendor code
 vendorSchema.statics.generateNextCode = async function() {
   const lastVendor = await this.findOne().sort({ createdAt: -1 });
-  if (!lastVendor) {
+  
+  if (!lastVendor || !lastVendor.vendorCode) {
     return 'VND001';
   }
   
-  const lastNumber = parseInt(lastVendor.vendorCode.replace('VND', ''));
+  // Extract number from vendor code (e.g., VND001 -> 1)
+  const match = lastVendor.vendorCode.match(/VND(\d+)/);
+  if (!match) {
+    return 'VND001';
+  }
+  
+  const lastNumber = parseInt(match[1]);
   const nextNumber = lastNumber + 1;
+  
   return `VND${String(nextNumber).padStart(3, '0')}`;
+};
+
+// ✅ Check if vendor code exists
+vendorSchema.statics.codeExists = async function(code) {
+  const vendor = await this.findOne({ vendorCode: code.toUpperCase() });
+  return !!vendor;
 };
 
 module.exports = mongoose.model('Vendor', vendorSchema);
