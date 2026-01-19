@@ -92,6 +92,7 @@ const updateOrder = async (req, res) => {
           quantity: product.quantity || 1,
           unitPrice: product.unitPrice || 0,
           finalPrice: product.finalPrice || 0,
+          vendor: product.vendor || null,
           sourceType: product.sourceType || 'manual',
           isEditable: product.isEditable !== undefined ? product.isEditable : true,
           selectedOptions: {

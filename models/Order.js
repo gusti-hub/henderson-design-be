@@ -63,6 +63,11 @@ const orderSchema = new mongoose.Schema({
     },
     unitPrice: Number,
     finalPrice: Number,
+    vendor: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Vendor',
+      required: false
+    },
     sourceType: {
       type: String,
       enum: ['library', 'manual'],
