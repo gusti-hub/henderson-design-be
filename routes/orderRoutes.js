@@ -15,7 +15,8 @@ const {
   saveFurniturePlacements,
   getCurrentUserOrder,
   uploadCustomProductImages,  // ✅ ADD
-  uploadOrderFloorPlan         // ✅ ADD
+  uploadOrderFloorPlan,         // ✅ ADD
+  generateInstallBinder
 } = require('../controllers/orderController');
 const { 
   handlePaymentProofUpload,
@@ -105,5 +106,7 @@ router.put('/:id/payment-status', updatePaymentStatus);
 // ===================================
 
 router.put('/:orderId/furniture-placements', saveFurniturePlacements);
+
+router.get('/:id/install-binder', generateInstallBinder);
 
 module.exports = router;

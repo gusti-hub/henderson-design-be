@@ -26,7 +26,7 @@ const vendorSchema = new mongoose.Schema({
     type: Number,
     required: [true, 'Please add a default markup'],
     min: 0,
-    max: 100,
+    max: 1000,
     default: 0
   },
   contactInfo: {

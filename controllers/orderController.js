@@ -65,11 +65,6 @@ const updateOrder = async (req, res) => {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    const updateData = {
-      status: req.body.status,
-      step: req.body.step
-    };
-
     // ✅ Handle selectedProducts with temporary ID cleanup
     if (req.body.selectedProducts && Array.isArray(req.body.selectedProducts)) {
       console.log(`📦 Processing ${req.body.selectedProducts.length} products`);
@@ -96,6 +91,10 @@ const updateOrder = async (req, res) => {
           sourceType: product.sourceType || 'manual',
           isEditable: product.isEditable !== undefined ? product.isEditable : true,
           selectedOptions: {
+            poNumber: product.selectedOptions?.poNumber || '',
+            vendorOrderNumber: product.selectedOptions?.vendorOrderNumber || '',
+            trackingInfo: product.selectedOptions?.trackingInfo || '',
+            deliveryStatus: product.selectedOptions?.deliveryStatus || '',
             finish: product.selectedOptions?.finish || '',
             fabric: product.selectedOptions?.fabric || '',
             size: product.selectedOptions?.size || '',
@@ -538,20 +537,18 @@ const generateProposal = async (req, res) => {
             box-sizing: border-box;
             page-break-after: always;
         }
+        /* ✅ UPDATED: Logo-only header */
         .header {
             text-align: center;
             margin-bottom: 40px;
         }
-        .header h1 {
-            color: rgb(0, 86, 112);
-            font-size: 28px;
-            margin: 0;
-            font-weight: normal;
-        }
-        .header p {
-            color: rgb(0, 86, 112);
-            font-size: 14px;
-            margin: 5px 0 0 0;
+        .header img {
+            height: 80px;
+            width: auto;
+            object-fit: contain;
+            margin: 0 auto;
+            display: block;
+            filter: brightness(0) saturate(100%) invert(21%) sepia(98%) saturate(1160%) hue-rotate(160deg) brightness(92%) contrast(90%);
         }
         .proposal-title {
             color: rgb(128, 0, 0);
@@ -670,9 +667,9 @@ const generateProposal = async (req, res) => {
         <div class="page">
             <div class="content-wrapper">
                 ${pageIndex === 0 ? `
+                    <!-- ✅ UPDATED: Logo image only -->
                     <div class="header">
-                        <h1>HENDERSON</h1>
-                        <p>DESIGN GROUP</p>
+                        <img src="/images/HDG-Logo.png" alt="Henderson Design Group">
                     </div>
 
                     <div class="proposal-title">Proposal</div>
@@ -782,9 +779,9 @@ const generateProposal = async (req, res) => {
     <!-- Signature Page -->
     <div class="page">
         <div class="content-wrapper">
+            <!-- ✅ UPDATED: Logo image only -->
             <div class="header">
-                <h1>HENDERSON</h1>
-                <p>DESIGN GROUP</p>
+                <img src="/images/HDG-Logo.png" alt="Henderson Design Group">
             </div>
 
             <div class="proposal-title">Proposal</div>
@@ -1291,6 +1288,342 @@ const uploadOrderFloorPlan = async (req, res) => {
   }
 };
 
+const generateInstallBinder = async (req, res) => {
+  try {
+    const Order = require('../models/Order');
+    const { generatePDF } = require('../config/pdfConfig');
+    
+    const order = await Order.findById(req.params.id)
+      .populate('user')
+      .populate('selectedProducts.vendor')
+      .lean();
+
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    const products = order.selectedProducts || [];
+    
+    // Calculate total pages (3 products per page)
+    const totalProducts = products.length;
+    const totalPages = Math.ceil(totalProducts / 3);
+
+    // Helper function to get vendor info
+    const getVendorInfo = (product) => {
+      if (product.vendor) {
+        return {
+          name: product.vendor.name || 'N/A',
+          description: product.name || ''
+        };
+      }
+      return {
+        name: 'HDG Inventory',
+        description: '*HNL Inventory'
+      };
+    };
+
+    // Helper to escape HTML entities
+    const escapeHtml = (text) => {
+      if (!text) return '';
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    };
+
+    // Generate HTML
+    const htmlTemplate = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page {
+            size: letter landscape;
+            margin: 0.5in;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 9pt;
+            line-height: 1.3;
+        }
+        .page {
+            page-break-after: always;
+            position: relative;
+            min-height: 7.5in;
+        }
+        .page:last-child {
+            page-break-after: avoid;
+        }
+        
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #000;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+        }
+        .header-left img {
+            height: 60px;
+            width: auto;
+            object-fit: contain;
+            filter: brightness(0) saturate(100%) invert(21%) sepia(98%) saturate(1160%) hue-rotate(160deg) brightness(92%) contrast(90%);
+        }
+        .header-right {
+            text-align: right;
+            font-size: 8pt;
+        }
+        .header-right h2 {
+            font-size: 20pt;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        
+        /* Project Info */
+        .project-info {
+            margin-bottom: 15px;
+            font-size: 9pt;
+        }
+        .project-info p {
+            margin: 2px 0;
+        }
+        
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 8pt;
+        }
+        th {
+            background-color: #f0f0f0;
+            border: 1px solid #000;
+            padding: 6px 4px;
+            text-align: left;
+            font-weight: bold;
+            font-size: 7pt;
+        }
+        td {
+            border: 1px solid #000;
+            padding: 6px 4px;
+            vertical-align: top;
+        }
+        
+        /* Photo column */
+        td.photo {
+            width: 80px;
+            text-align: center;
+            padding: 4px;
+        }
+        td.photo img {
+            max-width: 70px;
+            max-height: 70px;
+            object-fit: contain;
+        }
+        
+        /* Room column */
+        td.room {
+            width: 100px;
+            font-weight: 600;
+        }
+        
+        /* Vendor Name */
+        td.vendor-name {
+            width: 100px;
+        }
+        
+        /* Vendor Description */
+        td.vendor-desc {
+            width: auto;
+            min-width: 150px;
+        }
+        .product-name {
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+        .product-details {
+            font-size: 7pt;
+            color: #333;
+            line-height: 1.4;
+        }
+        
+        /* PO column */
+        td.po {
+            width: 85px;
+        }
+        
+        /* Quantity */
+        td.quantity {
+            width: 50px;
+            text-align: center;
+        }
+        
+        /* Vendor Order Number */
+        td.order-num {
+            width: 90px;
+        }
+        
+        /* Tracking */
+        td.tracking {
+            width: 120px;
+            font-size: 7pt;
+        }
+        
+        /* Notes */
+        td.notes {
+            width: 120px;
+            font-size: 7pt;
+            white-space: pre-line;
+        }
+        
+        /* Footer */
+        .footer {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            font-size: 8pt;
+            color: #666;
+        }
+        
+        /* Empty cell styling */
+        .empty {
+            background-color: #fafafa;
+        }
+    </style>
+</head>
+<body>
+    ${Array.from({ length: totalPages }, (_, pageIndex) => {
+      const startIdx = pageIndex * 3;
+      const pageProducts = products.slice(startIdx, startIdx + 3);
+      
+      return `
+    <div class="page">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-left">
+                <img src="/images/HDG-Logo.png" alt="Henderson Design Group">
+            </div>
+            <div class="header-right">
+                <h2>Install Binder</h2>
+                <p><strong>Designer:</strong> Henderson Design Group</p>
+                <p><strong>Client:</strong> ${escapeHtml(order.clientInfo?.name || 'N/A')}</p>
+                <p><strong>Project:</strong> ${escapeHtml(
+                  [
+                    order.clientInfo?.name,
+                    order.clientInfo?.floorPlan
+                  ].filter(Boolean).join(' - ')
+                )}</p>
+            </div>
+        </div>
+        
+        <!-- Table -->
+        <table>
+            <thead>
+                <tr>
+                    <th>Photo</th>
+                    <th>Room</th>
+                    <th>Vendor Name</th>
+                    <th>Vendor Description</th>
+                    <th>PO #</th>
+                    <th>Quantity</th>
+                    <th>Vendor Order Number</th>
+                    <th>Shipment Tracking Info</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${pageProducts.map(product => {
+                  const vendorInfo = getVendorInfo(product);
+                  
+                  // ✅ FIX: Check multiple image sources with priority
+                  let primaryImage = null;
+                  
+                  // Priority 1: Direct image field
+                  if (product.selectedOptions?.image) {
+                    primaryImage = product.selectedOptions.image;
+                  }
+                  // Priority 2: Images array first item
+                  else if (product.selectedOptions?.images && product.selectedOptions.images.length > 0) {
+                    primaryImage = product.selectedOptions.images[0];
+                  }
+                  // Priority 3: Uploaded images first item
+                  else if (product.selectedOptions?.uploadedImages && product.selectedOptions.uploadedImages.length > 0) {
+                    const uploadedImg = product.selectedOptions.uploadedImages[0];
+                    primaryImage = uploadedImg.url || (uploadedImg.data ? `data:${uploadedImg.contentType};base64,${uploadedImg.data}` : null);
+                  }
+                  
+                  return `
+                <tr>
+                    <td class="photo">
+                        ${primaryImage ? 
+                          `<img src="${escapeHtml(primaryImage)}" alt="${escapeHtml(product.name)}" onerror="this.parentElement.innerHTML='<span style=\\'color: #999; font-size: 7pt;\\'>No Image</span>'">` : 
+                          '<span style="color: #999; font-size: 7pt;">No Image</span>'}
+                    </td>
+                    <td class="room">${escapeHtml(product.category || product.spotName || 'General')}</td>
+                    <td class="vendor-name">${escapeHtml(vendorInfo.name)}</td>
+                    <td class="vendor-desc">
+                        <div class="product-name">${escapeHtml(product.name || 'N/A')}</div>
+                        <div class="product-details">
+                            ${product.product_id ? `<div>Product ID: ${escapeHtml(product.product_id)}</div>` : ''}
+                            ${product.selectedOptions?.specifications ? 
+                              `<div>${escapeHtml(product.selectedOptions.specifications)}</div>` : ''}
+                            ${product.selectedOptions?.finish ? 
+                              `<div>Finish: ${escapeHtml(product.selectedOptions.finish)}</div>` : ''}
+                            ${product.selectedOptions?.fabric ? 
+                              `<div>Fabric: ${escapeHtml(product.selectedOptions.fabric)}</div>` : ''}
+                            ${product.selectedOptions?.size ? 
+                              `<div>Size: ${escapeHtml(product.selectedOptions.size)}</div>` : ''}
+                        </div>
+                    </td>
+                    <td class="po">${escapeHtml(product.selectedOptions?.poNumber || '')}</td>
+                    <td class="quantity">${product.quantity || 1}</td>
+                    <td class="order-num">${escapeHtml(product.selectedOptions?.vendorOrderNumber || '')}</td>
+                    <td class="tracking">${escapeHtml(product.selectedOptions?.trackingInfo || '')}</td>
+                    <td class="notes">${escapeHtml(product.selectedOptions?.deliveryStatus || 
+                                        product.selectedOptions?.notes || '')}</td>
+                </tr>
+                  `;
+                }).join('')}
+            </tbody>
+        </table>
+        
+        <!-- Footer -->
+        <div class="footer">
+            Page ${pageIndex + 1} of ${totalPages}
+        </div>
+    </div>
+      `;
+    }).join('')}
+</body>
+</html>`;
+
+    // Set response headers to display HTML in browser (same as proposal)
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Disposition', 'inline');
+    
+    // Send HTML for browser display
+    res.send(htmlTemplate);
+
+  } catch (error) {
+    console.error('❌ Error generating install binder:', error);
+    res.status(500).json({ 
+      message: 'Error generating install binder',
+      error: error.message 
+    });
+  }
+};
+
 
 module.exports = {
   createOrder,
@@ -1307,4 +1640,5 @@ module.exports = {
   saveFurniturePlacements,
   uploadCustomProductImages,  // ✅ NEW
   uploadOrderFloorPlan, 
+  generateInstallBinder,
 };

@@ -78,6 +78,10 @@ const orderSchema = new mongoose.Schema({
       default: true
     },
     selectedOptions: {
+      poNumber: String,
+      vendorOrderNumber: String,
+      trackingInfo: String,
+      deliveryStatus: String,
       finish: String,
       fabric: String,
       size: String,
