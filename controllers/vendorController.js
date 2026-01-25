@@ -68,47 +68,38 @@ const getVendorById = async (req, res) => {
 const createVendor = async (req, res) => {
   try {
     const {
-      vendorCode,
       name,
       website,
-      representativeName,
       defaultMarkup,
+      defaultDiscount,
+      vendorDepositRequested,
       phone,
       email,
+      fax,
       street,
       city,
       state,
       zip,
+      country,
+      accountNumber,
+      tags,
+      loginUsername,
+      loginPassword,
+      vendorRepName,
+      orderMethod,
+      paymentMethod,
+      terms,
       notes
     } = req.body;
 
     // Validate required fields
-    if (!name || !representativeName || !phone || !email) {
+    if (!name || !phone || !email) {
       return res.status(400).json({ 
         message: 'Please provide all required fields' 
       });
     }
 
-    // ✅ Generate vendor code if not provided OR auto-generate always
-    let finalVendorCode;
-    
-    if (vendorCode && vendorCode.trim()) {
-      // If user provides code, check uniqueness
-      finalVendorCode = vendorCode.toUpperCase().trim();
-      
-      const codeExists = await Vendor.codeExists(finalVendorCode);
-      if (codeExists) {
-        return res.status(400).json({ 
-          message: `Vendor code "${finalVendorCode}" already exists` 
-        });
-      }
-    } else {
-      // Auto-generate if not provided
-      finalVendorCode = await Vendor.generateNextCode();
-      console.log('✅ Auto-generated vendor code:', finalVendorCode);
-    }
-
-    // Check if email already exists
+    // Check if email already exists (before generating code)
     const emailExists = await Vendor.findOne({ 'contactInfo.email': email });
     if (emailExists) {
       return res.status(400).json({ 
@@ -116,23 +107,42 @@ const createVendor = async (req, res) => {
       });
     }
 
+    // ✅ Auto-generate vendor code (optimized - single query)
+    const vendorCode = await Vendor.generateNextCode();
+    console.log('✅ Auto-generated vendor code:', vendorCode);
+
     const vendor = await Vendor.create({
-      vendorCode: finalVendorCode,
+      vendorCode: vendorCode,
       name,
       website,
-      representativeName,
       defaultMarkup: defaultMarkup || 0,
+      defaultDiscount: defaultDiscount || 0,
+      vendorDepositRequested: vendorDepositRequested || 0,
       contactInfo: {
         phone,
-        email
+        email,
+        fax: fax || ''
       },
       address: {
-        street,
-        city,
-        state,
-        zip
+        street: street || '',
+        city: city || '',
+        state: state || '',
+        zip: zip || '',
+        country: country || ''
       },
-      notes,
+      accountNumber: accountNumber || '',
+      tags: tags || '',
+      loginCredentials: {
+        username: loginUsername || '',
+        password: loginPassword || '',
+        vendorRepName: vendorRepName || ''
+      },
+      termsAndPayment: {
+        orderMethod: orderMethod || '',
+        paymentMethod: paymentMethod || '',
+        terms: terms || ''
+      },
+      notes: notes || '',
       createdBy: req.user._id,
       modifiedBy: req.user._id
     });
@@ -142,7 +152,7 @@ const createVendor = async (req, res) => {
       .populate('createdBy', 'name email')
       .populate('modifiedBy', 'name email');
 
-    console.log('✅ Vendor created:', {
+    console.log('✅ Vendor created successfully:', {
       code: populatedVendor.vendorCode,
       name: populatedVendor.name
     });
@@ -153,10 +163,17 @@ const createVendor = async (req, res) => {
     
     // Handle MongoDB duplicate key error
     if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern)[0];
-      return res.status(400).json({ 
-        message: `${field === 'vendorCode' ? 'Vendor code' : 'Email'} already exists` 
-      });
+      if (error.keyPattern?.vendorCode) {
+        // This should rarely happen with our optimized logic
+        return res.status(409).json({ 
+          message: 'Vendor code conflict detected. Please try again.' 
+        });
+      }
+      if (error.keyPattern?.['contactInfo.email']) {
+        return res.status(400).json({ 
+          message: 'Email already exists' 
+        });
+      }
     }
     
     res.status(500).json({ 
@@ -175,54 +192,75 @@ const updateVendor = async (req, res) => {
     }
 
     const {
-      vendorCode,
       name,
       website,
-      representativeName,
       defaultMarkup,
+      defaultDiscount,
+      vendorDepositRequested,
       phone,
       email,
+      fax,
       street,
       city,
       state,
       zip,
+      country,
+      accountNumber,
+      tags,
+      loginUsername,
+      loginPassword,
+      vendorRepName,
+      orderMethod,
+      paymentMethod,
+      terms,
       notes,
       status
     } = req.body;
-
-    // ✅ Check vendor code uniqueness if it's being changed
-    if (vendorCode && vendorCode.toUpperCase() !== vendor.vendorCode) {
-      const codeExists = await Vendor.codeExists(vendorCode);
-      if (codeExists) {
-        return res.status(400).json({ 
-          message: `Vendor code "${vendorCode.toUpperCase()}" already in use` 
-        });
-      }
-    }
 
     // Check email uniqueness if it's being changed
     if (email && email !== vendor.contactInfo.email) {
       const emailExists = await Vendor.findOne({ 
         'contactInfo.email': email,
-        _id: { $ne: vendor._id } // Exclude current vendor
+        _id: { $ne: vendor._id }
       });
       if (emailExists) {
         return res.status(400).json({ message: 'Email already in use' });
       }
     }
 
-    // Update fields
-    if (vendorCode) vendor.vendorCode = vendorCode.toUpperCase();
+    // Update basic fields (vendor code is never updated)
     if (name) vendor.name = name;
     if (website !== undefined) vendor.website = website;
-    if (representativeName) vendor.representativeName = representativeName;
     if (defaultMarkup !== undefined) vendor.defaultMarkup = defaultMarkup;
+    if (defaultDiscount !== undefined) vendor.defaultDiscount = defaultDiscount;
+    if (vendorDepositRequested !== undefined) vendor.vendorDepositRequested = vendorDepositRequested;
+    
+    // Update contact info
     if (phone) vendor.contactInfo.phone = phone;
     if (email) vendor.contactInfo.email = email;
+    if (fax !== undefined) vendor.contactInfo.fax = fax;
+    
+    // Update address
     if (street !== undefined) vendor.address.street = street;
     if (city !== undefined) vendor.address.city = city;
     if (state !== undefined) vendor.address.state = state;
     if (zip !== undefined) vendor.address.zip = zip;
+    if (country !== undefined) vendor.address.country = country;
+    
+    // Update other fields
+    if (accountNumber !== undefined) vendor.accountNumber = accountNumber;
+    if (tags !== undefined) vendor.tags = tags;
+    
+    // Update login credentials
+    if (loginUsername !== undefined) vendor.loginCredentials.username = loginUsername;
+    if (loginPassword !== undefined) vendor.loginCredentials.password = loginPassword;
+    if (vendorRepName !== undefined) vendor.loginCredentials.vendorRepName = vendorRepName;
+    
+    // Update terms and payment
+    if (orderMethod !== undefined) vendor.termsAndPayment.orderMethod = orderMethod;
+    if (paymentMethod !== undefined) vendor.termsAndPayment.paymentMethod = paymentMethod;
+    if (terms !== undefined) vendor.termsAndPayment.terms = terms;
+    
     if (notes !== undefined) vendor.notes = notes;
     if (status) vendor.status = status;
     

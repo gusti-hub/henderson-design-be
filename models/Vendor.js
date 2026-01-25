@@ -20,13 +20,27 @@ const vendorSchema = new mongoose.Schema({
   },
   representativeName: {
     type: String,
-    required: [true, 'Please add a representative name']
+    default: ''
   },
   defaultMarkup: {
     type: Number,
     required: [true, 'Please add a default markup'],
     min: 0,
     max: 1000,
+    default: 0
+  },
+  // ✅ NEW: Default Discount
+  defaultDiscount: {
+    type: Number,
+    min: 0,
+    max: 100,
+    default: 0
+  },
+  // ✅ NEW: Vendor Deposit Requested
+  vendorDepositRequested: {
+    type: Number,
+    min: 0,
+    max: 100,
     default: 0
   },
   contactInfo: {
@@ -38,24 +52,76 @@ const vendorSchema = new mongoose.Schema({
       type: String,
       required: [true, 'Please add an email'],
       match: [/^\S+@\S+\.\S+$/, 'Please add a valid email']
+    },
+    // ✅ NEW: Fax
+    fax: {
+      type: String,
+      default: ''
     }
   },
   address: {
     street: {
       type: String,
-      required: false
+      default: ''
     },
     city: {
       type: String,
-      required: false
+      default: ''
     },
     state: {
       type: String,
-      required: false
+      default: ''
     },
     zip: {
       type: String,
-      required: false
+      default: ''
+    },
+    // ✅ NEW: Country
+    country: {
+      type: String,
+      default: ''
+    }
+  },
+  // ✅ NEW: Account Number
+  accountNumber: {
+    type: String,
+    default: ''
+  },
+  // ✅ NEW: Tags (as comma-separated string)
+  tags: {
+    type: String,
+    default: ''
+  },
+  // ✅ NEW: Login Credentials
+  loginCredentials: {
+    username: {
+      type: String,
+      default: ''
+    },
+    password: {
+      type: String,
+      default: ''
+    },
+    vendorRepName: {
+      type: String,
+      default: ''
+    }
+  },
+  // ✅ NEW: Terms & Payment Info
+  termsAndPayment: {
+    orderMethod: {
+      type: String,
+      enum: ['', 'Online', 'Email', 'Phone'],
+      default: ''
+    },
+    paymentMethod: {
+      type: String,
+      enum: ['', 'Credit Card', 'Check', 'ACH/Wire', 'Net 30 - CC', 'Net 30 - Check'],
+      default: ''
+    },
+    terms: {
+      type: String,
+      default: ''
     }
   },
   notes: {
@@ -93,21 +159,31 @@ vendorSchema.pre('save', function(next) {
   next();
 });
 
-// ✅ Generate next vendor code
+// ✅ Generate next vendor code - OPTIMIZED
 vendorSchema.statics.generateNextCode = async function() {
-  const lastVendor = await this.findOne().sort({ createdAt: -1 });
+  // Use aggregation to find the highest vendor code number efficiently
+  const result = await this.aggregate([
+    {
+      $match: {
+        vendorCode: { $regex: /^VND\d+$/ }
+      }
+    },
+    {
+      $project: {
+        vendorNumber: {
+          $toInt: { $substr: ['$vendorCode', 3, -1] }
+        }
+      }
+    },
+    {
+      $sort: { vendorNumber: -1 }
+    },
+    {
+      $limit: 1
+    }
+  ]);
   
-  if (!lastVendor || !lastVendor.vendorCode) {
-    return 'VND001';
-  }
-  
-  // Extract number from vendor code (e.g., VND001 -> 1)
-  const match = lastVendor.vendorCode.match(/VND(\d+)/);
-  if (!match) {
-    return 'VND001';
-  }
-  
-  const lastNumber = parseInt(match[1]);
+  const lastNumber = result.length > 0 ? result[0].vendorNumber : 0;
   const nextNumber = lastNumber + 1;
   
   return `VND${String(nextNumber).padStart(3, '0')}`;
