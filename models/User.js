@@ -57,6 +57,29 @@ const userSchema = new mongoose.Schema({
     enum: ['investor', 'custom', 'library'],
     default: 'investor'
   },
+  // Tambahkan setelah field packageType
+  teamAssignment: {
+    designer: {
+      type: String,
+      enum: ['Joanna Staniszewski', 'Janelle Balci', 'Ash Agustin', ''],
+      default: ''
+    },
+    projectManager: {
+      type: String,
+      enum: ['Madeline Clifford', 'Daiki Matsumaru', 'Savanna Gonzales', ''],
+      default: ''
+    },
+    projectManagerAssistant: {
+      type: String,
+      enum: ['Haley Spitz', 'Florence Sosrita', ''],
+      default: ''
+    },
+    designerAssistant: {
+      type: String,
+      enum: ['TBD', ''],
+      default: ''
+    }
+  },
   floorPlan: {
     type: String,
     required: false,

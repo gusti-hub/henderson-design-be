@@ -421,23 +421,56 @@ const recordPayment = async (req, res) => {
   }
 };
 
-const generateClientCode = async () => {
-  const lastUser = await User.findOne({ clientCode: { $regex: /^ALI\d+$/ } })
+const generateClientCode = async (name, unitNumber) => {
+  // Get the last user to determine the next sequential number
+  const lastUser = await User.findOne({ clientCode: { $regex: /^\d{3}[A-Z]{1,3}\d{4}$/ } })
     .sort({ clientCode: -1 });
 
-  if (!lastUser || !lastUser.clientCode) {
-    return "ALI001";
+  let sequentialNumber = 1;
+  if (lastUser && lastUser.clientCode) {
+    // Extract the first 3 digits from the last client code
+    const lastNumber = parseInt(lastUser.clientCode.substring(0, 3), 10);
+    sequentialNumber = lastNumber + 1;
   }
 
-  const lastNumber = parseInt(lastUser.clientCode.replace("ALI", ""), 10);
-  const newNumber = lastNumber + 1;
+  // Format sequential number to 3 digits
+  const formattedSequentialNumber = String(sequentialNumber).padStart(3, "0");
 
-  return "ALI" + String(newNumber).padStart(3, "0");
+  // Extract name code (1-3 capital letters from first letters of words)
+  const nameCode = extractNameCode(name);
+
+  // Format unit number to 4 digits
+  const formattedUnitNumber = String(unitNumber).padStart(4, "0");
+
+  // Combine: 001JUN2342 or 002GO0045
+  return formattedSequentialNumber + nameCode + formattedUnitNumber;
 };
 
-// @desc    Create new client with auto-journey and auto-order (LIBRARY SUPPORT)
-// @route   POST /api/clients
-// @access  Private (Admin)
+const extractNameCode = (name) => {
+  if (!name) return "";
+
+  // Remove extra spaces and split by space
+  const words = name.trim().split(/\s+/);
+  
+  // Get first letter of each word (up to 3)
+  let nameCode = words
+    .slice(0, 3)
+    .map(word => word.charAt(0).toUpperCase())
+    .join('');
+
+  // If less than 3 letters, try to get more from first word
+  if (nameCode.length < 3 && words.length > 0) {
+    const firstWord = words[0].toUpperCase();
+    for (let i = 1; i < firstWord.length && nameCode.length < 3; i++) {
+      nameCode += firstWord.charAt(i);
+    }
+  }
+
+  // Return as is (1-3 characters), no padding with X
+  return nameCode.substring(0, 3);
+};
+
+
 const createClient = async (req, res) => {
   try {
     console.log('📝 Creating new client with auto-journey and auto-order...');
@@ -452,8 +485,9 @@ const createClient = async (req, res) => {
       propertyType,
       collection,
       bedroomCount,
-      packageType = 'investor', // ✅ NEW: 'investor', 'custom', or 'library'
+      packageType = 'investor',
       customNotes,
+      teamAssignment // ✅ NEW: Team assignment object
     } = req.body;
 
     if (!name || !email || !password || !unitNumber) {
@@ -463,7 +497,6 @@ const createClient = async (req, res) => {
       });
     }
 
-    // For library, collection/bedroom not required
     if (packageType !== 'custom' && !floorPlan) {
       return res.status(400).json({
         success: false,
@@ -471,7 +504,6 @@ const createClient = async (req, res) => {
       });
     }
 
-        // ✅ UPDATE: Bedroom count TIDAK required untuk custom atau library
     if (packageType !== 'custom' && packageType !== 'library' && !bedroomCount) {
       return res.status(400).json({
         success: false,
@@ -498,7 +530,15 @@ const createClient = async (req, res) => {
       totalAmount = pricingTable[collection]?.[bedroomCount] || 0;
     }
 
-    const clientCode = await generateClientCode();
+    const clientCode = await generateClientCode(name, unitNumber);
+
+    // ✅ Process team assignment
+    const processedTeamAssignment = {
+      designer: teamAssignment?.designer || '',
+      projectManager: teamAssignment?.projectManager || '',
+      projectManagerAssistant: teamAssignment?.projectManagerAssistant || '',
+      designerAssistant: teamAssignment?.designerAssistant || ''
+    };
 
     // Create user
     const user = await User.create({
@@ -512,8 +552,9 @@ const createClient = async (req, res) => {
       propertyType: propertyType || 'Lock 2025 Pricing',
       collection: collection || '',
       bedroomCount: bedroomCount || 0,
-      packageType, // ✅ NEW FIELD
-      customNotes: customNotes || '', // ✅ TAMBAH INI
+      packageType,
+      customNotes: customNotes || '',
+      teamAssignment: processedTeamAssignment, // ✅ NEW FIELD
       registrationType: 'admin-created',
       status: 'approved',
       approvedAt: new Date(),
@@ -528,6 +569,7 @@ const createClient = async (req, res) => {
     });
 
     console.log('✅ Client created:', user.clientCode, 'Package:', packageType);
+    console.log('✅ Team assigned:', processedTeamAssignment);
 
     // AUTO-INITIALIZE JOURNEY
     const journey = await Journey.create({
@@ -559,7 +601,7 @@ const createClient = async (req, res) => {
     
     const order = await Order.create({
       user: user._id,
-      packageType, // ✅ Store package type
+      packageType,
       clientInfo: {
         name: user.name,
         unitNumber: user.unitNumber,
@@ -578,7 +620,7 @@ const createClient = async (req, res) => {
       },
       Package: collection ? `${collection} - ${bedroomCount}BR` : 'Library',
       selectedProducts: [],
-      occupiedSpots: {}, // For library: will store furniture placements
+      occupiedSpots: {},
       status: 'ongoing',
       step: 1
     });
@@ -599,6 +641,7 @@ const createClient = async (req, res) => {
         unitNumber: user.unitNumber,
         status: user.status,
         packageType: user.packageType,
+        teamAssignment: user.teamAssignment, // ✅ Return team info
         totalAmount,
         journeyId: journey._id,
         orderId: order._id
@@ -624,14 +667,15 @@ const createClient = async (req, res) => {
   }
 };
 
-// @desc    Update client information (with order sync and library support)
+// @desc    Update client information (with order sync, library, and team support)
 // @route   PUT /api/clients/:id
 // @access  Private (Admin)
 const updateClient = async (req, res) => {
   try {
     const allowedUpdates = [
       'name', 'email', 'unitNumber', 'phoneNumber', 'propertyType',
-      'floorPlan', 'questionnaire', 'paymentInfo', 'collection', 'bedroomCount', 'packageType'
+      'floorPlan', 'questionnaire', 'paymentInfo', 'collection', 
+      'bedroomCount', 'packageType', 'teamAssignment'
     ];
     
     const updates = {};
@@ -640,6 +684,34 @@ const updateClient = async (req, res) => {
         updates[field] = req.body[field];
       }
     });
+
+    // Get current client data
+    const currentClient = await User.findById(req.params.id);
+    if (!currentClient) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Client not found' 
+      });
+    }
+
+    // ✅ Regenerate client code if name or unitNumber changed
+    if (req.body.name || req.body.unitNumber) {
+      const newName = req.body.name || currentClient.name;
+      const newUnitNumber = req.body.unitNumber || currentClient.unitNumber;
+      updates.clientCode = await generateClientCode(newName, newUnitNumber);
+      console.log('✅ Client code regenerated:', updates.clientCode);
+    }
+
+    // Process team assignment if provided
+    if (req.body.teamAssignment) {
+      updates.teamAssignment = {
+        designer: req.body.teamAssignment.designer || '',
+        projectManager: req.body.teamAssignment.projectManager || '',
+        projectManagerAssistant: req.body.teamAssignment.projectManagerAssistant || '',
+        designerAssistant: req.body.teamAssignment.designerAssistant || ''
+      };
+      console.log('✅ Updating team assignment:', updates.teamAssignment);
+    }
 
     if (req.body.password && req.body.password.trim() !== '') {
       updates.password = req.body.password;
@@ -658,7 +730,7 @@ const updateClient = async (req, res) => {
       });
     }
 
-    // ✅ UPDATE ORDER
+    // UPDATE ORDER
     const orderUpdateFields = {};
     let shouldUpdateOrder = false;
 
@@ -756,6 +828,11 @@ const updateClient = async (req, res) => {
         });
         console.log('✅ Order auto-created for approved client:', client.clientCode);
       }
+    }
+    
+    console.log('✅ Client updated successfully:', client.clientCode);
+    if (updates.teamAssignment) {
+      console.log('✅ Team updated:', client.teamAssignment);
     }
     
     res.json({
