@@ -750,6 +750,15 @@ return `<!DOCTYPE html>
       <td align="center" style="padding: 40px 0;">
         <table role="presentation" style="width: 600px; max-width: 100%; border-collapse: collapse; background-color: #ffffff; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
 
+          <!-- No-Reply Notice -->
+          <tr>
+            <td style="padding: 15px 30px; background-color: #f8d7da; border-left: 4px solid #dc3545;">
+              <p style="margin: 0; color: #721c24; font-size: 13px; line-height: 1.5;">
+                ⚠️ <strong>This is an automated message.</strong> Please do not reply to this email. For assistance, contact us at <a href="mailto:aloha@henderson.house" style="color: #005670; text-decoration: none;">aloha@henderson.house</a>
+              </p>
+            </td>
+          </tr>
+
           <!-- Header -->
           <tr>
             <td style="padding: 40px 30px; background: linear-gradient(135deg, #005670 0%, #007a9a 100%); text-align: center;">
@@ -907,6 +916,213 @@ return `<!DOCTYPE html>
 </html>`;
 
 
+};
+
+// ============================================
+// QUESTIONNAIRE COMPLETION ADMIN NOTIFICATION
+// ============================================
+
+const questionnaireCompletionAdminTemplate = ({ 
+  clientName, 
+  clientEmail,
+  unitNumber,
+  propertyType,
+  phoneNumber,
+  submittedAt,
+  questionnaireSummary
+}) => {
+  const propertyTypeDisplay = propertyType === 'Lock 2025 Pricing' 
+    ? 'Lock 2025 Pricing' 
+    : propertyType === 'Design Hold Fee' 
+    ? 'Design Hold Fee' 
+    : propertyType;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Questionnaire Completed - Admin Notification</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
+  <table role="presentation" style="width: 100%; border-collapse: collapse;">
+    <tr>
+      <td align="center" style="padding: 40px 0;">
+        <table role="presentation" style="width: 700px; max-width: 100%; border-collapse: collapse; background-color: #ffffff; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+          
+          <!-- No-Reply Notice -->
+          <tr>
+            <td style="padding: 15px 30px; background-color: #f8d7da; border-left: 4px solid #dc3545;">
+              <p style="margin: 0; color: #721c24; font-size: 13px; line-height: 1.5;">
+                ⚠️ <strong>This is an automated message.</strong> This email is for notification purposes only.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Header -->
+          <tr>
+            <td style="padding: 40px 30px; background: linear-gradient(135deg, #28a745 0%, #218838 100%); text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                ✅ Questionnaire Completed
+              </h1>
+              <p style="margin: 10px 0 0 0; color: #ffffff; font-size: 14px;">
+                Client Design Preferences Submitted
+              </p>
+            </td>
+          </tr>
+
+          <!-- Content -->
+          <tr>
+            <td style="padding: 30px;">
+              
+              <p style="margin: 0 0 30px 0; color: #555555; line-height: 1.6;">
+                A client has completed their design preferences questionnaire and is ready for review.
+              </p>
+
+              <!-- Client Info -->
+              <div style="background-color: #e3f2fd; border-left: 4px solid #2196f3; padding: 20px; border-radius: 4px; margin-bottom: 30px;">
+                <h2 style="margin: 0 0 15px 0; color: #1976d2; font-size: 20px;">👤 Client Information</h2>
+                <table style="width: 100%; border-collapse: collapse;">
+                  <tr>
+                    <td style="padding: 8px 0; color: #333; font-weight: bold; width: 30%;">Client Name:</td>
+                    <td style="padding: 8px 0; color: #555;"><strong>${clientName}</strong></td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; color: #333; font-weight: bold;">Email:</td>
+                    <td style="padding: 8px 0; color: #555;"><a href="mailto:${clientEmail}" style="color: #007bff;">${clientEmail}</a></td>
+                  </tr>
+                  ${phoneNumber ? `
+                  <tr>
+                    <td style="padding: 8px 0; color: #333; font-weight: bold;">Phone:</td>
+                    <td style="padding: 8px 0; color: #555;">${phoneNumber}</td>
+                  </tr>
+                  ` : ''}
+                  <tr>
+                    <td style="padding: 8px 0; color: #333; font-weight: bold;">Unit Number:</td>
+                    <td style="padding: 8px 0; color: #555; font-size: 18px; font-weight: bold;">${unitNumber}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; color: #333; font-weight: bold;">Property Type:</td>
+                    <td style="padding: 8px 0; color: #555;">${propertyTypeDisplay}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; color: #333; font-weight: bold;">Submitted:</td>
+                    <td style="padding: 8px 0; color: #555;">${submittedAt}</td>
+                  </tr>
+                </table>
+              </div>
+
+              <!-- Questionnaire Summary -->
+              <div style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 20px; border-radius: 4px; margin-bottom: 30px;">
+                <h2 style="margin: 0 0 15px 0; color: #155724; font-size: 20px;">📋 Questionnaire Highlights</h2>
+                
+                ${questionnaireSummary.preferred_collection && questionnaireSummary.preferred_collection.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <p style="margin: 0 0 5px 0; color: #155724; font-weight: bold;">Preferred Collection:</p>
+                  <p style="margin: 0; color: #155724;">${questionnaireSummary.preferred_collection.join(', ')}</p>
+                </div>
+                ` : ''}
+
+                ${questionnaireSummary.style_direction && questionnaireSummary.style_direction.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <p style="margin: 0 0 5px 0; color: #155724; font-weight: bold;">Style Direction:</p>
+                  <p style="margin: 0; color: #155724;">${questionnaireSummary.style_direction.join(', ')}</p>
+                </div>
+                ` : ''}
+
+                ${questionnaireSummary.main_upholstery_color && questionnaireSummary.main_upholstery_color.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <p style="margin: 0 0 5px 0; color: #155724; font-weight: bold;">Main Upholstery Color:</p>
+                  <p style="margin: 0; color: #155724;">${questionnaireSummary.main_upholstery_color.join(', ')}</p>
+                </div>
+                ` : ''}
+
+                ${questionnaireSummary.purpose_of_residence && questionnaireSummary.purpose_of_residence.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <p style="margin: 0 0 5px 0; color: #155724; font-weight: bold;">Purpose of Residence:</p>
+                  <p style="margin: 0; color: #155724;">${questionnaireSummary.purpose_of_residence.join(', ')}</p>
+                </div>
+                ` : ''}
+
+                ${questionnaireSummary.home_feeling && questionnaireSummary.home_feeling.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <p style="margin: 0 0 5px 0; color: #155724; font-weight: bold;">Desired Home Feeling:</p>
+                  <p style="margin: 0; color: #155724;">${questionnaireSummary.home_feeling.join(', ')}</p>
+                </div>
+                ` : ''}
+
+                ${questionnaireSummary.bed_sizes && questionnaireSummary.bed_sizes.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <p style="margin: 0 0 5px 0; color: #155724; font-weight: bold;">Bed Sizes:</p>
+                  <p style="margin: 0; color: #155724;">${questionnaireSummary.bed_sizes.join(', ')}</p>
+                </div>
+                ` : ''}
+
+                <!-- Add-On Services -->
+                ${(questionnaireSummary.closet_interested || 
+                   questionnaireSummary.window_interested || 
+                   questionnaireSummary.av_interested || 
+                   questionnaireSummary.greenery_interested || 
+                   questionnaireSummary.kitchen_interested) ? `
+                <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #c3e6cb;">
+                  <p style="margin: 0 0 10px 0; color: #155724; font-weight: bold;">Add-On Services Interested:</p>
+                  <ul style="margin: 0; padding-left: 20px; color: #155724;">
+                    ${questionnaireSummary.closet_interested ? '<li>Closet Organization</li>' : ''}
+                    ${questionnaireSummary.window_interested ? '<li>Window Coverings</li>' : ''}
+                    ${questionnaireSummary.av_interested ? '<li>Audio/Visual Systems</li>' : ''}
+                    ${questionnaireSummary.greenery_interested ? '<li>Greenery & Plants</li>' : ''}
+                    ${questionnaireSummary.kitchen_interested ? '<li>Kitchen Essentials</li>' : ''}
+                  </ul>
+                </div>
+                ` : ''}
+
+                ${questionnaireSummary.additional_notes ? `
+                <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #c3e6cb;">
+                  <p style="margin: 0 0 5px 0; color: #155724; font-weight: bold;">Additional Notes:</p>
+                  <p style="margin: 0; color: #155724; white-space: pre-wrap;">${questionnaireSummary.additional_notes}</p>
+                </div>
+                ` : ''}
+              </div>
+
+              <!-- Action Items -->
+              <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 20px; border-radius: 4px; margin-bottom: 20px;">
+                <h3 style="margin: 0 0 15px 0; color: #856404; font-size: 18px;">📝 Next Steps:</h3>
+                <ol style="margin: 0; padding-left: 20px; color: #856404; line-height: 1.8;">
+                  <li>Review complete questionnaire in admin dashboard</li>
+                  <li>Analyze client's design preferences and requirements</li>
+                  <li>Prepare initial design concepts based on preferences</li>
+                  <li>Schedule design consultation if needed</li>
+                  <li>Update client's project journey status</li>
+                </ol>
+              </div>
+
+              <div style="text-align: center; padding: 20px; background-color: #f8f9fa; border-radius: 8px;">
+                <p style="margin: 0 0 15px 0; color: #6c757d; font-size: 14px;">
+                  <strong>Access Admin Dashboard:</strong>
+                </p>
+                <a href="${process.env.FRONTEND_URL || 'https://de-cora.com'}/admin/clients" 
+                   style="display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #005670 0%, #007a9a 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                  View Client Details
+                </a>
+              </div>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 20px 30px; background-color: #2c3e50; text-align: center;">
+              <p style="margin: 0; color: #ffffff; font-size: 12px;">
+                Automated notification from Henderson Design Client Portal
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
 };
 
 // ============================================
@@ -1238,5 +1454,6 @@ module.exports = {
   questionsAdminTemplate,
   userApprovalTemplate,
   registrationConfirmationTemplate,
-  adminRegistrationNotificationTemplate
+  adminRegistrationNotificationTemplate,
+  questionnaireCompletionAdminTemplate
 };

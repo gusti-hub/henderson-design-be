@@ -127,6 +127,15 @@ const submitQuestionnaire = async (req, res) => {
     console.log('   User ID:', user._id);
     console.log('   Fields saved:', Object.keys(user.questionnaire).length);
 
+    // ✅ NEW: Send notification to admin
+    try {
+      await sendQuestionnaireCompletionNotification(user);
+      console.log('✅ Admin notification sent');
+    } catch (emailError) {
+      console.error('⚠️ Failed to send admin notification (non-critical):', emailError.message);
+      // Continue anyway - email failure shouldn't block questionnaire submission
+    }
+
     res.json({
       success: true,
       message: 'Questionnaire submitted successfully',
@@ -281,6 +290,58 @@ const getAllQuestionnaires = async (req, res) => {
       message: 'Error retrieving questionnaires',
       error: error.message
     });
+  }
+};
+
+// Send questionnaire completion notification to admin
+const sendQuestionnaireCompletionNotification = async (user) => {
+  try {
+    const { questionnaireCompletionAdminTemplate } = require('../utils/emailTemplates');
+    const sendEmail = require('../utils/sendEmail');
+
+    const submittedAt = new Date().toLocaleString('en-US', {
+      timeZone: 'Pacific/Honolulu',
+      dateStyle: 'full',
+      timeStyle: 'short'
+    });
+
+    // Build questionnaire summary
+    const questionnaireSummary = {
+      preferred_collection: user.questionnaire?.preferred_collection || [],
+      style_direction: user.questionnaire?.style_direction || [],
+      main_upholstery_color: user.questionnaire?.main_upholstery_color || [],
+      purpose_of_residence: user.questionnaire?.purpose_of_residence || [],
+      home_feeling: user.questionnaire?.home_feeling || [],
+      bed_sizes: user.questionnaire?.bed_sizes || [],
+      closet_interested: user.questionnaire?.closet_interested || false,
+      window_interested: user.questionnaire?.window_interested || false,
+      av_interested: user.questionnaire?.av_interested || false,
+      greenery_interested: user.questionnaire?.greenery_interested || false,
+      kitchen_interested: user.questionnaire?.kitchen_interested || false,
+      additional_notes: user.questionnaire?.additional_notes || ''
+    };
+
+    const htmlContent = questionnaireCompletionAdminTemplate({
+      clientName: user.name,
+      clientEmail: user.email,
+      unitNumber: user.unitNumber,
+      propertyType: user.propertyType,
+      phoneNumber: user.phoneNumber,
+      submittedAt: submittedAt,
+      questionnaireSummary: questionnaireSummary
+    });
+
+    await sendEmail({
+      to: 'almer@henderson.house',
+      toName: 'Almer Andromeda',
+      subject: `✅ Questionnaire Completed - ${user.name} (Unit ${user.unitNumber})`,
+      htmlContent: htmlContent
+    });
+
+    console.log('✅ Questionnaire completion notification sent to admin');
+  } catch (error) {
+    console.error('❌ Error sending questionnaire completion notification:', error);
+    // Don't throw - this is non-critical notification
   }
 };
 

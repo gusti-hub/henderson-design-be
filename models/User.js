@@ -76,7 +76,7 @@ const userSchema = new mongoose.Schema({
     },
     designerAssistant: {
       type: String,
-      enum: ['TBD', ''],
+      enum: ['Benny Kristanto', ''],
       default: ''
     }
   },
