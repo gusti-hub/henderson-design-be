@@ -65,6 +65,9 @@ const updateOrder = async (req, res) => {
       return res.status(404).json({ message: 'Order not found' });
     }
 
+    // ✅ FIX: Declare updateData here
+    const updateData = {};
+
     // ✅ Handle selectedProducts with temporary ID cleanup
     if (req.body.selectedProducts && Array.isArray(req.body.selectedProducts)) {
       console.log(`📦 Processing ${req.body.selectedProducts.length} products`);
@@ -104,7 +107,15 @@ const updateOrder = async (req, res) => {
             links: product.selectedOptions?.links || [],
             specifications: product.selectedOptions?.specifications || '',
             notes: product.selectedOptions?.notes || '',
-            uploadedImages: product.selectedOptions?.uploadedImages || [],
+            uploadedImages: (product.selectedOptions?.uploadedImages || []).map(img => ({
+              filename: img.filename || '',
+              contentType: img.contentType || '',
+              url: img.url || '',
+              key: img.key || '',
+              size: img.size || 0,
+              uploadedAt: img.uploadedAt || new Date()
+              // ✅ No Buffer/data field - URL only
+            })),
             customAttributes: product.selectedOptions?.customAttributes || {}
           },
           placement: product.placement || null
@@ -126,6 +137,16 @@ const updateOrder = async (req, res) => {
     // Handle selectedPlan
     if (req.body.selectedPlan) {
       updateData.selectedPlan = req.body.selectedPlan;
+    }
+
+    // Handle status
+    if (req.body.status) {
+      updateData.status = req.body.status;
+    }
+
+    // Handle step
+    if (req.body.step !== undefined) {
+      updateData.step = req.body.step;
     }
 
     // Handle Package

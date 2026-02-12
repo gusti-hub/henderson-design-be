@@ -13,6 +13,7 @@ const quickbooksRoutes = require('./routes/quickbooksRoutes');
 const agreementRoutes = require('./routes/agreementRoutes');
 const proposalRoutes = require('./routes/proposalRoutes');
 const vendorRoutes = require('./routes/vendorRoutes');
+const poRoutes = require('./routes/poRoutes');
 
 // Load env vars
 dotenv.config();
@@ -60,6 +61,7 @@ app.use(cors());
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/activity', require('./routes/activityRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
+app.use('/api/orders', poRoutes);
 app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/payments', require('./routes/paymentRoutes'));
