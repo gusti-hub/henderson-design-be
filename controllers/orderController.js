@@ -107,6 +107,16 @@ const updateOrder = async (req, res) => {
             links: product.selectedOptions?.links || [],
             specifications: product.selectedOptions?.specifications || '',
             notes: product.selectedOptions?.notes || '',
+            room: product.selectedOptions?.room || '',
+            statusCategory: product.selectedOptions?.statusCategory || '',
+            proposalNumber: product.selectedOptions?.proposalNumber || '',
+            shipTo: product.selectedOptions?.shipTo || '',
+            orderDate: product.selectedOptions?.orderDate || '',
+            expectedShipDate: product.selectedOptions?.expectedShipDate || '',
+            dateReceived: product.selectedOptions?.dateReceived || '',
+            estimatedDeliveryDate: product.selectedOptions?.estimatedDeliveryDate || '',
+            shippingCarrier: product.selectedOptions?.shippingCarrier || '',
+            orderStatus: product.selectedOptions?.orderStatus || '',
             uploadedImages: (product.selectedOptions?.uploadedImages || []).map(img => ({
               filename: img.filename || '',
               contentType: img.contentType || '',
@@ -147,6 +157,13 @@ const updateOrder = async (req, res) => {
     // Handle step
     if (req.body.step !== undefined) {
       updateData.step = req.body.step;
+    }
+
+    if (req.body.installationDate !== undefined) {
+      updateData.installationDate = req.body.installationDate;
+    }
+    if (req.body.installationNotes !== undefined) {
+      updateData.installationNotes = req.body.installationNotes;
     }
 
     // Handle Package
@@ -1645,6 +1662,511 @@ const generateInstallBinder = async (req, res) => {
   }
 };
 
+const generateStatusReport = async (req, res) => {
+  try {
+    const ExcelJS = require('exceljs');
+    const axios = require('axios');
+
+    const order = await Order.findById(req.params.id)
+      .populate('user')
+      .populate('selectedProducts.vendor')
+      .lean();
+
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    const wb = new ExcelJS.Workbook();
+    const products = order.selectedProducts || [];
+    const clientName = order.clientInfo?.name || 'Unknown Client';
+    const unitNumber = order.clientInfo?.unitNumber || '';
+    const floorPlan = order.clientInfo?.floorPlan || '';
+    const projectLabel = [clientName, floorPlan].filter(Boolean).join(' - ');
+    const todayStr = new Date().toLocaleDateString('en-US', {
+      month: '2-digit', day: '2-digit', year: 'numeric'
+    });
+    const installDate = order.installationDate || '';
+
+    // ── Helper: get vendor name ──
+    const getVendorName = (product) => {
+      if (product.vendor && typeof product.vendor === 'object') {
+        return product.vendor.name || 'N/A';
+      }
+      return 'HDG Inventory';
+    };
+
+    // ── Helper: build vendor description (for internal sheet col F) ──
+    const buildVendorDescription = (p) => {
+      const parts = [];
+      if (p.name) parts.push(p.name);
+      if (p.product_id) parts.push(`Product ID: ${p.product_id}`);
+      if (p.selectedOptions?.specifications) parts.push(p.selectedOptions.specifications);
+      if (p.selectedOptions?.finish) parts.push(`Finish: ${p.selectedOptions.finish}`);
+      if (p.selectedOptions?.fabric) parts.push(`Fabric: ${p.selectedOptions.fabric}`);
+      if (p.selectedOptions?.size) parts.push(`Size: ${p.selectedOptions.size}`);
+      if (p.selectedOptions?.links?.length > 0) {
+        parts.push(`\nOrder Link: ${p.selectedOptions.links[0]}`);
+      }
+      return parts.join('\n');
+    };
+
+    // ── Helper: get primary image URL ──
+    const getPrimaryImageUrl = (p) => {
+      if (p.selectedOptions?.image) return p.selectedOptions.image;
+      if (p.selectedOptions?.images?.length > 0) return p.selectedOptions.images[0];
+      if (p.selectedOptions?.uploadedImages?.length > 0) {
+        const img = p.selectedOptions.uploadedImages[0];
+        return img.url || null;
+      }
+      return null;
+    };
+
+    // ── Helper: download image to buffer ──
+    const downloadImage = async (url) => {
+      try {
+        if (!url || url.startsWith('data:')) return null;
+        const response = await axios.get(url, {
+          responseType: 'arraybuffer',
+          timeout: 8000,
+          headers: { 'User-Agent': 'HDG-StatusReport/1.0' }
+        });
+        const contentType = response.headers['content-type'] || '';
+        let ext = 'png';
+        if (contentType.includes('jpeg') || contentType.includes('jpg')) ext = 'jpeg';
+        else if (contentType.includes('gif')) ext = 'gif';
+        else if (contentType.includes('png')) ext = 'png';
+        return { buffer: Buffer.from(response.data), extension: ext };
+      } catch (err) {
+        console.warn(`⚠️ Failed to download image: ${url}`, err.message);
+        return null;
+      }
+    };
+
+    // ── Pre-download all product images ──
+    console.log(`📸 Pre-downloading images for ${products.length} products...`);
+    const imageCache = new Map();
+    await Promise.all(
+      products.map(async (p, idx) => {
+        const url = getPrimaryImageUrl(p);
+        if (url) {
+          const imgData = await downloadImage(url);
+          if (imgData) {
+            imageCache.set(idx, imgData);
+          }
+        }
+      })
+    );
+    console.log(`✅ Downloaded ${imageCache.size} images`);
+
+    // ── Helper: group products by statusCategory ──
+    const groupByCategory = (items) => {
+      const groups = {};
+      // Maintain insertion order
+      items.forEach(p => {
+        const cat = p.selectedOptions?.statusCategory || 'Uncategorized';
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(p);
+      });
+      return groups;
+    };
+
+    // ── Colors ──
+    const COLORS = {
+      purple:   'FFF5ECF9',
+      blue:     'FFD6EAF8',
+      orange:   'FFFDEBD0',
+      green:    'FFDDF2CE',
+      yellow:   'FFF0E8BB',
+      headerBg: 'FFD9E2F3',
+    };
+
+    const CATEGORY_COLORS = {
+      'Items to be delivered during the week of installation': COLORS.purple,
+      'Items shipping to Resort':      COLORS.blue,
+      'Items currently in transit':     COLORS.orange,
+      'Deliveries to Freight Forwarder': COLORS.green,
+      'Items Delivered':                COLORS.yellow,
+      'Pending Delivery':              COLORS.headerBg,
+    };
+
+    // ── Styles ──
+    const thinBorder = {
+      top:    { style: 'thin' },
+      left:   { style: 'thin' },
+      bottom: { style: 'thin' },
+      right:  { style: 'thin' },
+    };
+    const headerFont = { name: 'Arial', bold: true, size: 12 };
+    const dataFont   = { name: 'Arial', size: 11 };
+    const titleFont  = { name: 'Arial', bold: true, size: 14 };
+    const wrapTop    = { vertical: 'top', wrapText: true };
+
+    // ── Helper: add image to a cell in a worksheet ──
+    // colWidthPx: approximate pixel width of the column
+    // rowHeightPx: approximate pixel height of the row
+    const addImageToCell = (ws, imgData, rowNum, colNum, colWidthPx = 210, rowHeightPx = 120) => {
+      try {
+        const imageId = wb.addImage({
+          buffer: imgData.buffer,
+          extension: imgData.extension,
+        });
+
+        // Padding inside the cell (px)
+        const pad = 6;
+        const maxW = colWidthPx - pad * 2;
+        const maxH = rowHeightPx - pad * 2;
+
+        // Determine intrinsic image size (fallback to square)
+        let imgW = maxW;
+        let imgH = maxH;
+
+        // Scale to fit while maintaining aspect ratio
+        // Since we don't have sharp/image-size, use maxW x maxH as-is
+        // The image will stretch to fit; for best results keep images roughly square
+        const fitW = maxW;
+        const fitH = maxH;
+
+        ws.addImage(imageId, {
+          tl: { col: colNum - 1 + 0.05, row: rowNum - 1 + 0.05 },
+          ext: { width: fitW, height: fitH },
+          editAs: 'oneCell',
+        });
+      } catch (err) {
+        console.warn(`⚠️ Failed to embed image at row ${rowNum}:`, err.message);
+      }
+    };
+
+    // ── Build product index map (original index → product) ──
+    const productOriginalIndex = new Map();
+    products.forEach((p, idx) => productOriginalIndex.set(p, idx));
+
+    const grouped = groupByCategory(products);
+
+    // ====================================================================
+    // SHEET 1: Client Facing Status Report
+    // ====================================================================
+    const ws1 = wb.addWorksheet('Client Facing Status Report');
+
+    ws1.getColumn('A').width = 20;
+    ws1.getColumn('B').width = 28;
+    ws1.getColumn('C').width = 28;
+    ws1.getColumn('D').width = 15;
+    ws1.getColumn('E').width = 16;
+    ws1.getColumn('F').width = 36;
+
+    // ── Legend (rows 1-7) ──
+    ws1.mergeCells('A1:B3');
+    ws1.getCell('A1').value = 'Henderson Design Group';
+    ws1.getCell('A1').font = { name: 'Arial', bold: true, size: 14 };
+    ws1.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+
+    const legendItems = [
+      { row: 2, text: 'Items to be delivered during the week of installation', color: COLORS.purple },
+      { row: 3, text: 'Items shipping to Resort',                             color: COLORS.blue },
+      { row: 4, text: 'Items currently in transit',                            color: COLORS.orange },
+      { row: 5, text: 'Deliveries to Freight Forwarder / sailing prior to installation', color: COLORS.green },
+      { row: 6, text: 'Items Delivered',                                       color: COLORS.yellow },
+    ];
+
+    legendItems.forEach(({ row, text, color }) => {
+      ws1.mergeCells(`D${row}:F${row}`);
+      const cell = ws1.getCell(`D${row}`);
+      cell.value = text;
+      cell.font = { ...headerFont };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
+      cell.alignment = wrapTop;
+      ws1.getRow(row).height = 30;
+    });
+
+    // ── Project Info ──
+    ws1.getCell('A8').value = unitNumber || clientName;
+    ws1.getCell('A8').font = titleFont;
+    ws1.getRow(8).height = 25;
+
+    ws1.getCell('A9').value = todayStr;
+    ws1.getCell('A9').font = titleFont;
+    ws1.getRow(9).height = 25;
+
+    if (installDate) {
+      ws1.mergeCells('A10:B10');
+      ws1.getCell('A10').value = `Installation: ${installDate}`;
+      ws1.getCell('A10').font = titleFont;
+      ws1.getRow(10).height = 25;
+    }
+
+    // ── Table Header ──
+    const ch = 11;
+    const cHeaders = ['Room', 'Photo', 'Description', 'Quantity', 'Date Received', 'Estimated Delivery Date (to residence)'];
+    cHeaders.forEach((h, i) => {
+      const cell = ws1.getCell(ch, i + 1);
+      cell.value = h;
+      cell.font = headerFont;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } };
+      cell.border = thinBorder;
+      cell.alignment = { ...wrapTop, horizontal: 'center' };
+    });
+    ws1.getRow(ch).height = 24;
+
+    // ── Data rows ──
+    let cr = ch + 1;
+
+    Object.entries(grouped).forEach(([category, items]) => {
+      // Category header
+      ws1.mergeCells(`A${cr}:F${cr}`);
+      const catCell = ws1.getCell(`A${cr}`);
+      catCell.value = category;
+      catCell.font = { ...headerFont, bold: true };
+      catCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CATEGORY_COLORS[category] || COLORS.headerBg } };
+      catCell.border = thinBorder;
+      ws1.getRow(cr).height = 30;
+      cr++;
+
+      items.forEach(p => {
+        const originalIdx = productOriginalIndex.get(p);
+        ws1.getRow(cr).height = 120;
+
+        // A - Room
+        const cellA = ws1.getCell(cr, 1);
+        cellA.value = p.selectedOptions?.room || p.category || p.spotName || '';
+        cellA.font = dataFont; cellA.border = thinBorder; cellA.alignment = wrapTop;
+
+        // B - Photo (image)
+        const cellB = ws1.getCell(cr, 2);
+        cellB.border = thinBorder;
+        if (imageCache.has(originalIdx)) {
+          addImageToCell(ws1, imageCache.get(originalIdx), cr, 2, 210, 120);
+        }
+
+        // C - Description
+        const cellC = ws1.getCell(cr, 3);
+        cellC.value = p.name || '';
+        cellC.font = dataFont; cellC.border = thinBorder; cellC.alignment = wrapTop;
+
+        // D - Quantity
+        const cellD = ws1.getCell(cr, 4);
+        cellD.value = p.quantity || 1;
+        cellD.font = dataFont; cellD.border = thinBorder; cellD.alignment = { ...wrapTop, horizontal: 'center' };
+
+        // E - Date Received
+        const cellE = ws1.getCell(cr, 5);
+        cellE.value = p.selectedOptions?.dateReceived || '';
+        cellE.font = dataFont; cellE.border = thinBorder; cellE.alignment = wrapTop;
+
+        // F - Estimated Delivery Date
+        const cellF = ws1.getCell(cr, 6);
+        cellF.value = p.selectedOptions?.estimatedDeliveryDate || '';
+        cellF.font = dataFont; cellF.border = thinBorder; cellF.alignment = wrapTop;
+
+        cr++;
+      });
+    });
+
+    if (products.length === 0) {
+      ws1.mergeCells(`A${cr}:F${cr}`);
+      ws1.getCell(`A${cr}`).value = 'No products in this order';
+      ws1.getCell(`A${cr}`).font = { ...dataFont, italic: true };
+      ws1.getCell(`A${cr}`).alignment = { horizontal: 'center' };
+    }
+
+    // ====================================================================
+    // SHEET 2: Internal Status Report
+    // ====================================================================
+    const ws2 = wb.addWorksheet('Internal Status Report');
+
+    ws2.getColumn('A').width = 20;
+    ws2.getColumn('B').width = 28;
+    ws2.getColumn('C').width = 16;
+    ws2.getColumn('D').width = 18;
+    ws2.getColumn('E').width = 26;
+    ws2.getColumn('F').width = 40;
+    ws2.getColumn('G').width = 15;
+    ws2.getColumn('H').width = 15;
+    ws2.getColumn('I').width = 14;
+    ws2.getColumn('J').width = 18;
+    ws2.getColumn('K').width = 16;
+    ws2.getColumn('L').width = 25;
+    ws2.getColumn('M').width = 20;
+    ws2.getColumn('N').width = 27;
+    ws2.getColumn('O').width = 23;
+    ws2.getColumn('P').width = 21;
+
+    // ── Legend ──
+    ws2.mergeCells('A1:B3');
+    ws2.getCell('A1').value = 'Henderson Design Group';
+    ws2.getCell('A1').font = { name: 'Arial', bold: true, size: 14 };
+    ws2.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+
+    const intLegend = [
+      { row: 2, text: 'order in process',                       color: COLORS.blue },
+      { row: 3, text: 'Shipping / in transit',                   color: COLORS.orange },
+      { row: 4, text: 'at Freight Forwarder pending sailing',    color: COLORS.green },
+      { row: 5, text: 'Order delivered',                         color: COLORS.green },
+    ];
+    intLegend.forEach(({ row, text, color }) => {
+      const cell = ws2.getCell(`M${row}`);
+      cell.value = text;
+      cell.font = dataFont;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
+    });
+
+    // Installation highlight
+    ws2.mergeCells('C4:D4');
+    ws2.getCell('C4').value = installDate ? `Installation: ${installDate}` : 'Installation: TBD';
+    ws2.getCell('C4').font = { ...headerFont };
+    ws2.getCell('C4').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDFB03' } };
+
+    // Project info
+    ws2.getCell('A7').value = unitNumber || clientName;
+    ws2.getCell('A7').font = { name: 'Arial', bold: true, size: 16 };
+    ws2.getCell('A8').value = todayStr;
+    ws2.getCell('A8').font = { name: 'Arial', bold: true, size: 16 };
+
+    // ── Table Header (row 9) ──
+    const ih = 9;
+    const iHeaders = [
+      'Room', 'Photo', 'External PO#', 'Proposal Number', 'Vendor Name',
+      'Vendor Description', 'Quantity', 'Ship To', 'Order Date',
+      'Expected Ship Date', 'Date Received', 'Notes', 'Shipping Carrier',
+      'Tracking #', 'Expediting Order Status', 'Vendor Order Number'
+    ];
+    iHeaders.forEach((h, i) => {
+      const cell = ws2.getCell(ih, i + 1);
+      cell.value = h;
+      cell.font = headerFont;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } };
+      cell.border = thinBorder;
+      cell.alignment = { ...wrapTop, horizontal: 'center' };
+    });
+    ws2.getRow(ih).height = 26;
+
+    // ── Data rows ──
+    let ir = ih + 1;
+    const defaultShipTo = projectLabel;
+
+    Object.entries(grouped).forEach(([category, items]) => {
+      // Category separator
+      ws2.mergeCells(`A${ir}:B${ir}`);
+      const catCell = ws2.getCell(`A${ir}`);
+      catCell.value = category;
+      catCell.font = { ...headerFont, bold: true };
+      catCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CATEGORY_COLORS[category] || COLORS.headerBg } };
+      catCell.border = thinBorder;
+      ws2.getRow(ir).height = 30;
+      ir++;
+
+      items.forEach(p => {
+        const originalIdx = productOriginalIndex.get(p);
+        ws2.getRow(ir).height = 120;
+
+        const vendorName = getVendorName(p);
+        const vendorDesc = buildVendorDescription(p);
+
+        // A - Room
+        const cA = ws2.getCell(ir, 1);
+        cA.value = p.selectedOptions?.room || p.category || p.spotName || '';
+        cA.font = dataFont; cA.border = thinBorder; cA.alignment = wrapTop;
+
+        // B - Photo (image)
+        ws2.getCell(ir, 2).border = thinBorder;
+        if (imageCache.has(originalIdx)) {
+          addImageToCell(ws2, imageCache.get(originalIdx), ir, 2, 210, 120);
+        }
+
+        // C - External PO#
+        const cC = ws2.getCell(ir, 3);
+        cC.value = p.selectedOptions?.poNumber || '';
+        cC.font = dataFont; cC.border = thinBorder; cC.alignment = wrapTop;
+
+        // D - Proposal Number
+        const cD = ws2.getCell(ir, 4);
+        cD.value = p.selectedOptions?.proposalNumber || '';
+        cD.font = dataFont; cD.border = thinBorder; cD.alignment = wrapTop;
+
+        // E - Vendor Name
+        const cE = ws2.getCell(ir, 5);
+        cE.value = vendorName;
+        cE.font = dataFont; cE.border = thinBorder; cE.alignment = wrapTop;
+
+        // F - Vendor Description
+        const cF = ws2.getCell(ir, 6);
+        cF.value = vendorDesc;
+        cF.font = dataFont; cF.border = thinBorder; cF.alignment = wrapTop;
+
+        // G - Quantity
+        const cG = ws2.getCell(ir, 7);
+        cG.value = p.quantity || 1;
+        cG.font = dataFont; cG.border = thinBorder; cG.alignment = { ...wrapTop, horizontal: 'center' };
+
+        // H - Ship To
+        const cH = ws2.getCell(ir, 8);
+        cH.value = p.selectedOptions?.shipTo || defaultShipTo;
+        cH.font = dataFont; cH.border = thinBorder; cH.alignment = wrapTop;
+
+        // I - Order Date
+        const cI = ws2.getCell(ir, 9);
+        cI.value = p.selectedOptions?.orderDate || '';
+        cI.font = dataFont; cI.border = thinBorder; cI.alignment = wrapTop;
+
+        // J - Expected Ship Date
+        const cJ = ws2.getCell(ir, 10);
+        cJ.value = p.selectedOptions?.expectedShipDate || '';
+        cJ.font = dataFont; cJ.border = thinBorder; cJ.alignment = wrapTop;
+
+        // K - Date Received
+        const cK = ws2.getCell(ir, 11);
+        cK.value = p.selectedOptions?.dateReceived || '';
+        cK.font = dataFont; cK.border = thinBorder; cK.alignment = wrapTop;
+
+        // L - Notes
+        const cL = ws2.getCell(ir, 12);
+        cL.value = p.selectedOptions?.notes || '';
+        cL.font = dataFont; cL.border = thinBorder; cL.alignment = wrapTop;
+
+        // M - Shipping Carrier
+        const cM = ws2.getCell(ir, 13);
+        cM.value = p.selectedOptions?.shippingCarrier || '';
+        cM.font = dataFont; cM.border = thinBorder; cM.alignment = wrapTop;
+
+        // N - Tracking #
+        const cN = ws2.getCell(ir, 14);
+        cN.value = p.selectedOptions?.trackingInfo || '';
+        cN.font = dataFont; cN.border = thinBorder; cN.alignment = wrapTop;
+
+        // O - Expediting Order Status
+        const cO = ws2.getCell(ir, 15);
+        cO.value = p.selectedOptions?.orderStatus || p.selectedOptions?.deliveryStatus || '';
+        cO.font = dataFont; cO.border = thinBorder; cO.alignment = wrapTop;
+
+        // P - Vendor Order Number
+        const cP = ws2.getCell(ir, 16);
+        cP.value = p.selectedOptions?.vendorOrderNumber || '';
+        cP.font = dataFont; cP.border = thinBorder; cP.alignment = wrapTop;
+
+        ir++;
+      });
+    });
+
+    if (products.length === 0) {
+      ws2.mergeCells(`A${ir}:P${ir}`);
+      ws2.getCell(`A${ir}`).value = 'No products in this order';
+      ws2.getCell(`A${ir}`).font = { ...dataFont, italic: true };
+      ws2.getCell(`A${ir}`).alignment = { horizontal: 'center' };
+    }
+
+    // ── Generate & send ──
+    const buffer = await wb.xlsx.writeBuffer();
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=status-report-${order._id}.xlsx`);
+    res.setHeader('Content-Length', buffer.length);
+    res.send(Buffer.from(buffer));
+
+  } catch (error) {
+    console.error('❌ Error generating status report:', error);
+    res.status(500).json({ message: 'Error generating status report', error: error.message });
+  }
+};
+
 
 module.exports = {
   createOrder,
@@ -1662,4 +2184,5 @@ module.exports = {
   uploadCustomProductImages,  // ✅ NEW
   uploadOrderFloorPlan, 
   generateInstallBinder,
+  generateStatusReport
 };

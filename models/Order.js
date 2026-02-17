@@ -1,4 +1,5 @@
-// models/Order.js - UPDATE customFloorPlan schema
+// models/Order.js
+// ✅ UPDATED: Added Status Report fields to selectedOptions + order-level installation fields
 
 const mongoose = require('mongoose');
 
@@ -9,13 +10,12 @@ const orderSchema = new mongoose.Schema({
     required: true
   },
 
-  // ✅ UPDATED: Support both Buffer (old) and S3 URL (new)
   customFloorPlan: {
     filename: String,
     contentType: String,
-    data: Buffer,        // ✅ Keep for backward compatibility
-    url: String,         // ✅ NEW: S3 URL
-    key: String,         // ✅ NEW: S3 key
+    data: Buffer,
+    url: String,
+    key: String,
     size: Number,
     notes: String,
     uploadedAt: Date
@@ -47,6 +47,10 @@ const orderSchema = new mongoose.Schema({
   },
   
   Package: String,
+
+  // ✅ NEW: Installation info (order-level, used in status report headers)
+  installationDate: String,
+  installationNotes: String,
   
   selectedProducts: [{
     _id: {
@@ -78,10 +82,13 @@ const orderSchema = new mongoose.Schema({
       default: true
     },
     selectedOptions: {
+      // ── Install Binder fields ──
       poNumber: String,
       vendorOrderNumber: String,
       trackingInfo: String,
       deliveryStatus: String,
+
+      // ── Product spec fields ──
       finish: String,
       fabric: String,
       size: String,
@@ -91,13 +98,25 @@ const orderSchema = new mongoose.Schema({
       links: [String],
       specifications: String,
       notes: String,
-      // ✅ UPDATED: Support both Buffer and S3 URL for uploaded images
+
+      // ✅ NEW: Status Report fields
+      room: String,                    // Room location (e.g. "Living Room", "Primary Bedroom")
+      statusCategory: String,          // Category for grouping (e.g. "Items Delivered")
+      proposalNumber: String,          // Proposal reference number
+      shipTo: String,                  // Ship-to address
+      orderDate: String,               // Date order was placed
+      expectedShipDate: String,        // Expected ship date
+      dateReceived: String,            // Date item was received
+      estimatedDeliveryDate: String,   // Estimated delivery to residence (client-facing)
+      shippingCarrier: String,         // Carrier name (UPS, FedEx, etc.)
+      orderStatus: String,             // Expediting order status
+
       uploadedImages: [{
         filename: String,
         contentType: String,
-        data: Buffer,      // ✅ Keep for backward compatibility
-        url: String,       // ✅ NEW: S3 URL
-        key: String,       // ✅ NEW: S3 key
+        data: Buffer,
+        url: String,
+        key: String,
         size: Number,
         uploadedAt: {
           type: Date,
@@ -171,7 +190,6 @@ const orderSchema = new mongoose.Schema({
   }
 });
 
-// Update timestamp on save
 orderSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
