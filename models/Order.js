@@ -111,6 +111,31 @@ const orderSchema = new mongoose.Schema({
       shippingCarrier: String,         // Carrier name (UPS, FedEx, etc.)
       orderStatus: String,             // Expediting order status
 
+            // Pricing - Purchase Cost
+      units: String,                          // "Each", "Set", "Pair", etc.
+      msrp: Number,                           // Manufacturer's Suggested Retail Price
+      discountPercent: Number,                // Discount % off MSRP
+      noNetPurchaseCost: Boolean,             // Skip net cost calculation
+      discountTaken: String,                  // Discount taken notes
+      shippingCost: Number,                   // Shipping cost
+      otherCost: Number,                      // Other costs
+
+      // Pricing - Selling Cost
+      markupPercent: Number,                  // Product markup %
+      shippingMarkupPercent: Number,          // Shipping markup %
+      otherMarkupPercent: Number,             // Other cost markup %
+      depositPercent: Number,                 // Client deposit %
+      vendorDepositPercent: Number,           // Vendor deposit requested %
+      salesTaxRate: Number,                   // Sales tax rate %
+
+      // Pricing - Taxable flags
+      taxableCost: { type: Boolean, default: true },
+      taxableMarkup: { type: Boolean, default: true },
+      taxableShippingCost: { type: Boolean, default: true },
+      taxableShippingMarkup: { type: Boolean, default: true },
+      taxableOtherCost: { type: Boolean, default: true },
+      taxableOtherMarkup: { type: Boolean, default: true },
+
       uploadedImages: [{
         filename: String,
         contentType: String,
