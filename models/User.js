@@ -99,7 +99,14 @@ const userSchema = new mongoose.Schema({
   
   collection: {
     type: String,
-    enum: ['Nalu Foundation Collection', 'Nalu Collection', 'Lani', 'Custom'],
+    enum: [
+      'Nalu Foundation Collection',
+      'Nalu Collection',
+      'Nalu (Client)',
+      'Lani',
+      'Lani (Client)',
+      'Custom'
+    ],
     required: false
   },
   customNotes: {

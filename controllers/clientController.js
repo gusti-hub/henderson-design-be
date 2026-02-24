@@ -610,7 +610,9 @@ const createClient = async (req, res) => {
       selectedPlan: {
         id: floorPlanConfigId,
         title: user.floorPlan || 'Residence',
-        description: collection ? `${collection} - ${bedroomCount} Bedroom` : 'Library Package',
+        description: collection
+  ? (packageType === 'custom' ? `${collection} - Custom Package` : `${collection} - ${bedroomCount} Bedroom`)
+  : 'Library Package',
         image: floorPlanImage,
         clientInfo: {
           name: user.name,
@@ -618,7 +620,9 @@ const createClient = async (req, res) => {
           floorPlan: user.floorPlan
         }
       },
-      Package: collection ? `${collection} - ${bedroomCount}BR` : 'Library',
+      Package: collection
+  ? (packageType === 'custom' ? collection : `${collection} - ${bedroomCount}BR`)
+  : 'Library',
       selectedProducts: [],
       occupiedSpots: {},
       status: 'ongoing',
@@ -757,7 +761,9 @@ const updateClient = async (req, res) => {
         orderUpdateFields.selectedPlan = {
           id: floorPlanConfigId,
           title: floorPlan || 'Residence',
-          description: collection ? `${collection} - ${bedroomCount} Bedroom` : 'Library Package',
+          Package: collection
+  ? (packageType === 'custom' ? collection : `${collection} - ${bedroomCount}BR`)
+  : 'Library',
           image: floorPlanImage,
           clientInfo: {
             name: client.name,
@@ -812,7 +818,8 @@ const updateClient = async (req, res) => {
           selectedPlan: orderUpdateFields.selectedPlan || {
             id: floorPlanConfigId,
             title: client.floorPlan || 'Residence',
-            description: client.collection ? `${client.collection} - ${client.bedroomCount} Bedroom` : 'Library Package',
+            description: client.collection ? (packageType === 'custom' ? `${collection} - Custom Package` : `${collection} - ${bedroomCount} Bedroom`)
+  : 'Library Package',
             image: floorPlanImage,
             clientInfo: {
               name: client.name,
