@@ -16,8 +16,10 @@ const userSchema = new mongoose.Schema({
   },
   email: {
     type: String,
-    required: [true, 'Please add an email'],
+    required: false,
     unique: true,
+    sparse: true,
+    default: null,
     match: [/^\S+@\S+\.\S+$/, 'Please add a valid email']
   },
   password: {
@@ -49,7 +51,7 @@ const userSchema = new mongoose.Schema({
   },
   propertyType: {
     type: String,
-    enum: ['Lock 2025 Pricing', 'Design Hold Fee'],
+    enum: ['Lock 2025 Pricing', 'Design Hold Fee', 'Developer'],
     required: false
   },
   packageType: {
@@ -116,7 +118,7 @@ const userSchema = new mongoose.Schema({
   bedroomCount: {
     type: String,
     enum: {
-      values: ['0' ,'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'],
+      values: ['0', '1', '2', '3', '1B', '2B', '3B', '4', '5', '6', '7', '8', '9', '10', '11'],
       message: '{VALUE} is not a valid bedroom count'
     },
     required: false,

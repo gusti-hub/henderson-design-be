@@ -249,11 +249,13 @@ const approveClient = async (req, res) => {
     client.password = temporaryPassword;
     await client.approve(req.user.id);
     
-    try {
-      await sendApprovalEmail(client, temporaryPassword);
-      console.log(`✅ Approval email sent to ${client.email}`);
-    } catch (emailError) {
-      console.error('❌ Failed to send approval email:', emailError);
+    if (client.email) {
+      try {
+        await sendApprovalEmail(client, temporaryPassword);
+        console.log(`✅ Approval email sent to ${client.email}`);
+      } catch (emailError) {
+        console.error('❌ Failed to send approval email (non-fatal):', emailError.message);
+      }
     }
     
     res.json({
@@ -300,11 +302,13 @@ const rejectClient = async (req, res) => {
     
     await client.reject(req.user.id, reason);
     
-    try {
-      await sendRejectionEmail(client.email, client.name, reason);
-      console.log(`✅ Rejection email sent to ${client.email}`);
-    } catch (emailError) {
-      console.error('❌ Failed to send rejection email:', emailError);
+    if (client.email) {
+      try {
+        await sendRejectionEmail(client.email, client.name, reason);
+        console.log(`✅ Rejection email sent to ${client.email}`);
+      } catch (emailError) {
+        console.error('❌ Failed to send rejection email (non-fatal):', emailError.message);
+      }
     }
     
     res.json({
@@ -477,7 +481,7 @@ const createClient = async (req, res) => {
 
     const {
       name,
-      email,
+      email: rawEmail,
       password,
       unitNumber,
       phoneNumber,
@@ -490,17 +494,19 @@ const createClient = async (req, res) => {
       teamAssignment // ✅ NEW: Team assignment object
     } = req.body;
 
-    if (!name || !email || !password || !unitNumber) {
+    const email = rawEmail && rawEmail.trim() !== '' ? rawEmail.trim() : null;
+
+    if (!name || !password || !unitNumber) {
       return res.status(400).json({
         success: false,
         message: 'Please provide all required fields'
       });
     }
 
-    if (packageType !== 'custom' && !floorPlan) {
+    if (!floorPlan && collection !== 'Custom') {
       return res.status(400).json({
         success: false,
-        message: 'Floor plan is required for non-custom packages'
+        message: 'Floor plan is required'
       });
     }
 
@@ -511,12 +517,14 @@ const createClient = async (req, res) => {
       });
     } 
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'User with this email already exists'
-      });
+    if (email) {
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          message: 'User with this email already exists'
+        });
+      }
     }
 
     // Calculate totalAmount
@@ -632,7 +640,16 @@ const createClient = async (req, res) => {
     console.log('✅ Order auto-created:', order._id, 'Config:', floorPlanConfigId, 'Package Type:', packageType);
 
     // Send approval email
-    await sendApprovalEmail(user, password);
+    // Send approval email — only if email exists
+    if (user.email) {
+      try {
+        await sendApprovalEmail(user, password);
+        console.log(`✅ Approval email sent to ${user.email}`);
+      } catch (emailError) {
+        console.error('❌ Failed to send approval email (non-fatal):', emailError.message);
+        // Tidak throw error — client tetap terbuat meski email gagal
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -688,6 +705,13 @@ const updateClient = async (req, res) => {
         updates[field] = req.body[field];
       }
     });
+
+    // Normalize email untuk update
+    if (updates.email !== undefined) {
+      updates.email = updates.email && updates.email.trim() !== '' 
+        ? updates.email.trim() 
+        : null;
+    }
 
     // Get current client data
     const currentClient = await User.findById(req.params.id);
