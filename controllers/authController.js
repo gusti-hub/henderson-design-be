@@ -141,7 +141,6 @@ const login = async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Check if user account is approved (only for self-registered users)
     if (user.registrationType === 'self-registered' && user.status !== 'approved') {
       let message = 'Your account is still under review. Please wait for admin approval.';
       if (user.status === 'rejected') {
@@ -155,26 +154,21 @@ const login = async (req, res) => {
     user.lastLoginIp = req.ip;
     await user.save();
 
-    // Log activity
+    // Log activity — single create dengan field lengkap
     await ActivityLog.create({
       userId: user._id,
+      userName: user.name,
+      userEmail: user.email,
+      userRole: user.role,
       action: 'login',
+      actionType: 'login',
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
+      status: 'success',
       timestamp: new Date()
     });
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
-
-    // Track active session
-    if (user.role === 'user') {
-      await ActivityLog.create({
-        userId: user._id,
-        action: 'login',
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent']
-      });
-    }
 
     res.json({
       _id: user._id,
