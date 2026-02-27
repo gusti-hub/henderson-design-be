@@ -106,6 +106,8 @@ const userSchema = new mongoose.Schema({
       'Nalu (Client)',
       'Lani',
       'Lani (Client)',
+      'Nalu (Developer)',
+      'Lani (Developer)', 
       'Custom'
     ],
     required: false

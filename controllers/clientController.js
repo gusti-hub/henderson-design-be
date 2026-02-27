@@ -44,7 +44,8 @@ const getFloorPlanConfigId = (floorPlan, collection, packageType = 'investor') =
   }
   
   // For custom/investor, use collection to determine
-  const isLani = collection?.includes('Lani');
+
+  const isLani = collection?.includes('Lani') && !collection?.includes('Developer');
   
   const residenceMap = {
     'Residence 05A': isLani ? 'custom-a' : 'investor-a',
