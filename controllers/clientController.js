@@ -496,6 +496,9 @@ const createClient = async (req, res) => {
 
     const email = rawEmail && rawEmail.trim() !== '' ? rawEmail.trim() : null;
 
+    // Log untuk konfirmasi
+    console.log('📧 Email normalized:', email);
+
     if (!name || !password || !unitNumber) {
       return res.status(400).json({
         success: false,
@@ -552,7 +555,7 @@ const createClient = async (req, res) => {
     const user = await User.create({
       clientCode,
       name,
-      email,
+      email: email || undefined,
       password,
       unitNumber,
       phoneNumber: phoneNumber || '',

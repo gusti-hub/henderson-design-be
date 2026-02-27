@@ -19,7 +19,6 @@ const userSchema = new mongoose.Schema({
     required: false,
     unique: true,
     sparse: true,
-    default: null,
     match: [/^\S+@\S+\.\S+$/, 'Please add a valid email']
   },
   password: {
@@ -450,4 +449,5 @@ userSchema.methods.getInvoicesByStep = function(stepNumber) {
   return this.invoices.filter(inv => inv.stepNumber === stepNumber);
 };
 
+userSchema.set('autoIndex', false);
 module.exports = mongoose.model('User', userSchema);
