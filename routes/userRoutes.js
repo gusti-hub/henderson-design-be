@@ -6,7 +6,9 @@ const {
   getAdminUsers,
   createAdminUser,
   updateAdminUser,
-  deleteAdminUser
+  deleteAdminUser,
+  getProfile,       // ← import ini
+  updateProfile     // ← import ini
 } = require('../controllers/userController');
 
 // Public routes
@@ -16,10 +18,14 @@ router.post('/login', login);
 // Protected routes
 router.use(protect);
 
+// Profile routes ← TAMBAHKAN INI
+router.get('/profile', getProfile);
+router.put('/profile', updateProfile);
+
 // Admin routes
-router.get('/admins', protect, getAdminUsers);
-router.post('/admins', protect, createAdminUser);
-router.put('/admins/:id', protect, updateAdminUser);
-router.delete('/admins/:id', protect, deleteAdminUser);
+router.get('/admins', getAdminUsers);
+router.post('/admins', createAdminUser);
+router.put('/admins/:id', updateAdminUser);
+router.delete('/admins/:id', deleteAdminUser);
 
 module.exports = router;

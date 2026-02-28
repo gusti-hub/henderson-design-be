@@ -703,57 +703,71 @@ const updateClient = async (req, res) => {
       'bedroomCount', 'packageType', 'teamAssignment'
     ];
     
-    const updates = {};
-    allowedUpdates.forEach(field => {
-      if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
-      }
+  const updates = {};
+  allowedUpdates.forEach(field => {
+    if (req.body[field] !== undefined) {
+      updates[field] = req.body[field];
+    }
+  });
+
+
+  // ✅ Normalize bedroomCount
+  if (updates.bedroomCount !== undefined) {
+    const bc = String(updates.bedroomCount).trim();
+    updates.bedroomCount = (bc && bc !== '0') ? bc : undefined;
+    if (updates.bedroomCount === undefined) delete updates.bedroomCount;
+  }
+
+  // Get current client data
+  const currentClient = await User.findById(req.params.id);
+  if (!currentClient) {
+    return res.status(404).json({ 
+      success: false,
+      message: 'Client not found' 
     });
+  }
 
-    // Normalize email untuk update
-    if (updates.email !== undefined) {
-      updates.email = updates.email && updates.email.trim() !== '' 
-        ? updates.email.trim() 
-        : null;
-    }
+  // Regenerate client code if name or unitNumber changed
+  if (req.body.name || req.body.unitNumber) {
+    const newName = req.body.name || currentClient.name;
+    const newUnitNumber = req.body.unitNumber || currentClient.unitNumber;
+    updates.clientCode = await generateClientCode(newName, newUnitNumber);
+  }
 
-    // Get current client data
-    const currentClient = await User.findById(req.params.id);
-    if (!currentClient) {
-      return res.status(404).json({ 
-        success: false,
-        message: 'Client not found' 
-      });
-    }
+  // Process team assignment
+  if (req.body.teamAssignment) {
+    updates.teamAssignment = {
+      designer: req.body.teamAssignment.designer || '',
+      projectManager: req.body.teamAssignment.projectManager || '',
+      projectManagerAssistant: req.body.teamAssignment.projectManagerAssistant || '',
+      designerAssistant: req.body.teamAssignment.designerAssistant || ''
+    };
+  }
 
-    // ✅ Regenerate client code if name or unitNumber changed
-    if (req.body.name || req.body.unitNumber) {
-      const newName = req.body.name || currentClient.name;
-      const newUnitNumber = req.body.unitNumber || currentClient.unitNumber;
-      updates.clientCode = await generateClientCode(newName, newUnitNumber);
-      console.log('✅ Client code regenerated:', updates.clientCode);
-    }
+  if (req.body.password && req.body.password.trim() !== '') {
+    updates.password = req.body.password;
+  }
 
-    // Process team assignment if provided
-    if (req.body.teamAssignment) {
-      updates.teamAssignment = {
-        designer: req.body.teamAssignment.designer || '',
-        projectManager: req.body.teamAssignment.projectManager || '',
-        projectManagerAssistant: req.body.teamAssignment.projectManagerAssistant || '',
-        designerAssistant: req.body.teamAssignment.designerAssistant || ''
-      };
-      console.log('✅ Updating team assignment:', updates.teamAssignment);
+  // ✅ Handle email — unset jika dikosongkan
+  const unsetFields = {};
+  if (req.body.email !== undefined) {
+    if (!req.body.email || req.body.email.trim() === '') {
+      unsetFields.email = '';
+      delete updates.email;
+    } else {
+      updates.email = req.body.email.trim();
     }
+  }
 
-    if (req.body.password && req.body.password.trim() !== '') {
-      updates.password = req.body.password;
-    }
-    
-    const client = await User.findByIdAndUpdate(
-      req.params.id,
-      updates,
-      { new: true, runValidators: true }
-    ).select('-password');
+  const updateQuery = Object.keys(unsetFields).length > 0
+    ? { $set: updates, $unset: unsetFields }
+    : { $set: updates };
+
+  const client = await User.findByIdAndUpdate(
+    req.params.id,
+    updateQuery,
+    { new: true, runValidators: false }
+  ).select('-password');
     
     if (!client) {
       return res.status(404).json({ 
