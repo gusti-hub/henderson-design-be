@@ -176,11 +176,29 @@ const getPendingCount = async (req, res) => {
 const getFloorPlans = async (req, res) => {
   try {
     const floorPlans = [
-      "Residence 00A", "Residence 01B", "Residence 03A",
-      "Residence 05A", "Residence 08", "Residence 10A/12A",
-      "Residence 03B", "Residence 05B", "Residence 07B",
-      "Residence 09B", "Residence 10/12", "Residence 11B",
-      "Residence 13A"
+      "Residence 00A", "Residence 00B",
+      "Residence 01A", "Residence 01B",
+      "Residence 02A", "Residence 02B",
+      "Residence 03A", "Residence 03B",
+      "Residence 04A", "Residence 04B",
+      "Residence 05A", "Residence 05B",
+      "Residence 06A", "Residence 06B",
+      "Residence 07A", "Residence 07B",
+      "Residence 08A", "Residence 08B",
+      "Residence 09A", "Residence 09B",
+      "Residence 10A", "Residence 10B",
+      "Residence 11A", "Residence 11B",
+      "Residence 12A", "Residence 12B",
+      "Residence 13A", "Residence 13B",
+      "Residence 14A", "Residence 14B",
+      "Residence 15A", "Residence 15B",
+      "Residence 16A", "Residence 16B",
+      "Residence 17A", "Residence 17B",
+
+      // Special formats
+      "Residence 08",
+      "Residence 10A/12A",
+      "Residence 10/12"
     ];
     
     const validFloorPlans = floorPlans.filter(fp => fp);
@@ -485,8 +503,16 @@ const createClient = async (req, res) => {
       email: rawEmail,
       password,
       unitNumber,
+      unitNumber2,
+      unitNumber3,
+      unitNumber4,
+      unitNumber5,
       phoneNumber,
       floorPlan,
+      floorPlan2,
+      floorPlan3,
+      floorPlan4,
+      floorPlan5,
       propertyType,
       collection,
       bedroomCount,
@@ -559,8 +585,16 @@ const createClient = async (req, res) => {
       email: email || undefined,
       password,
       unitNumber,
+      unitNumber2,
+      unitNumber3,
+      unitNumber4,
+      unitNumber5,
       phoneNumber: phoneNumber || '',
       floorPlan: floorPlan || '',
+      floorPlan2: floorPlan2 || '',
+      floorPlan3: floorPlan3 || '',
+      floorPlan4: floorPlan4 || '',
+      floorPlan5: floorPlan5 || '',
       propertyType: propertyType || 'Lock 2025 Pricing',
       collection: collection || '',
       bedroomCount: bedroomCount || 0,
@@ -700,7 +734,8 @@ const updateClient = async (req, res) => {
     const allowedUpdates = [
       'name', 'email', 'unitNumber', 'phoneNumber', 'propertyType',
       'floorPlan', 'questionnaire', 'paymentInfo', 'collection', 
-      'bedroomCount', 'packageType', 'teamAssignment'
+      'bedroomCount', 'packageType', 'teamAssignment', 'unitNumber2','floorPlan2','unitNumber3','floorPlan3',
+      'unitNumber4','floorPlan4','unitNumber5','floorPlan5'
     ];
     
   const updates = {};

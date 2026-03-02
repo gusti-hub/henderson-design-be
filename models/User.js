@@ -86,18 +86,41 @@ const userSchema = new mongoose.Schema({
     required: false,
     enum: {
       values: [
-        "Residence 00A", "Residence 01B", "Residence 03A",
-        "Residence 05A", "Residence 08", "Residence 10A/12A",
-        "Residence 03B", "Residence 05B", "Residence 07B",
-        "Residence 09B", "Residence 10/12", "Residence 11B",
-        "Residence 13A",
+        "Residence 00A", "Residence 00B",
+          "Residence 01A", "Residence 01B",
+          "Residence 02A", "Residence 02B",
+          "Residence 03A", "Residence 03B",
+          "Residence 04A", "Residence 04B",
+          "Residence 05A", "Residence 05B",
+          "Residence 06A", "Residence 06B",
+          "Residence 07A", "Residence 07B",
+          "Residence 08A", "Residence 08B",
+          "Residence 09A", "Residence 09B",
+          "Residence 10A", "Residence 10B",
+          "Residence 11A", "Residence 11B",
+          "Residence 12A", "Residence 12B",
+          "Residence 13A", "Residence 13B",
+          "Residence 14A", "Residence 14B",
+          "Residence 15A", "Residence 15B",
+          "Residence 16A", "Residence 16B",
+          "Residence 17A", "Residence 17B",
+            "Residence 08",
+          "Residence 10A/12A",
+          "Residence 10/12",
         "Custom Project" // ✅ TAMBAH INI
       ],
       message: '{VALUE} is not a valid floor plan'
     },
     default: null // ✅ TAMBAH INI
   },
-  
+  unitNumber2: { type: String, required: false, default: '' },
+  floorPlan2: { type: String, required: false, default: '' },
+  unitNumber3: { type: String, required: false, default: '' },
+  floorPlan3: { type: String, required: false, default: '' },
+  unitNumber4: { type: String, required: false, default: '' },
+  floorPlan4: { type: String, required: false, default: '' },
+  unitNumber5: { type: String, required: false, default: '' },
+  floorPlan5: { type: String, required: false, default: '' },
   collection: {
     type: String,
     enum: [
