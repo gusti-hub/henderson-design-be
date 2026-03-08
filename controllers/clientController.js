@@ -4,6 +4,7 @@ const Order = require('../models/Order');
 const { JOURNEY_STEPS } = require('../data/journeySteps');
 const { sendApprovalEmail, sendRejectionEmail } = require('./authController');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
 // ✅ HELPER: Get image path based on config ID
 const getFloorPlanImagePath = (configId) => {
@@ -196,7 +197,7 @@ const getFloorPlans = async (req, res) => {
       "Residence 17A", "Residence 17B",
 
       // Special formats
-      "Residence 08",
+      "Residence 08", 
       "Residence 10A/12A",
       "Residence 10/12"
     ];
@@ -780,7 +781,8 @@ const updateClient = async (req, res) => {
   }
 
   if (req.body.password && req.body.password.trim() !== '') {
-    updates.password = req.body.password;
+    const salt = await bcrypt.genSalt(10);
+    updates.password = await bcrypt.hash(req.body.password, salt);
   }
 
   // ✅ Handle email — unset jika dikosongkan
