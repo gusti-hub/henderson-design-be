@@ -1,5 +1,34 @@
-// models/Order.js
-// ✅ UPDATED: Added Status Report fields to selectedOptions + order-level installation fields
+// models/Order.js — selectedOptions additions
+// Add these new fields to the selectedOptions sub-schema
+// (Merge into your existing Order.js — find the selectedOptions block and add the missing fields)
+
+// ── NEW FIELDS TO ADD TO selectedOptions ──
+/*
+  // General Info (new)
+  sidemark: String,
+  group: String,
+  tags: [String],
+  itemClass: String,
+  vendorDescription: String,
+
+  // Shipping (new)
+  shipToName: String,
+  shippingStreet: String,
+  shippingCity: String,
+  shippingState: String,
+  shippingPostalCode: String,
+
+  // Status (new)
+  expectedArrivalDate: String,
+  dateInspected: String,
+  nextStep: String,
+  nextStepDate: String,
+  warehouseReceivingNumber: String,
+*/
+
+// ════════════════════════════════════════════════════════════
+// FULL UPDATED Order.js (complete file, ready to use)
+// ════════════════════════════════════════════════════════════
 
 const mongoose = require('mongoose');
 
@@ -20,19 +49,19 @@ const orderSchema = new mongoose.Schema({
     notes: String,
     uploadedAt: Date
   },
-  
+
   packageType: {
     type: String,
     enum: ['investor', 'custom', 'library'],
     default: 'investor'
   },
-  
+
   clientInfo: {
     name: String,
     unitNumber: String,
     floorPlan: String
   },
-  
+
   selectedPlan: {
     id: String,
     title: String,
@@ -45,13 +74,12 @@ const orderSchema = new mongoose.Schema({
       floorPlan: String
     }
   },
-  
+
   Package: String,
 
-  // ✅ NEW: Installation info (order-level, used in status report headers)
   installationDate: String,
   installationNotes: String,
-  
+
   selectedProducts: [{
     _id: {
       type: mongoose.Schema.Types.ObjectId,
@@ -82,11 +110,14 @@ const orderSchema = new mongoose.Schema({
       default: true
     },
     selectedOptions: {
-      // ── Install Binder fields ──
-      poNumber: String,
-      vendorOrderNumber: String,
-      trackingInfo: String,
-      deliveryStatus: String,
+
+      // ── General Info ──
+      sidemark: String,
+      group: String,
+      tags: [String],
+      itemClass: String,
+      cfaSampleApproval: String,        // ✅ NEW
+      vendorDescription: String,
 
       // ── Product spec fields ──
       finish: String,
@@ -99,36 +130,63 @@ const orderSchema = new mongoose.Schema({
       specifications: String,
       notes: String,
 
-      // ✅ NEW: Status Report fields
-      room: String,                    // Room location (e.g. "Living Room", "Primary Bedroom")
-      statusCategory: String,          // Category for grouping (e.g. "Items Delivered")
-      proposalNumber: String,          // Proposal reference number
-      shipTo: String,                  // Ship-to address
-      orderDate: String,               // Date order was placed
-      expectedShipDate: String,        // Expected ship date
-      dateReceived: String,            // Date item was received
-      estimatedDeliveryDate: String,   // Estimated delivery to residence (client-facing)
-      shippingCarrier: String,         // Carrier name (UPS, FedEx, etc.)
-      orderStatus: String,             // Expediting order status
+      // ── Shipping ──
+      shipToVendorId: {                 // ✅ NEW — stores the vendor _id for the Ship To dropdown
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Vendor',
+        required: false,
+        default: null,
+      },
+      shipToName: String,
+      shippingStreet: String,
+      shippingCity: String,
+      shippingState: String,
+      shippingPostalCode: String,
+      shippingCountry: String,          // ✅ NEW
+      shipToPhone: String,              // ✅ NEW
 
-            // Pricing - Purchase Cost
-      units: String,                          // "Each", "Set", "Pair", etc.
-      msrp: Number,                           // Manufacturer's Suggested Retail Price
-      discountPercent: Number,                // Discount % off MSRP
-      noNetPurchaseCost: Boolean,             // Skip net cost calculation
-      discountTaken: String,                  // Discount taken notes
-      shippingCost: Number,                   // Shipping cost
-      otherCost: Number,                      // Other costs
+      // ── Install Binder fields ──
+      poNumber: String,
+      vendorOrderNumber: String,
+      trackingInfo: String,
+      deliveryStatus: String,
 
-      // Pricing - Selling Cost
-      markupPercent: Number,                  // Product markup %
-      shippingMarkupPercent: Number,          // Shipping markup %
-      otherMarkupPercent: Number,             // Other cost markup %
-      depositPercent: Number,                 // Client deposit %
-      vendorDepositPercent: Number,           // Vendor deposit requested %
-      salesTaxRate: Number,                   // Sales tax rate %
+      // ── Status Report fields ──
+      room: String,
+      statusCategory: String,
+      proposalNumber: String,
+      shipTo: String,
+      orderDate: String,
+      expectedShipDate: String,
+      expectedArrivalDate: String,       // ✅ NEW
+      dateReceived: String,
+      dateInspected: String,             // ✅ NEW
+      estimatedDeliveryDate: String,
+      shippingCarrier: String,
+      orderStatus: String,
+      nextStep: String,                  // ✅ NEW
+      nextStepDate: String,              // ✅ NEW
+      warehouseReceivingNumber: String,  // ✅ NEW
 
-      // Pricing - Taxable flags
+      // ── Pricing - Purchase Cost ──
+      units: String,
+      msrp: Number,
+      discountPercent: Number,
+      netCostOverride: Number,           // ✅ NEW — stores direct net cost input
+      noNetPurchaseCost: Boolean,
+      discountTaken: String,
+      shippingCost: Number,
+      otherCost: Number,
+
+      // ── Pricing - Selling Cost ──
+      markupPercent: Number,
+      shippingMarkupPercent: Number,
+      otherMarkupPercent: Number,
+      depositPercent: Number,
+      vendorDepositPercent: Number,
+      salesTaxRate: Number,
+
+      // ── Pricing - Taxable flags ──
       taxableCost: { type: Boolean, default: true },
       taxableMarkup: { type: Boolean, default: true },
       taxableShippingCost: { type: Boolean, default: true },
@@ -165,7 +223,7 @@ const orderSchema = new mongoose.Schema({
       }
     }
   }],
-  
+
   occupiedSpots: {
     type: Map,
     of: {
@@ -182,18 +240,18 @@ const orderSchema = new mongoose.Schema({
     },
     default: {}
   },
-  
+
   status: {
     type: String,
     enum: ['ongoing', 'completed', 'confirmed', 'cancelled', 'review'],
     default: 'ongoing'
   },
-  
+
   step: {
     type: Number,
     default: 1
   },
-  
+
   proposalVersions: [{
     version: Number,
     notes: String,
@@ -203,12 +261,12 @@ const orderSchema = new mongoose.Schema({
       ref: 'User'
     }
   }],
-  
+
   createdAt: {
     type: Date,
     default: Date.now
   },
-  
+
   updatedAt: {
     type: Date,
     default: Date.now
