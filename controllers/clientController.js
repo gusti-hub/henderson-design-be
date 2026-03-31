@@ -1024,6 +1024,510 @@ const getClientStats = async (req, res) => {
   }
 };
 
+const exportClientsToExcel = async (req, res) => {
+  try {
+    const XLSX = require('xlsx-js-style');
+ 
+    // ── Fetch data ──────────────────────────────────────────────
+    const clients = await User.find({ role: 'user' })
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .lean();
+ 
+    const journeys = await Journey.find({
+      clientId: { $in: clients.map(c => c._id) }
+    }).lean();
+ 
+    const journeyMap = {};
+    journeys.forEach(j => {
+      const completed  = (j.steps || []).filter(s => s.status === 'completed');
+      const inProgress = (j.steps || []).find(s => s.status === 'in-progress');
+      const last       = completed.length ? completed[completed.length - 1] : null;
+      journeyMap[String(j.clientId)] = {
+        step:  last?.step  ?? inProgress?.step  ?? '-',
+        stage: last?.stage ?? inProgress?.stage ?? 'Not Started',
+      };
+    });
+ 
+    // ── Palette ─────────────────────────────────────────────────
+    const C = {
+      TEAL:        '005670',
+      TEAL_DARK:   '003D50',
+      TEAL_LIGHT:  'E8F4F8',
+      TEAL_MID:    'CCE8F0',
+      PURPLE:      '6C3483',
+      GREEN:       '117A65',
+      BLUE:        '1A5276',
+      AMBER:       '7D6608',
+      WHITE:       'FFFFFF',
+      GRAY_ROW:    'F0F8FB',
+      GRAY_BORDER: 'D0D7DE',
+      DARK:        '1A2937',
+      GRAY_TEXT:   '6B7280',
+    };
+ 
+    // ── Helpers ──────────────────────────────────────────────────
+    const border = (color = C.GRAY_BORDER) => ({
+      top:    { style: 'thin', color: { rgb: color } },
+      bottom: { style: 'thin', color: { rgb: color } },
+      left:   { style: 'thin', color: { rgb: color } },
+      right:  { style: 'thin', color: { rgb: color } },
+    });
+ 
+    const sc = (ws, r, c, s) => {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      if (!ws[addr]) ws[addr] = { t: 's', v: '' };
+      ws[addr].s = s;
+    };
+ 
+    const merge = (ws, r1, c1, r2, c2) => {
+      if (!ws['!merges']) ws['!merges'] = [];
+      ws['!merges'].push({ s: { r: r1, c: c1 }, e: { r: r2, c: c2 } });
+    };
+ 
+    const sTitle = () => ({
+      font:      { bold: true, sz: 14, color: { rgb: C.WHITE }, name: 'Arial' },
+      fill:      { fgColor: { rgb: C.TEAL } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+    });
+ 
+    const sSub = () => ({
+      font:      { italic: true, sz: 9, color: { rgb: C.TEAL }, name: 'Arial' },
+      fill:      { fgColor: { rgb: C.TEAL_LIGHT } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+    });
+ 
+    const sGroup = (bg) => ({
+      font:      { bold: true, sz: 9, color: { rgb: C.WHITE }, name: 'Arial' },
+      fill:      { fgColor: { rgb: bg } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border:    border(bg),
+    });
+ 
+    const sColHeader = () => ({
+      font:      { bold: true, sz: 9, color: { rgb: C.TEAL_DARK }, name: 'Arial' },
+      fill:      { fgColor: { rgb: C.TEAL_MID } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+      border:    border(),
+    });
+ 
+    const sCell = (isAlt, extra = {}) => ({
+      font:      { sz: 9, color: { rgb: C.DARK }, name: 'Arial', ...extra.font },
+      fill:      { fgColor: { rgb: isAlt ? C.GRAY_ROW : C.WHITE } },
+      alignment: { vertical: 'center', wrapText: true, ...extra.alignment },
+      border:    border(),
+    });
+ 
+    const STATUS_COLORS = {
+      'admin-created': { bg: 'DBEAFE', fg: '1E40AF' },
+      'approved':      { bg: 'D1FAE5', fg: '065F46' },
+      'pending':       { bg: 'FEF3C7', fg: '92400E' },
+      'rejected':      { bg: 'FEE2E2', fg: '991B1B' },
+    };
+ 
+    const COLL_COLORS = {
+      'Nalu (Client)':    C.GREEN,
+      'Lani (Client)':    C.BLUE,
+      'Nalu (Developer)': C.PURPLE,
+      'Lani (Developer)': C.AMBER,
+      'Custom':           'C0392B',
+    };
+ 
+    const now = new Date();
+    const wb  = XLSX.utils.book_new();
+ 
+    // ════════════════════════════════════════════════════════════
+    //  SHEET 1 — CLIENT LIST
+    // ════════════════════════════════════════════════════════════
+    const COL_HEADERS = [
+      'No.', 'Client Code', 'Full Name', 'Email', 'Phone',
+      'Primary Unit', 'Floor Plan', 'Unit 2', 'Unit 3', 'Unit 4', 'Unit 5',
+      'Designer', 'Project Manager', 'PM Assistant', 'Designer Asst.',
+      'Step', 'Journey Stage',
+      'Collection', 'Bedrooms', 'Package', 'Property Type', 'Status', 'Registered'
+    ];
+ 
+    const COL_WIDTHS = [
+      5, 14, 24, 28, 16,
+      10, 20, 10, 10, 10, 10,
+      22, 22, 18, 18,
+      7, 24,
+      20, 10, 12, 20, 14, 14
+    ];
+ 
+    const GROUPS = [
+      { label: 'CLIENT INFO',          s: 0,  e: 2,  bg: C.TEAL      },
+      { label: 'CONTACT',              s: 3,  e: 4,  bg: C.BLUE      },
+      { label: 'PROPERTY',             s: 5,  e: 10, bg: C.GREEN     },
+      { label: 'TEAM ASSIGNMENT',      s: 11, e: 14, bg: C.PURPLE    },
+      { label: 'JOURNEY',              s: 15, e: 16, bg: C.AMBER     },
+      { label: 'COLLECTION & PRICING', s: 17, e: 20, bg: C.BLUE      },
+      { label: 'STATUS',               s: 21, e: 22, bg: C.TEAL_DARK },
+    ];
+ 
+    const row2groups = Array(COL_HEADERS.length).fill(null);
+    GROUPS.forEach(g => { row2groups[g.s] = g.label; });
+ 
+    const ws1aoa = [
+      ['HENDERSON DESIGN GROUP — CLIENT MANAGEMENT REPORT', ...Array(COL_HEADERS.length - 1).fill(null)],
+      [`Generated: ${now.toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' })}  |  Henderson Design Group Admin Portal`, ...Array(COL_HEADERS.length - 1).fill(null)],
+      row2groups,
+      COL_HEADERS,
+      ...clients.map((client, idx) => {
+        const j = journeyMap[String(client._id)] || { step: '-', stage: 'Not Started' };
+        return [
+          idx + 1,
+          client.clientCode || '',
+          client.name || '',
+          client.email || '',
+          client.phoneNumber || '',
+          client.unitNumber || '',
+          client.floorPlan || '',
+          client.unitNumber2 || '',
+          client.unitNumber3 || '',
+          client.unitNumber4 || '',
+          client.unitNumber5 || '',
+          client.teamAssignment?.designer || '',
+          client.teamAssignment?.projectManager || '',
+          client.teamAssignment?.projectManagerAssistant || '',
+          client.teamAssignment?.designerAssistant || '',
+          j.step,
+          j.stage,
+          client.collection || '',
+          client.bedroomCount || '',
+          client.packageType || '',
+          client.propertyType || '',
+          client.status || '',
+          client.createdAt ? new Date(client.createdAt).toLocaleDateString('en-US') : '',
+        ];
+      }),
+      [],
+      ['REPORT SUMMARY', ...Array(COL_HEADERS.length - 1).fill(null)],
+      ['Total Clients', clients.length],
+      ['With Team Assigned', clients.filter(c => c.teamAssignment?.designer).length],
+      ['Admin Created', clients.filter(c => c.status === 'admin-created').length],
+      ['Pending Approval', clients.filter(c => c.status === 'pending').length],
+    ];
+ 
+    const ws1 = XLSX.utils.aoa_to_sheet(ws1aoa, { skipHeader: true });
+    ws1['!cols'] = COL_WIDTHS.map(w => ({ wch: w }));
+    ws1['!rows'] = [
+      { hpt: 36 }, { hpt: 20 }, { hpt: 22 }, { hpt: 30 },
+      ...clients.map(() => ({ hpt: 22 })),
+      { hpt: 8 }, { hpt: 24 }, { hpt: 20 }, { hpt: 20 }, { hpt: 20 }, { hpt: 20 },
+    ];
+ 
+    // Merges
+    merge(ws1, 0, 0, 0, COL_HEADERS.length - 1);
+    merge(ws1, 1, 0, 1, COL_HEADERS.length - 1);
+    GROUPS.forEach(g => { if (g.e > g.s) merge(ws1, 2, g.s, 2, g.e); });
+ 
+    // Row 0: title
+    for (let c = 0; c < COL_HEADERS.length; c++) sc(ws1, 0, c, sTitle());
+    // Row 1: subtitle
+    for (let c = 0; c < COL_HEADERS.length; c++) sc(ws1, 1, c, sSub());
+    // Row 2: group headers
+    GROUPS.forEach(g => { for (let c = g.s; c <= g.e; c++) sc(ws1, 2, c, sGroup(g.bg)); });
+    // Row 3: column headers
+    COL_HEADERS.forEach((_, c) => sc(ws1, 3, c, sColHeader()));
+ 
+    // Data rows
+    clients.forEach((client, ri) => {
+      const rowIdx = 4 + ri;
+      const isAlt  = ri % 2 === 1;
+ 
+      COL_HEADERS.forEach((_, ci) => {
+        const addr = XLSX.utils.encode_cell({ r: rowIdx, c: ci });
+        if (!ws1[addr]) return;
+        ws1[addr].s = sCell(isAlt, {
+          alignment: { horizontal: ci === 0 ? 'center' : 'left', vertical: 'center', wrapText: true }
+        });
+      });
+ 
+      // Status badge (col 21)
+      const statusAddr = XLSX.utils.encode_cell({ r: rowIdx, c: 21 });
+      const stc = STATUS_COLORS[client.status] || { bg: 'F3F4F6', fg: '374151' };
+      if (ws1[statusAddr]) ws1[statusAddr].s = {
+        font:      { bold: true, sz: 9, color: { rgb: stc.fg }, name: 'Arial' },
+        fill:      { fgColor: { rgb: stc.bg } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border:    border(),
+      };
+ 
+      // Journey step bold teal (col 15)
+      const stepAddr = XLSX.utils.encode_cell({ r: rowIdx, c: 15 });
+      if (ws1[stepAddr]) ws1[stepAddr].s = {
+        font:      { bold: true, sz: 10, color: { rgb: C.TEAL }, name: 'Arial' },
+        fill:      { fgColor: { rgb: isAlt ? C.GRAY_ROW : C.WHITE } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border:    border(),
+      };
+    });
+ 
+    // Summary section
+    const sumStart = 4 + clients.length + 1;
+    for (let c = 0; c < COL_HEADERS.length; c++) {
+      const addr = XLSX.utils.encode_cell({ r: sumStart, c });
+      if (!ws1[addr]) ws1[addr] = { t: 's', v: '' };
+      ws1[addr].s = {
+        font:      { bold: true, sz: 10, color: { rgb: C.WHITE }, name: 'Arial' },
+        fill:      { fgColor: { rgb: C.TEAL } },
+        alignment: { horizontal: c === 0 ? 'left' : 'center', vertical: 'center' },
+        border:    border(C.TEAL),
+      };
+    }
+    merge(ws1, sumStart, 0, sumStart, COL_HEADERS.length - 1);
+ 
+    [sumStart + 1, sumStart + 2, sumStart + 3, sumStart + 4].forEach((r, i) => {
+      const isAlt = i % 2 === 1;
+      const la = XLSX.utils.encode_cell({ r, c: 0 });
+      const va = XLSX.utils.encode_cell({ r, c: 1 });
+      if (ws1[la]) ws1[la].s = {
+        font:  { bold: true, sz: 9, color: { rgb: C.TEAL }, name: 'Arial' },
+        fill:  { fgColor: { rgb: isAlt ? C.GRAY_ROW : C.TEAL_LIGHT } },
+        alignment: { vertical: 'center', indent: 1 },
+        border: border(),
+      };
+      if (ws1[va]) ws1[va].s = {
+        font:  { bold: true, sz: 12, color: { rgb: C.TEAL_DARK }, name: 'Arial' },
+        fill:  { fgColor: { rgb: isAlt ? C.GRAY_ROW : C.TEAL_LIGHT } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: border(),
+      };
+    });
+ 
+    XLSX.utils.book_append_sheet(wb, ws1, 'Client List');
+ 
+    // ════════════════════════════════════════════════════════════
+    //  SHEET 2 — SUMMARY
+    // ════════════════════════════════════════════════════════════
+    const collCounts = {};
+    const desCounts  = {};
+    const statCounts = {};
+    clients.forEach(c => {
+      const key = c.collection || 'Unset';
+      collCounts[key] = (collCounts[key] || 0) + 1;
+      if (c.teamAssignment?.designer) desCounts[c.teamAssignment.designer] = (desCounts[c.teamAssignment.designer] || 0) + 1;
+      statCounts[c.status || 'unknown'] = (statCounts[c.status || 'unknown'] || 0) + 1;
+    });
+ 
+    const ws2aoa = [
+      ['CLIENT SUMMARY DASHBOARD', null, null, null],
+      [`Report Date: ${now.toLocaleDateString('en-US', { dateStyle: 'long' })}`, null, null, null],
+      [],
+      ['OVERVIEW', null, 'Value', null],
+      ['Total Clients',      null, clients.length, null],
+      ['With Team Assigned', null, clients.filter(c => c.teamAssignment?.designer).length, null],
+      ['Without Team',       null, clients.filter(c => !c.teamAssignment?.designer).length, null],
+      ['Admin Created',      null, statCounts['admin-created'] || 0, null],
+      ['Pending Approval',   null, statCounts['pending'] || 0, null],
+      ['Approved',           null, statCounts['approved'] || 0, null],
+      [],
+      ['COLLECTION BREAKDOWN', null, 'Count', 'Percentage'],
+      ...Object.entries(collCounts).map(([k, v]) => [
+        k, null, v,
+        clients.length ? `${((v / clients.length) * 100).toFixed(1)}%` : '0%'
+      ]),
+      [],
+      ['DESIGNER WORKLOAD', null, 'Clients', null],
+      ...Object.entries(desCounts).sort((a,b) => b[1]-a[1]).map(([k,v]) => [k, null, v, null]),
+    ];
+ 
+    const ws2 = XLSX.utils.aoa_to_sheet(ws2aoa, { skipHeader: true });
+    ws2['!cols'] = [{ wch: 26 }, { wch: 4 }, { wch: 14 }, { wch: 14 }];
+    ws2['!rows'] = [{ hpt: 36 }, { hpt: 20 }];
+ 
+    // Title & subtitle
+    for (let c = 0; c < 4; c++) { sc(ws2, 0, c, sTitle()); sc(ws2, 1, c, sSub()); }
+    merge(ws2, 0, 0, 0, 3);
+    merge(ws2, 1, 0, 1, 3);
+ 
+    // Section headers
+    const collEnd = 11 + Object.keys(collCounts).length;
+    [3, 11, collEnd + 1].forEach(r => {
+      for (let c = 0; c < 4; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (!ws2[addr]) ws2[addr] = { t: 's', v: '' };
+        ws2[addr].s = sGroup(C.TEAL);
+      }
+      merge(ws2, r, 0, r, 1);
+    });
+ 
+    // KPI rows
+    [4,5,6,7,8,9].forEach((r, i) => {
+      const isAlt = i % 2 === 1;
+      const la = XLSX.utils.encode_cell({ r, c: 0 });
+      const va = XLSX.utils.encode_cell({ r, c: 2 });
+      if (ws2[la]) ws2[la].s = {
+        font:  { sz: 10, color: { rgb: C.DARK }, name: 'Arial' },
+        fill:  { fgColor: { rgb: isAlt ? C.GRAY_ROW : C.WHITE } },
+        alignment: { vertical: 'center', indent: 1 },
+        border: border(),
+      };
+      if (ws2[va]) ws2[va].s = {
+        font:  { bold: true, sz: 14, color: { rgb: C.TEAL }, name: 'Arial' },
+        fill:  { fgColor: { rgb: isAlt ? C.GRAY_ROW : C.WHITE } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: border(),
+      };
+      merge(ws2, r, 0, r, 1);
+      merge(ws2, r, 2, r, 3);
+    });
+ 
+    // Collection rows
+    Object.entries(collCounts).forEach(([key, val], i) => {
+      const r     = 12 + i;
+      const color = COLL_COLORS[key] || '555555';
+      const la    = XLSX.utils.encode_cell({ r, c: 0 });
+      const va    = XLSX.utils.encode_cell({ r, c: 2 });
+      const pa    = XLSX.utils.encode_cell({ r, c: 3 });
+      if (ws2[la]) ws2[la].s = {
+        font:  { bold: true, sz: 10, color: { rgb: C.WHITE }, name: 'Arial' },
+        fill:  { fgColor: { rgb: color } },
+        alignment: { vertical: 'center', indent: 1 },
+        border: border(color),
+      };
+      if (ws2[va]) ws2[va].s = {
+        font:  { bold: true, sz: 12, color: { rgb: color }, name: 'Arial' },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: border(),
+      };
+      if (ws2[pa]) ws2[pa].s = {
+        font:  { sz: 9, color: { rgb: C.GRAY_TEXT }, name: 'Arial' },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: border(),
+      };
+      merge(ws2, r, 0, r, 1);
+    });
+ 
+    // Designer rows
+    Object.entries(desCounts).sort((a,b) => b[1]-a[1]).forEach(([name, count], i) => {
+      const r  = collEnd + 2 + i;
+      const la = XLSX.utils.encode_cell({ r, c: 0 });
+      const va = XLSX.utils.encode_cell({ r, c: 2 });
+      const isAlt = i % 2 === 1;
+      if (ws2[la]) ws2[la].s = {
+        font:  { sz: 10, color: { rgb: C.DARK }, name: 'Arial' },
+        fill:  { fgColor: { rgb: isAlt ? C.GRAY_ROW : C.WHITE } },
+        alignment: { vertical: 'center', indent: 1 },
+        border: border(),
+      };
+      if (ws2[va]) ws2[va].s = {
+        font:  { bold: true, sz: 12, color: { rgb: C.PURPLE }, name: 'Arial' },
+        fill:  { fgColor: { rgb: isAlt ? C.GRAY_ROW : C.WHITE } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: border(),
+      };
+      merge(ws2, r, 0, r, 1);
+      merge(ws2, r, 2, r, 3);
+    });
+ 
+    XLSX.utils.book_append_sheet(wb, ws2, 'Summary');
+ 
+    // ════════════════════════════════════════════════════════════
+    //  SHEET 3 — TEAM ROSTER
+    // ════════════════════════════════════════════════════════════
+    const TEAM_ROSTER = [
+      { name: 'Joanna Staniszewski', role: 'Designer',             field: 'designer'               },
+      { name: 'Janelle Balci',       role: 'Designer',             field: 'designer'               },
+      { name: 'Ash Agustin',         role: 'Designer',             field: 'designer'               },
+      { name: 'Benny Kristanto',     role: 'Designer Assistant',   field: 'designerAssistant'      },
+      { name: 'Madeline Clifford',   role: 'Project Manager',      field: 'projectManager'         },
+      { name: 'Daiki Matsumaru',     role: 'Project Manager',      field: 'projectManager'         },
+      { name: 'Savanna Gonzales',    role: 'Project Manager',      field: 'projectManager'         },
+      { name: 'Haley Spitz',         role: 'PM Assistant',         field: 'projectManagerAssistant'},
+      { name: 'Florence Sosrita',    role: 'PM Assistant',         field: 'projectManagerAssistant'},
+    ];
+ 
+    const ROLE_COLORS = {
+      'Designer':           { bg: 'F5EEF8', accent: C.PURPLE },
+      'Designer Assistant': { bg: 'EBF5FB', accent: C.BLUE   },
+      'Project Manager':    { bg: 'EAF2FF', accent: C.BLUE   },
+      'PM Assistant':       { bg: 'E9F7EF', accent: C.GREEN  },
+    };
+ 
+    const ws3aoa = [
+      ['TEAM ASSIGNMENT ROSTER', null, null, null, null],
+      ['Team Member', 'Role', 'Clients', 'Client Names (Unit)', 'Notes'],
+      ...TEAM_ROSTER.map(m => {
+        const assigned = clients.filter(c => c.teamAssignment?.[m.field] === m.name);
+        return [
+          m.name, m.role, assigned.length,
+          assigned.map(c => `${c.name} (${c.unitNumber})`).join(', '),
+          ''
+        ];
+      }),
+    ];
+ 
+    const ws3 = XLSX.utils.aoa_to_sheet(ws3aoa, { skipHeader: true });
+    ws3['!cols'] = [{ wch: 26 }, { wch: 20 }, { wch: 10 }, { wch: 55 }, { wch: 20 }];
+    ws3['!rows'] = [{ hpt: 36 }, { hpt: 28 }, ...TEAM_ROSTER.map(() => ({ hpt: 24 }))];
+ 
+    // Title row
+    for (let c = 0; c < 5; c++) sc(ws3, 0, c, sGroup(C.PURPLE));
+    merge(ws3, 0, 0, 0, 4);
+ 
+    // Header row
+    for (let c = 0; c < 5; c++) sc(ws3, 1, c, {
+      font:      { bold: true, sz: 10, color: { rgb: C.WHITE }, name: 'Arial' },
+      fill:      { fgColor: { rgb: C.PURPLE } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+      border:    border(C.WHITE),
+    });
+ 
+    // Data rows
+    TEAM_ROSTER.forEach((m, ri) => {
+      const r  = 2 + ri;
+      const rc = ROLE_COLORS[m.role] || { bg: C.WHITE, accent: C.TEAL };
+ 
+      for (let c = 0; c < 5; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (!ws3[addr]) ws3[addr] = { t: 's', v: '' };
+        ws3[addr].s = {
+          font:      { sz: 9, color: { rgb: C.DARK }, name: 'Arial' },
+          fill:      { fgColor: { rgb: rc.bg } },
+          alignment: { vertical: 'center', wrapText: true },
+          border:    border(),
+        };
+      }
+      // Name col — bold
+      const na = XLSX.utils.encode_cell({ r, c: 0 });
+      if (ws3[na]) ws3[na].s.font = { bold: true, sz: 9, color: { rgb: C.DARK }, name: 'Arial' };
+      // Role col — colored badge style
+      const ra = XLSX.utils.encode_cell({ r, c: 1 });
+      if (ws3[ra]) ws3[ra].s = {
+        font:      { bold: true, sz: 9, color: { rgb: rc.accent }, name: 'Arial' },
+        fill:      { fgColor: { rgb: rc.bg } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border:    border(),
+      };
+      // Count col — large number
+      const ca = XLSX.utils.encode_cell({ r, c: 2 });
+      if (ws3[ca]) ws3[ca].s = {
+        font:      { bold: true, sz: 14, color: { rgb: rc.accent }, name: 'Arial' },
+        fill:      { fgColor: { rgb: rc.bg } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border:    border(),
+      };
+    });
+ 
+    XLSX.utils.book_append_sheet(wb, ws3, 'Team Roster');
+ 
+    // ── Stream response ──────────────────────────────────────────
+    const dateStr     = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+    const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+ 
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=HDG_ClientReport_${dateStr}.xlsx`);
+    res.setHeader('Content-Length', excelBuffer.length);
+    res.send(excelBuffer);
+ 
+  } catch (error) {
+    console.error('❌ Export clients error:', error);
+    res.status(500).json({ success: false, message: 'Failed to export clients', error: error.message });
+  }
+};
+
 module.exports = {
   getAllClients,
   getPendingClients,
@@ -1036,5 +1540,6 @@ module.exports = {
   updateClient,
   deleteClient,
   getClientStats,
-  recordPayment
+  recordPayment,
+  exportClientsToExcel
 };
