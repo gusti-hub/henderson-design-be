@@ -17,6 +17,8 @@ const puppeteer = require('puppeteer');
 const html_to_pdf = require('html-pdf-node');
 const { generatePDF } = require('../config/pdfConfig');
 const nodemailer = require('nodemailer');
+const { generatePresignedUploadUrl } = require('../config/s3');
+
 
 const createOrder = async (req, res) => {
   try {
@@ -2221,6 +2223,45 @@ const generateStatusReport = async (req, res) => {
   }
 };
 
+const getUploadPresignedUrl = async (req, res) => {
+  try {
+    const { filename, contentType, folder = 'uploads' } = req.body;
+
+    if (!filename || !contentType) {
+      return res.status(400).json({
+        success: false,
+        message: 'filename and contentType are required'
+      });
+    }
+
+    // Validasi folder yang diizinkan
+    const allowedFolders = ['floor-plans', 'product-images', 'payment-proofs'];
+    if (!allowedFolders.includes(folder)) {
+      return res.status(400).json({
+        success: false,
+        message: `folder must be one of: ${allowedFolders.join(', ')}`
+      });
+    }
+
+    const result = await generatePresignedUploadUrl({ folder, filename, contentType });
+
+    console.log('✅ Presigned URL generated:', result.key);
+
+    res.json({
+      success: true,
+      uploadUrl: result.uploadUrl,
+      key: result.key,
+      publicUrl: result.publicUrl,
+    });
+  } catch (error) {
+    console.error('❌ Failed to generate presigned URL:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 
 module.exports = {
   createOrder,
@@ -2238,5 +2279,6 @@ module.exports = {
   uploadCustomProductImages,  // ✅ NEW
   uploadOrderFloorPlan, 
   generateInstallBinder,
-  generateStatusReport
+  generateStatusReport,
+  getUploadPresignedUrl
 };

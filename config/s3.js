@@ -3,6 +3,8 @@ const { S3Client } = require('@aws-sdk/client-s3');
 const multer = require('multer');
 const multerS3 = require('multer-s3');
 const path = require('path');
+const { PutObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 // ✅ HARDCODED CONFIGURATION
 const HARDCODED_CONFIG = {
@@ -328,6 +330,23 @@ const handlePaymentProofUpload = (req, res, next) => {
   });
 };
 
+const generatePresignedUploadUrl = async ({ folder, filename, contentType }) => {
+  const sanitized = filename.replace(/[^a-zA-Z0-9.-]/g, '-');
+  const key = `${folder}/${Date.now()}-${Math.round(Math.random() * 1e9)}-${sanitized}`;
+
+  const command = new PutObjectCommand({
+    Bucket: HARDCODED_CONFIG.bucket,
+    Key: key,
+    ContentType: contentType,
+    ACL: 'public-read',
+  });
+
+  const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 300 });
+  const publicUrl = convertToDirectUrl(key);
+
+  return { uploadUrl, key, publicUrl };
+};
+
 // ===================================
 // EXPORTS
 // ===================================
@@ -338,5 +357,6 @@ module.exports = {
   handlePaymentProofUpload,
   // ✅ Export helper for use in controllers if needed
   convertToDirectUrl,
+  generatePresignedUploadUrl,
   HARDCODED_CONFIG
 };

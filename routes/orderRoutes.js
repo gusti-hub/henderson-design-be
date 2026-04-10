@@ -17,7 +17,8 @@ const {
   uploadCustomProductImages,  // ✅ ADD
   uploadOrderFloorPlan,         // ✅ ADD
   generateInstallBinder,
-  generateStatusReport
+  generateStatusReport,
+  getUploadPresignedUrl
 } = require('../controllers/orderController');
 const { 
   handlePaymentProofUpload,
@@ -25,6 +26,8 @@ const {
   handleFloorPlanUpload         // ✅ ADD
 } = require('../config/s3');
 const proposalVersionController = require('../controllers/proposalVersionController');
+
+router.post('/presigned-url', getUploadPresignedUrl);
 
 // Protect all routes
 router.use(protect);
