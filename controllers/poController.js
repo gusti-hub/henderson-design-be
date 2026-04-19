@@ -37,10 +37,7 @@ const getOrderVendors = async (req, res) => {
       }
 
       const totalPrice = (product.unitPrice || 0) * (product.quantity || 1);
-      vendorMap[vendorId].products.push({
-        ...product,
-        totalPrice
-      });
+      vendorMap[vendorId].products.push({ ...product, totalPrice });
       vendorMap[vendorId].totalAmount += totalPrice;
       vendorMap[vendorId].productCount += 1;
     });
@@ -54,7 +51,6 @@ const getOrderVendors = async (req, res) => {
             { version: 1, status: 1, poNumber: 1, createdAt: 1 },
             { sort: { version: -1 } }
           ).lean();
-
           group.latestPO = latestPO || null;
         }
         return group;
@@ -63,11 +59,7 @@ const getOrderVendors = async (req, res) => {
 
     res.json({
       success: true,
-      data: {
-        orderId,
-        clientInfo: order.clientInfo,
-        vendors: vendorGroups
-      }
+      data: { orderId, clientInfo: order.clientInfo, vendors: vendorGroups }
     });
 
   } catch (error) {
@@ -79,7 +71,6 @@ const getOrderVendors = async (req, res) => {
 // ✅ Helper: Map Vendor model to PO vendorInfo format
 const mapVendorToInfo = (vendor) => {
   if (!vendor) return {};
-
   return {
     name: vendor.name || '',
     vendorCode: vendor.vendorCode || '',
@@ -99,6 +90,31 @@ const mapVendorToInfo = (vendor) => {
     },
     accountNumber: vendor.accountNumber || ''
   };
+};
+
+// ✅ Helper: Build initial shipTo from the first product that has shipping data
+const buildShipToFromProducts = (products) => {
+  const p = products.find(prod => prod.selectedOptions?.shippingStreet);
+  if (!p) return null;
+  const opts = p.selectedOptions;
+  return {
+    name: opts.shipToName || '',
+    address: opts.shippingStreet || '',
+    city: [opts.shippingCity, opts.shippingState, opts.shippingPostalCode].filter(Boolean).join(', '),
+    attention: '',
+    phone: opts.shipToPhone || ''
+  };
+};
+
+// ✅ Helper: Compute net purchase cost from product pricing fields
+const computeNetCost = (product) => {
+  const opts = product.selectedOptions || {};
+  // If netCostOverride is explicitly set, use it
+  if (opts.netCostOverride != null && opts.netCostOverride !== '') {
+    return parseFloat(opts.netCostOverride);
+  }
+  // Otherwise use msrp (net/purchase price), falling back to unitPrice only as last resort
+  return parseFloat(opts.msrp || 0);
 };
 
 // ✅ GET or CREATE PO for a specific vendor
@@ -133,7 +149,6 @@ const getPurchaseOrder = async (req, res) => {
         return res.status(404).json({ success: false, message: 'Order not found' });
       }
 
-      // Get vendor info
       const vendor = await Vendor.findById(vendorId).lean();
       if (!vendor) {
         return res.status(404).json({ success: false, message: 'Vendor not found' });
@@ -151,16 +166,21 @@ const getPurchaseOrder = async (req, res) => {
         });
       }
 
-      // Build product list with descriptions
+      // ✅ FIX: Build product list with FULL selectedOptions including uploadedImages & pricing
       const poProducts = vendorProducts.map((product) => {
-        const specs = [];
-        if (product.selectedOptions?.specifications) specs.push(product.selectedOptions.specifications);
-        if (product.selectedOptions?.finish) specs.push(`Finish: ${product.selectedOptions.finish}`);
-        if (product.selectedOptions?.fabric) specs.push(`Fabric: ${product.selectedOptions.fabric}`);
-        if (product.selectedOptions?.size) specs.push(`Size: ${product.selectedOptions.size}`);
-        if (product.selectedOptions?.insetPanel) specs.push(`Inset Panel: ${product.selectedOptions.insetPanel}`);
+        const opts = product.selectedOptions || {};
 
-        const totalPrice = (product.unitPrice || 0) * (product.quantity || 1);
+        // Build description from specifications + key fields
+        const specs = [];
+        if (opts.specifications) specs.push(opts.specifications);
+        if (opts.finish) specs.push(`Finish: ${opts.finish}`);
+        if (opts.fabric) specs.push(`Fabric: ${opts.fabric}`);
+        if (opts.size) specs.push(`Size: ${opts.size}`);
+        if (opts.insetPanel) specs.push(`Inset Panel: ${opts.insetPanel}`);
+
+        // ✅ Net cost = msrp (purchase price), not unitPrice (client price)
+        const netCost = computeNetCost(product);
+        const totalPrice = netCost * (product.quantity || 1);
 
         return {
           product_id: product.product_id || '',
@@ -168,19 +188,48 @@ const getPurchaseOrder = async (req, res) => {
           category: product.category || '',
           spotName: product.spotName || '',
           quantity: product.quantity || 1,
-          unitPrice: product.unitPrice || 0,
+          unitPrice: netCost,       // ✅ Store net cost as unitPrice in PO
           totalPrice,
           description: specs.join('\n') || '',
           selectedOptions: {
-            finish: product.selectedOptions?.finish || '',
-            fabric: product.selectedOptions?.fabric || '',
-            size: product.selectedOptions?.size || '',
-            insetPanel: product.selectedOptions?.insetPanel || '',
-            specifications: product.selectedOptions?.specifications || '',
-            image: product.selectedOptions?.image || '',
-            images: product.selectedOptions?.images || [],
-            notes: product.selectedOptions?.notes || '',
-            poNumber: product.selectedOptions?.poNumber || '',
+            // ── Core spec fields ──
+            finish:         opts.finish         || '',
+            fabric:         opts.fabric         || '',
+            size:           opts.size           || '',
+            insetPanel:     opts.insetPanel     || '',
+            specifications: opts.specifications || '',
+            image:          opts.image          || '',
+            images:         opts.images         || [],
+            notes:          opts.notes          || '',
+            poNumber:       opts.poNumber       || '',
+
+            // ✅ FIX: Include sidemark
+            sidemark:       opts.sidemark       || '',
+
+            // ✅ FIX: Include uploadedImages for product photos
+            uploadedImages: (opts.uploadedImages || []).map(img => ({
+              filename:    img.filename    || '',
+              contentType: img.contentType || '',
+              url:         img.url         || '',
+              key:         img.key         || '',
+              size:        img.size        || 0,
+              uploadedAt:  img.uploadedAt  || new Date(),
+            })),
+
+            // ✅ FIX: Include pricing fields
+            units:             opts.units             || 'Each',
+            msrp:              opts.msrp              || 0,
+            discountPercent:   opts.discountPercent   || 0,
+            netCostOverride:   opts.netCostOverride   ?? null,
+            markupPercent:     opts.markupPercent      || 0,
+
+            // ✅ FIX: Include shipping destination fields
+            shipToName:         opts.shipToName         || '',
+            shippingStreet:     opts.shippingStreet     || '',
+            shippingCity:       opts.shippingCity       || '',
+            shippingState:      opts.shippingState      || '',
+            shippingPostalCode: opts.shippingPostalCode || '',
+            shipToPhone:        opts.shipToPhone        || '',
           }
         };
       });
@@ -192,10 +241,17 @@ const getPurchaseOrder = async (req, res) => {
       const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
       const poNumber = `${clientCode}-${dateStr}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
 
-      // ✅ Map vendor info correctly
       const vendorInfo = mapVendorToInfo(vendor);
 
-      // Create initial PO version
+      // ✅ FIX: Build shipTo from actual product shipping data
+      const shipTo = buildShipToFromProducts(vendorProducts) || {
+        name: '',
+        address: '',
+        city: '',
+        attention: '',
+        phone: ''
+      };
+
       poVersion = await POVersion.create({
         orderId,
         vendorId,
@@ -208,13 +264,7 @@ const getPurchaseOrder = async (req, res) => {
         repEmail: vendor.contactInfo?.email || '',
         terms: vendor.termsAndPayment?.terms || '',
         estimateNumber: '',
-        shipTo: {
-          name: 'HFS - SF (SHIP TO ONLY) - PRIMARY',
-          address: '2964 Alvarado Street',
-          city: 'San Leandro, CA 94577',
-          attention: '',
-          phone: '(800) 576-7621'
-        },
+        shipTo,
         clientInfo: order.clientInfo || {},
         vendorInfo,
         products: poProducts,
@@ -232,10 +282,7 @@ const getPurchaseOrder = async (req, res) => {
       poVersion = poVersion.toObject();
     }
 
-    res.json({
-      success: true,
-      data: poVersion
-    });
+    res.json({ success: true, data: poVersion });
 
   } catch (error) {
     console.error('❌ Error getPurchaseOrder:', error);
@@ -248,43 +295,42 @@ const getPurchaseOrder = async (req, res) => {
 const updatePurchaseOrder = async (req, res) => {
   try {
     const { orderId, vendorId } = req.params;
-    const { version, products, vendorInfo, shipTo, comments, notes, 
-            poNumber, accountNumber, repName, repPhone, repEmail, 
-            terms, estimateNumber, shipping, others, status, clientInfo } = req.body;
+    const {
+      version, products, vendorInfo, shipTo, comments, notes,
+      poNumber, accountNumber, repName, repPhone, repEmail,
+      terms, estimateNumber, shipping, others, status, clientInfo
+    } = req.body;
 
     const poVersion = await POVersion.findOne({ orderId, vendorId, version });
-
     if (!poVersion) {
       return res.status(404).json({ success: false, message: 'PO version not found' });
     }
 
-    // Update fields
     if (products) {
       poVersion.products = products;
       poVersion.subTotal = products.reduce((sum, p) => sum + (p.totalPrice || 0), 0);
     }
-    if (vendorInfo) poVersion.vendorInfo = vendorInfo;
-    if (shipTo) poVersion.shipTo = shipTo;
-    if (clientInfo) poVersion.clientInfo = clientInfo;
-    if (comments !== undefined) poVersion.comments = comments;
-    if (notes !== undefined) poVersion.notes = notes;
-    if (poNumber !== undefined) poVersion.poNumber = poNumber;
+    if (vendorInfo)              poVersion.vendorInfo    = vendorInfo;
+    if (shipTo)                  poVersion.shipTo        = shipTo;
+    if (clientInfo)              poVersion.clientInfo    = clientInfo;
+    if (comments   !== undefined) poVersion.comments     = comments;
+    if (notes      !== undefined) poVersion.notes        = notes;
+    if (poNumber   !== undefined) poVersion.poNumber     = poNumber;
     if (accountNumber !== undefined) poVersion.accountNumber = accountNumber;
-    if (repName !== undefined) poVersion.repName = repName;
-    if (repPhone !== undefined) poVersion.repPhone = repPhone;
-    if (repEmail !== undefined) poVersion.repEmail = repEmail;
-    if (terms !== undefined) poVersion.terms = terms;
+    if (repName    !== undefined) poVersion.repName      = repName;
+    if (repPhone   !== undefined) poVersion.repPhone     = repPhone;
+    if (repEmail   !== undefined) poVersion.repEmail     = repEmail;
+    if (terms      !== undefined) poVersion.terms        = terms;
     if (estimateNumber !== undefined) poVersion.estimateNumber = estimateNumber;
-    if (shipping !== undefined) poVersion.shipping = shipping;
-    if (others !== undefined) poVersion.others = others;
-    if (status) poVersion.status = status;
+    if (shipping   !== undefined) poVersion.shipping     = shipping;
+    if (others     !== undefined) poVersion.others       = others;
+    if (status)                  poVersion.status        = status;
 
-    // Recalculate total
     poVersion.total = poVersion.subTotal + (poVersion.shipping || 0) + (poVersion.others || 0);
 
     await poVersion.save();
 
-    // ✅ Sync PO number back to order products
+    // Sync PO number back to order products
     if (products && products.length > 0 && poNumber) {
       try {
         const order = await Order.findById(orderId);
@@ -309,10 +355,7 @@ const updatePurchaseOrder = async (req, res) => {
       }
     }
 
-    res.json({
-      success: true,
-      data: poVersion
-    });
+    res.json({ success: true, data: poVersion });
 
   } catch (error) {
     console.error('❌ Error updatePurchaseOrder:', error);
@@ -325,15 +368,16 @@ const updatePurchaseOrder = async (req, res) => {
 const createPOVersion = async (req, res) => {
   try {
     const { orderId, vendorId } = req.params;
-    const { products, vendorInfo, shipTo, comments, notes, versionNotes,
-            poNumber, accountNumber, repName, repPhone, repEmail, 
-            terms, estimateNumber, shipping, others, clientInfo } = req.body;
+    const {
+      products, vendorInfo, shipTo, comments, notes, versionNotes,
+      poNumber, accountNumber, repName, repPhone, repEmail,
+      terms, estimateNumber, shipping, others, clientInfo
+    } = req.body;
 
     if (!versionNotes?.trim()) {
       return res.status(400).json({ success: false, message: 'Version notes are required' });
     }
 
-    // Get next version number
     const latestVersion = await POVersion.findOne(
       { orderId, vendorId },
       { version: 1 },
@@ -348,33 +392,30 @@ const createPOVersion = async (req, res) => {
       orderId,
       vendorId,
       version: nextVersion,
-      poNumber: poNumber || latestVersion?.poNumber || '',
-      orderDate: new Date(),
+      poNumber:      poNumber      || latestVersion?.poNumber || '',
+      orderDate:     new Date(),
       accountNumber: accountNumber || '',
-      repName: repName || '',
-      repPhone: repPhone || '',
-      repEmail: repEmail || '',
-      terms: terms || '',
+      repName:       repName       || '',
+      repPhone:      repPhone      || '',
+      repEmail:      repEmail      || '',
+      terms:         terms         || '',
       estimateNumber: estimateNumber || '',
-      shipTo: shipTo || {},
-      clientInfo: clientInfo || {},
-      vendorInfo: vendorInfo || {},
-      products: products || [],
+      shipTo:        shipTo        || {},
+      clientInfo:    clientInfo    || {},
+      vendorInfo:    vendorInfo    || {},
+      products:      products      || [],
       subTotal,
-      shipping: parseFloat(shipping) || 0,
-      others: parseFloat(others) || 0,
+      shipping:      parseFloat(shipping) || 0,
+      others:        parseFloat(others)   || 0,
       total,
-      comments: comments || '',
-      notes: notes || '',
+      comments:      comments      || '',
+      notes:         notes         || '',
       versionNotes,
-      status: 'draft',
-      createdBy: req.user.id
+      status:        'draft',
+      createdBy:     req.user.id
     });
 
-    res.json({
-      success: true,
-      data: newPO
-    });
+    res.json({ success: true, data: newPO });
 
   } catch (error) {
     console.error('❌ Error createPOVersion:', error);
@@ -396,10 +437,7 @@ const getAllPOVersions = async (req, res) => {
       .sort({ version: -1 })
       .lean();
 
-    res.json({
-      success: true,
-      data: versions
-    });
+    res.json({ success: true, data: versions });
 
   } catch (error) {
     console.error('❌ Error getAllPOVersions:', error);
@@ -423,15 +461,10 @@ const getAllPOsForOrder = async (req, res) => {
     const vendorPOs = {};
     pos.forEach((po) => {
       const vId = po.vendorId?._id?.toString() || 'unknown';
-      if (!vendorPOs[vId]) {
-        vendorPOs[vId] = po;
-      }
+      if (!vendorPOs[vId]) vendorPOs[vId] = po;
     });
 
-    res.json({
-      success: true,
-      data: Object.values(vendorPOs)
-    });
+    res.json({ success: true, data: Object.values(vendorPOs) });
 
   } catch (error) {
     console.error('❌ Error getAllPOsForOrder:', error);
