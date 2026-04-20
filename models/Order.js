@@ -1,34 +1,6 @@
-// models/Order.js — selectedOptions additions
-// Add these new fields to the selectedOptions sub-schema
-// (Merge into your existing Order.js — find the selectedOptions block and add the missing fields)
-
-// ── NEW FIELDS TO ADD TO selectedOptions ──
-/*
-  // General Info (new)
-  sidemark: String,
-  group: String,
-  tags: [String],
-  itemClass: String,
-  vendorDescription: String,
-
-  // Shipping (new)
-  shipToName: String,
-  shippingStreet: String,
-  shippingCity: String,
-  shippingState: String,
-  shippingPostalCode: String,
-
-  // Status (new)
-  expectedArrivalDate: String,
-  dateInspected: String,
-  nextStep: String,
-  nextStepDate: String,
-  warehouseReceivingNumber: String,
-*/
-
-// ════════════════════════════════════════════════════════════
-// FULL UPDATED Order.js (complete file, ready to use)
-// ════════════════════════════════════════════════════════════
+// models/Order.js
+// ✅ Updated: tambah field 'package' di selectedProducts item
+//             tambah 'woodFinish', 'fabric', 'others' di selectedOptions (flat schema)
 
 const mongoose = require('mongoose');
 
@@ -86,14 +58,22 @@ const orderSchema = new mongoose.Schema({
       ref: 'Product'
     },
     product_id: String,
-    name: String,
-    category: String,
-    spotName: String,
+    name:       String,
+    category:   String,
+
+    // ✅ NEW: package dari product catalog (Lani / Nalu)
+    package: {
+      type: String,
+      enum: ['', 'Lani', 'Nalu'],
+      default: ''
+    },
+
+    spotName:   String,
     quantity: {
       type: Number,
       default: 1
     },
-    unitPrice: Number,
+    unitPrice:  Number,
     finalPrice: Number,
     vendor: {
       type: mongoose.Schema.Types.ObjectId,
@@ -109,116 +89,129 @@ const orderSchema = new mongoose.Schema({
       type: Boolean,
       default: true
     },
+
     selectedOptions: {
 
       // ── General Info ──
-      sidemark: String,
-      group: String,
-      tags: [String],
-      itemClass: String,
-      cfaSampleApproval: String,        // ✅ NEW
+      sidemark:          String,
+      group:             String,
+      tags:              [String],
+      itemClass:         String,
+      cfaSampleApproval: String,
       vendorDescription: String,
 
-      // ── Product spec fields ──
-      finish: String,
-      fabric: String,
-      size: String,
-      insetPanel: String,
-      image: String,
-      images: [String],
-      links: [String],
-      specifications: String,
-      notes: String,
+      // ── Product spec — legacy finish fields ──
+      finish:    String,
+      fabric:    String,
+      size:      String,
+      insetPanel:String,
+
+      // ✅ NEW: flat finish fields (dari Product catalog baru)
+      woodFinish:  { type: String, default: '' },  // 'MD' | 'DK' | ''
+      others:      { type: [String], default: [] }, // ['WV','SH', ...]
+
+      // ── Images ──
+      image:    String,
+      images:   [String],
+      links:    [String],
+
+      // ── Descriptions ──
+      specifications:    String,
+      notes:             String,
 
       // ── Shipping ──
-      shipToVendorId: {                 // ✅ NEW — stores the vendor _id for the Ship To dropdown
+      shipToVendorId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Vendor',
         required: false,
         default: null,
       },
-      shipToName: String,
-      shippingStreet: String,
-      shippingCity: String,
-      shippingState: String,
-      shippingPostalCode: String,
-      shippingCountry: String,          // ✅ NEW
-      shipToPhone: String,              // ✅ NEW
+      shipToName:          String,
+      shippingStreet:      String,
+      shippingCity:        String,
+      shippingState:       String,
+      shippingPostalCode:  String,
+      shippingCountry:     String,
+      shipToPhone:         String,
 
-      // ── Install Binder fields ──
-      poNumber: String,
+      // ── Install Binder ──
+      poNumber:          String,
       vendorOrderNumber: String,
-      trackingInfo: String,
-      deliveryStatus: String,
+      trackingInfo:      String,
+      deliveryStatus:    String,
 
-      // ── Status Report fields ──
-      room: String,
-      statusCategory: String,
-      proposalNumber: String,
-      shipTo: String,
-      orderDate: String,
-      expectedShipDate: String,
-      expectedArrivalDate: String,       // ✅ NEW
-      dateReceived: String,
-      dateInspected: String,             // ✅ NEW
-      estimatedDeliveryDate: String,
-      shippingCarrier: String,
-      orderStatus: String,
-      nextStep: String,                  // ✅ NEW
-      nextStepDate: String,              // ✅ NEW
-      warehouseReceivingNumber: String,  // ✅ NEW
+      // ── Status Report ──
+      room:                    String,
+      statusCategory:          String,
+      proposalNumber:          String,
+      shipTo:                  String,
+      orderDate:               String,
+      expectedShipDate:        String,
+      expectedArrivalDate:     String,
+      dateReceived:            String,
+      dateInspected:           String,
+      estimatedDeliveryDate:   String,
+      shippingCarrier:         String,
+      orderStatus:             String,
+      nextStep:                String,
+      nextStepDate:            String,
+      warehouseReceivingNumber:String,
 
-      // ── Pricing - Purchase Cost ──
-      units: String,
-      msrp: Number,
-      discountPercent: Number,
-      netCostOverride: Number,           // ✅ NEW — stores direct net cost input
+      // ── Pricing — Purchase Cost ──
+      units:             String,
+      msrp:              Number,
+      discountPercent:   Number,
+      netCostOverride:   Number,
       noNetPurchaseCost: Boolean,
-      discountTaken: String,
-      shippingCost: Number,
-      otherCost: Number,
+      discountTaken:     String,
+      shippingCost:      Number,
+      otherCost:         Number,
 
-      // ── Pricing - Selling Cost ──
-      markupPercent: Number,
+      // ── Pricing — Selling Cost ──
+      markupPercent:         Number,
       shippingMarkupPercent: Number,
-      otherMarkupPercent: Number,
-      depositPercent: Number,
-      vendorDepositPercent: Number,
-      salesTaxRate: Number,
+      otherMarkupPercent:    Number,
+      depositPercent:        Number,
+      vendorDepositPercent:  Number,
+      salesTaxRate:          Number,
 
-      // ── Pricing - Taxable flags ──
-      taxableCost: { type: Boolean, default: true },
-      taxableMarkup: { type: Boolean, default: true },
-      taxableShippingCost: { type: Boolean, default: true },
+      // ── Pricing — Taxable flags ──
+      taxableCost:           { type: Boolean, default: true },
+      taxableMarkup:         { type: Boolean, default: true },
+      taxableShippingCost:   { type: Boolean, default: true },
       taxableShippingMarkup: { type: Boolean, default: true },
-      taxableOtherCost: { type: Boolean, default: true },
-      taxableOtherMarkup: { type: Boolean, default: true },
+      taxableOtherCost:      { type: Boolean, default: true },
+      taxableOtherMarkup:    { type: Boolean, default: true },
 
+      // ── Uploaded images ──
       uploadedImages: [{
-        filename: String,
+        filename:    String,
         contentType: String,
-        data: Buffer,
-        url: String,
-        key: String,
-        size: Number,
+        data:        Buffer,
+        url:         String,
+        key:         String,
+        size:        Number,
         uploadedAt: {
           type: Date,
           default: Date.now
         }
       }],
+
+      // ── Custom attributes ──
       customAttributes: {
         type: Map,
         of: mongoose.Schema.Types.Mixed,
         default: new Map()
       }
     },
+
     placement: {
       spotKey: String,
       coordinates: {
-        x: Number,
-        y: Number,
-        width: Number,
-        height: Number,
+        x:        Number,
+        y:        Number,
+        width:    Number,
+        height:   Number,
         rotation: { type: Number, default: 0 }
       }
     }
@@ -227,15 +220,15 @@ const orderSchema = new mongoose.Schema({
   occupiedSpots: {
     type: Map,
     of: {
-      furnitureId: String,
-      label: String,
-      area: String,
-      coordinates: mongoose.Schema.Types.Mixed,
-      originalCoordinates: mongoose.Schema.Types.Mixed,
-      rotation: { type: Number, default: 0 },
-      isPlaced: Boolean,
-      sourceConfig: String,
-      sourceSpot: String,
+      furnitureId:          String,
+      label:                String,
+      area:                 String,
+      coordinates:          mongoose.Schema.Types.Mixed,
+      originalCoordinates:  mongoose.Schema.Types.Mixed,
+      rotation:             { type: Number, default: 0 },
+      isPlaced:             Boolean,
+      sourceConfig:         String,
+      sourceSpot:           String,
       product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' }
     },
     default: {}
@@ -253,8 +246,8 @@ const orderSchema = new mongoose.Schema({
   },
 
   proposalVersions: [{
-    version: Number,
-    notes: String,
+    version:   Number,
+    notes:     String,
     createdAt: Date,
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -262,15 +255,8 @@ const orderSchema = new mongoose.Schema({
     }
   }],
 
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 });
 
 orderSchema.pre('save', function(next) {

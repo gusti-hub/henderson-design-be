@@ -1,537 +1,296 @@
 const Product = require('../models/Product');
-const Order = require('../models/Order');
-const { upload } = require('../config/s3');
+const { parseSku, WOOD_CODES, FABRIC_CODES, OTHER_CODES } = require('../models/Product');
 const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { s3Client } = require('../config/s3');
 
-// Get all products with pagination and search
+// ─── Build flat product payload from request body ──────────────────────────
+const buildProductData = (body, uploadedFile = null) => {
+  const skuParsed = parseSku(body.product_id);
+
+  // Merge: explicit body values win over SKU-parsed
+  const woodFinish = body.woodFinish || skuParsed.woodFinish || '';
+  const fabric     = body.fabric     || skuParsed.fabric     || '';
+  const others = (() => {
+    if (!body.others) return skuParsed.others;
+    if (Array.isArray(body.others)) return body.others;
+    try { return JSON.parse(body.others); } catch { return skuParsed.others; }
+  })();
+
+  // Image: S3 upload > explicit URL in body
+  let image = { url: '', key: '' };
+  if (uploadedFile) {
+    image = { url: uploadedFile.location, key: uploadedFile.key };
+  } else if (body.imageUrl) {
+    image = { url: body.imageUrl, key: '' };
+  } else if (body.image) {
+    // Accept JSON string { url, key }
+    const parsed = typeof body.image === 'string' ? JSON.parse(body.image) : body.image;
+    image = { url: parsed.url || '', key: parsed.key || '' };
+  }
+
+  return {
+    product_id:  body.product_id,
+    name:        body.name,
+    description: body.description  || '',
+    category:    body.category     || 'General',
+    collection:  body.collection   || 'General',
+    package:     (['Lani','Nalu'].includes(body.package) ? body.package : ''),
+    dimension:   body.dimension    || '',
+    price:       parseFloat(body.price) || 0,
+    woodFinish,
+    fabric,
+    others,
+    image,
+  };
+};
+
+// ─── GET all products ──────────────────────────────────────────────────────
 const getProducts = async (req, res) => {
   try {
-    console.log('REQ', new Date().toISOString(), req.originalUrl);
-
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
+    const page   = Math.max(parseInt(req.query.page)  || 1, 1);
+    const limit  = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
     const search = (req.query.search || '').trim();
-    const skip = (page - 1) * limit;
+    const skip   = (page - 1) * limit;
 
-    const query = search
-      ? {
-          $or: [
-            { product_id: { $regex: search, $options: 'i' } },
-            { name: { $regex: search, $options: 'i' } },
-            { description: { $regex: search, $options: 'i' } }
-          ]
-        }
-      : {};
+    const category = (req.query.category || '').trim();
+    const pkg       = (req.query.package  || '').trim();
 
-    // Parallel execution untuk count dan find
+    const query = {};
+    if (search) {
+      query.$or = [
+        { product_id:  { $regex: search, $options: 'i' } },
+        { name:        { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { category:    { $regex: search, $options: 'i' } },
+      ];
+    }
+    if (category) query.category = { $regex: category, $options: 'i' };
+    if (pkg)      query.package  = pkg;
+
     const [total, products] = await Promise.all([
       Product.countDocuments(query),
       Product.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('product_id name description basePrice variants uploadedImages') // hanya field yang dipakai FE
+        .select('product_id name description category collection package dimension price woodFinish fabric others image uploadedImages')
         .lean()
     ]);
-    
-    res.json({
-      products,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit)
-    });
+
+    res.json({ products, total, page, totalPages: Math.ceil(total / limit) });
   } catch (error) {
-    console.error('Error in getProducts:', error);
+    console.error('getProducts error:', error);
     res.status(500).json({ message: 'Error fetching products' });
   }
 };
 
-
-// Create product (standard admin upload)
-const createProduct = async (req, res) => {
-  try {
-    console.log('Create product request received');
-    console.log('Files:', req.files);
-    console.log('Body:', req.body);
-
-    const { product_id, name, description, dimension, basePrice, category, collection } = req.body;
-    let variants = JSON.parse(req.body.variants);
-
-    // Process variants and match with uploaded files
-    const processedVariants = variants.map(variant => {
-      // If variant has an imageIndex, use the corresponding uploaded file
-      if ('imageIndex' in variant && req.files[variant.imageIndex]) {
-        const file = req.files[variant.imageIndex];
-        return {
-          finish: variant.finish || '',
-          fabric: variant.fabric || '',
-          size: variant.size || '',
-          insetPanel: variant.insetPanel || '',
-          price: parseFloat(variant.price),
-          image: {
-            url: file.location,
-            key: file.key
-          }
-        };
-      }
-      // If variant has existing image data, keep it
-      else if (variant.image) {
-        return {
-          finish: variant.finish || '',
-          fabric: variant.fabric || '',
-          size: variant.size || '',
-          insetPanel: variant.insetPanel || '',
-          price: parseFloat(variant.price),
-          image: variant.image,
-          model: variant.model
-        };
-      }
-      // No image case
-      else {
-        return {
-          finish: variant.finish || '',
-          fabric: variant.fabric || '',
-          size: variant.size || '',
-          insetPanel: variant.insetPanel || '',
-          price: parseFloat(variant.price),
-          image: null,
-          model: null
-        };
-      }
-    });
-
-    const product = await Product.create({
-      product_id,
-      name,
-      description,
-      category: category || 'General',
-      collection: collection || 'General',
-      dimension,
-      basePrice: parseFloat(basePrice),
-      variants: processedVariants,
-      sourceType: 'admin-created'
-    });
-
-    res.status(201).json(product);
-  } catch (error) {
-    console.error('Error in createProduct:', error);
-    res.status(500).json({ message: error.message });
-  }
-};
-
-const createProductFromCustomOrder = async (req, res) => {
-  try {
-    console.log('📦 createProductFromCustomOrder called');
-
-    const { orderId, productData } = req.body;
-
-    // Validation
-    if (!orderId) {
-      console.error('❌ Missing orderId in request body');
-      return res.status(400).json({
-        success: false,
-        message: 'Order ID is required'
-      });
-    }
-
-    if (!productData) {
-      return res.status(400).json({
-        success: false,
-        message: 'Product data is required'
-      });
-    }
-
-    if (!productData.name || !productData.product_id) {
-      return res.status(400).json({
-        success: false,
-        message: 'Product name and product_id are required'
-      });
-    }
-
-    console.log(`📦 Creating product: ${productData.name} for order: ${orderId}`);
-
-    // Check if product_id already exists
-    const existingProduct = await Product.findOne({ 
-      product_id: productData.product_id 
-    });
-
-    if (existingProduct) {
-      console.warn(`⚠️ Product ID already exists: ${productData.product_id}`);
-      return res.status(400).json({
-        success: false,
-        message: `Product ID ${productData.product_id} already exists. Using existing product.`,
-        data: existingProduct
-      });
-    }
-
-    // Prepare custom attributes
-    const customAttributes = new Map();
-    if (productData.customAttributes) {
-      Object.entries(productData.customAttributes).forEach(([key, value]) => {
-        customAttributes.set(key, value);
-      });
-    }
-
-    // ✅ Prepare images array - gabungkan dari images dan uploadedImages
-    const images = [];
-    
-    // Add from images array
-    if (productData.images && Array.isArray(productData.images)) {
-      productData.images.forEach((img, index) => {
-        if (typeof img === 'string') {
-          // Simple URL string
-          images.push({
-            url: img,
-            alt: productData.name,
-            isPrimary: images.length === 0
-          });
-        } else if (img.url) {
-          // Object with url and key
-          images.push({
-            url: img.url,
-            key: img.key || '',
-            alt: img.alt || productData.name,
-            isPrimary: images.length === 0
-          });
-        }
-      });
-    }
-
-    // ✅ Add from uploadedImages (sudah ada URL dari DigitalOcean Spaces)
-    if (productData.uploadedImages && Array.isArray(productData.uploadedImages)) {
-      productData.uploadedImages.forEach((img, index) => {
-        if (img.url) {
-          images.push({
-            url: img.url,
-            key: img.key || '',
-            alt: productData.name,
-            isPrimary: images.length === 0
-          });
-        }
-      });
-    }
-
-    console.log(`✅ Processed ${images.length} total images`);
-
-    // ✅ Prepare uploadedImages metadata (tanpa Buffer)
-    const uploadedImages = [];
-    if (productData.uploadedImages && Array.isArray(productData.uploadedImages)) {
-      productData.uploadedImages.forEach((img) => {
-        if (img.url) {
-          uploadedImages.push({
-            filename: img.filename || 'unknown',
-            contentType: img.contentType || 'image/jpeg',
-            url: img.url,
-            key: img.key || '',
-            size: img.size || 0,
-            uploadedAt: img.uploadedAt || new Date()
-          });
-        }
-      });
-    }
-
-    console.log(`✅ Stored ${uploadedImages.length} uploaded images metadata`);
-
-    // Create single variant with manual input data
-    const defaultVariant = {
-      finish: productData.finish || '',
-      fabric: productData.fabric || '',
-      size: productData.size || '',
-      insetPanel: '',
-      price: parseFloat(productData.unitPrice) || 0,
-      image: images[0] ? { 
-        url: images[0].url,
-        key: images[0].key || ''
-      } : null,
-      inStock: true,
-      isDefault: true
-    };
-
-    // Create product
-    const product = await Product.create({
-      product_id: productData.product_id,
-      name: productData.name,
-      category: productData.category || 'Custom',
-      collection: 'Custom Orders',
-      description: productData.specifications || '',
-      dimension: productData.size || '',
-      basePrice: parseFloat(productData.unitPrice) || 0,
-      sourceType: 'custom-order',
-      createdFromOrder: orderId,
-      customAttributes,
-      variants: [defaultVariant],
-      images,
-      uploadedImages
-    });
-
-    console.log('✅ Product created from custom order:', product._id);
-    console.log(`📸 With ${images.length} images and ${uploadedImages.length} uploaded files`);
-
-    res.status(201).json({
-      success: true,
-      data: product
-    });
-
-  } catch (error) {
-    console.error('❌ Error creating product from custom order:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-};
-
-// ✅ NEW: Update custom attributes
-const updateCustomAttributes = async (req, res) => {
-  try {
-    const { productId } = req.params;
-    const { customAttributes } = req.body;
-
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found'
-      });
-    }
-
-    // Update custom attributes
-    if (customAttributes) {
-      Object.entries(customAttributes).forEach(([key, value]) => {
-        product.customAttributes.set(key, value);
-      });
-    }
-
-    await product.save();
-
-    res.json({
-      success: true,
-      data: product
-    });
-
-  } catch (error) {
-    console.error('Error updating custom attributes:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// Update product (standard admin update)
-const updateProduct = async (req, res) => {
-  try {
-    console.log('Update product request received');
-    console.log('Files received:', req.files);
-    console.log('Body received:', {
-      ...req.body,
-      variants: JSON.parse(req.body.variants)
-    });
-
-    const productId = req.params.id;
-    const { product_id, name, description, dimension, basePrice, category, collection } = req.body;
-    let variants = JSON.parse(req.body.variants);
-
-    // Find existing product
-    const existingProduct = await Product.findById(productId);
-    if (!existingProduct) {
-      return res.status(404).json({ message: 'Product not found' });
-    }
-
-    // Process variants and match with uploaded files
-    const processedVariants = variants.map((variant, index) => {
-      // Case 1: New file upload for this variant
-      if ('imageIndex' in variant && req.files?.[variant.imageIndex]) {
-        const file = req.files[variant.imageIndex];
-        console.log(`Processing new file upload for variant ${index}:`, file);
-        return {
-          finish: variant.finish || '',
-          fabric: variant.fabric || '',
-          size: variant.size || '',
-          insetPanel: variant.insetPanel || '',
-          price: parseFloat(variant.price),
-          image: {
-            url: file.location,
-            key: file.key
-          }
-        };
-      }
-      // Case 2: Keeping existing image
-      else if (variant.image?.url && variant.image?.key) {
-        console.log(`Keeping existing image for variant ${index}:`, variant.image);
-        return {
-          finish: variant.finish || '',
-          fabric: variant.fabric || '',
-          size: variant.size || '',
-          insetPanel: variant.insetPanel || '',
-          price: parseFloat(variant.price),
-          image: variant.image
-        };
-      }
-      // Case 3: No image (either deleted or never had one)
-      else {
-        console.log(`No image for variant ${index}`);
-        return {
-          finish: variant.finish || '',
-          fabric: variant.fabric || '',
-          size: variant.size || '',
-          insetPanel: variant.insetPanel || '',
-          price: parseFloat(variant.price),
-          image: null
-        };
-      }
-    });
-
-    console.log('Processed variants:', processedVariants);
-
-    const updatedProduct = await Product.findByIdAndUpdate(
-      productId,
-      {
-        product_id,
-        name,
-        description,
-        category: category || existingProduct.category,
-        collection: collection || existingProduct.collection,
-        dimension,
-        basePrice: parseFloat(basePrice),
-        variants: processedVariants
-      },
-      { new: true }
-    );
-
-    console.log('Product updated successfully:', updatedProduct);
-    res.json(updatedProduct);
-
-  } catch (error) {
-    console.error('Error in updateProduct:', error);
-    res.status(500).json({ 
-      message: 'Error updating product', 
-      error: error.message,
-      stack: error.stack 
-    });
-  }
-};
-
-// Delete product
-const deleteProduct = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
-    }
-
-    // Delete all variant images from S3
-    await Promise.all(product.variants.map(async (variant) => {
-      if (variant.image?.key) {
-        try {
-          await s3Client.send(new DeleteObjectCommand({
-            Bucket: process.env.SPACES_BUCKET,
-            Key: variant.image.key
-          }));
-        } catch (error) {
-          console.error('Error deleting image:', error);
-        }
-      }
-    }));
-
-    await Product.deleteOne({ _id: req.params.id });
-    res.json({ message: 'Product deleted successfully' });
-  } catch (error) {
-    console.error('Error in deleteProduct:', error);
-    res.status(500).json({ message: 'Error deleting product' });
-  }
-};
-
-// Get single product
+// ─── GET single product ────────────────────────────────────────────────────
 const getProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
-    }
+    if (!product) return res.status(404).json({ message: 'Product not found' });
     res.json(product);
   } catch (error) {
-    console.error('Error in getProduct:', error);
     res.status(500).json({ message: 'Error fetching product' });
   }
 };
 
-// Get products basic info
+// ─── GET basic info (dropdowns) ───────────────────────────────────────────
 const getProductsBasicInfo = async (req, res) => {
   try {
     const products = await Product.find()
-      .select('_id name product_id') // Only select necessary fields
+      .select('_id name product_id category')
       .sort({ createdAt: -1 });
-    
     res.json({ products });
   } catch (error) {
-    console.error('Error in getProductsBasicInfo:', error);
     res.status(500).json({ message: 'Error fetching products' });
   }
 };
 
-// Get product variants
-const getProductVariants = async (req, res) => {
+// ─── CREATE product ────────────────────────────────────────────────────────
+const createProduct = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
-    }
+    const uploadedFile = req.file || null;  // single file upload
+    const data = buildProductData(req.body, uploadedFile);
 
-    // Get all variants for this product
-    const variants = product.variants;
-    
-    res.json({
-      variants,
-      basePrice: product.basePrice,
-      description: product.description,
-    });
+    const product = await Product.create({ ...data, sourceType: 'admin-created' });
+    res.status(201).json(product);
   } catch (error) {
-    console.error('Error in getProductVariants:', error);
-    res.status(500).json({ message: 'Error fetching product variants' });
+    console.error('createProduct error:', error);
+    res.status(500).json({ message: error.message });
   }
 };
 
-// Bulk delete products
+// ─── UPDATE product ────────────────────────────────────────────────────────
+const updateProduct = async (req, res) => {
+  try {
+    const existing = await Product.findById(req.params.id);
+    if (!existing) return res.status(404).json({ message: 'Product not found' });
+
+    const uploadedFile = req.file || null;
+    const data = buildProductData(req.body, uploadedFile);
+
+    // If no new image provided, keep existing
+    if (!uploadedFile && !req.body.imageUrl && !req.body.image) {
+      data.image = existing.image;
+    }
+
+    // Delete old S3 image if replaced
+    if (uploadedFile && existing.image?.key) {
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: process.env.SPACES_BUCKET, Key: existing.image.key
+        }));
+      } catch (err) {
+        console.error('S3 delete old image error:', err);
+      }
+    }
+
+    const updated = await Product.findByIdAndUpdate(req.params.id, data, { new: true });
+    res.json(updated);
+  } catch (error) {
+    console.error('updateProduct error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── DELETE product ────────────────────────────────────────────────────────
+const deleteProduct = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    if (product.image?.key) {
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: process.env.SPACES_BUCKET, Key: product.image.key
+        }));
+      } catch (err) {
+        console.error('S3 delete error:', err);
+      }
+    }
+
+    await Product.deleteOne({ _id: req.params.id });
+    res.json({ message: 'Product deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting product' });
+  }
+};
+
+// ─── BULK DELETE ───────────────────────────────────────────────────────────
 const bulkDeleteProducts = async (req, res) => {
   try {
     const { product_ids } = req.body;
-    
-    if (!Array.isArray(product_ids) || product_ids.length === 0) {
-      return res.status(400).json({ message: 'Product IDs array is required' });
-    }
+    if (!Array.isArray(product_ids) || !product_ids.length)
+      return res.status(400).json({ message: 'product_ids array is required' });
 
-    // Find all products first
     const products = await Product.find({ product_id: { $in: product_ids } });
-    
-    // Delete all variant images from S3
-    await Promise.all(products.flatMap(product => 
-      product.variants.map(async (variant) => {
-        if (variant.image?.key) {
-          try {
-            await s3Client.send(new DeleteObjectCommand({
-              Bucket: process.env.SPACES_BUCKET,
-              Key: variant.image.key
-            }));
-          } catch (error) {
-            console.error('Error deleting image:', error);
-          }
+
+    await Promise.all(products.map(async p => {
+      if (p.image?.key) {
+        try {
+          await s3Client.send(new DeleteObjectCommand({
+            Bucket: process.env.SPACES_BUCKET, Key: p.image.key
+          }));
+        } catch (err) {
+          console.error('S3 delete error:', err);
         }
-      })
-    ));
+      }
+    }));
 
-    // Delete the products
     const result = await Product.deleteMany({ product_id: { $in: product_ids } });
+    res.json({ message: 'Products deleted successfully', deletedCount: result.deletedCount });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting products' });
+  }
+};
 
-    res.json({ 
-      message: 'Products deleted successfully',
-      deletedCount: result.deletedCount 
+// ─── CREATE from custom order ──────────────────────────────────────────────
+const createProductFromCustomOrder = async (req, res) => {
+  try {
+    const { orderId, productData } = req.body;
+    if (!orderId || !productData?.name || !productData?.product_id)
+      return res.status(400).json({ success: false, message: 'orderId, name and product_id required' });
+
+    const existing = await Product.findOne({ product_id: productData.product_id });
+    if (existing)
+      return res.status(400).json({ success: false, message: `Product ID ${productData.product_id} already exists`, data: existing });
+
+    const customAttributes = new Map();
+    if (productData.customAttributes)
+      Object.entries(productData.customAttributes).forEach(([k, v]) => customAttributes.set(k, v));
+
+    // Image from uploadedImages or direct URL
+    const firstImage = productData.uploadedImages?.[0] || productData.images?.[0];
+    const image = firstImage?.url
+      ? { url: firstImage.url, key: firstImage.key || '' }
+      : { url: '', key: '' };
+
+    const uploadedImages = (productData.uploadedImages || [])
+      .filter(img => img.url)
+      .map(img => ({
+        filename:    img.filename    || 'unknown',
+        contentType: img.contentType || 'image/jpeg',
+        url:         img.url,
+        key:         img.key         || '',
+        size:        img.size        || 0,
+        uploadedAt:  img.uploadedAt  || new Date()
+      }));
+
+    const skuParsed = parseSku(productData.product_id);
+
+    const product = await Product.create({
+      product_id:       productData.product_id,
+      name:             productData.name,
+      category:         productData.category     || 'Custom',
+      collection:       'Custom Orders',
+      description:      productData.specifications || '',
+      dimension:        productData.size          || '',
+      price:            parseFloat(productData.unitPrice) || 0,
+      woodFinish:       productData.woodFinish    || skuParsed.woodFinish || '',
+      fabric:           productData.fabric        || skuParsed.fabric     || '',
+      others:           productData.others        || skuParsed.others     || [],
+      image,
+      uploadedImages,
+      customAttributes,
+      sourceType:       'custom-order',
+      createdFromOrder: orderId,
+    });
+
+    res.status(201).json({ success: true, data: product });
+  } catch (error) {
+    console.error('createProductFromCustomOrder error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── UPDATE custom attributes ──────────────────────────────────────────────
+const updateCustomAttributes = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.productId);
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
+    if (req.body.customAttributes)
+      Object.entries(req.body.customAttributes).forEach(([k, v]) => product.customAttributes.set(k, v));
+    await product.save();
+    res.json({ success: true, data: product });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── GET product variants (kept for backward compat — returns self) ────────
+const getProductVariants = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    // Return product itself as single "variant" for any code still calling this
+    res.json({
+      variants: [product],
+      basePrice: product.price,
+      description: product.description
     });
   } catch (error) {
-    console.error('Error in bulkDeleteProducts:', error);
-    res.status(500).json({ message: 'Error deleting products' });
+    res.status(500).json({ message: 'Error fetching product' });
   }
 };
 
@@ -544,6 +303,6 @@ module.exports = {
   getProductsBasicInfo,
   getProductVariants,
   bulkDeleteProducts,
-  createProductFromCustomOrder, // ✅ NEW
-  updateCustomAttributes // ✅ NEW
+  createProductFromCustomOrder,
+  updateCustomAttributes,
 };
