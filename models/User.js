@@ -352,6 +352,8 @@ const userSchema = new mongoose.Schema({
     bed_sizes: [String],
     mattress_firmness: [String],
     bedding_type: [String],
+    pillow_insert_preference: String,
+    duvet_insert_preference: String,
     bedding_material_color: [String],
     lighting_mood: [String],
     

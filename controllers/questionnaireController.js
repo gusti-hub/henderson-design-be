@@ -67,6 +67,8 @@ const submitQuestionnaire = async (req, res) => {
       bed_sizes: questionnaireData.bed_sizes || [],
       mattress_firmness: questionnaireData.mattress_firmness || [],
       bedding_type: questionnaireData.bedding_type || [],
+      pillow_insert_preference: questionnaireData.pillow_insert_preference || '',
+      duvet_insert_preference: questionnaireData.duvet_insert_preference || '',
       bedding_material_color: questionnaireData.bedding_material_color || [],
       lighting_mood: questionnaireData.lighting_mood || [],
       

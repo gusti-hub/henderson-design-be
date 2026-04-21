@@ -138,6 +138,157 @@ const getPurchaseOrder = async (req, res) => {
       ).populate('createdBy', 'name email').lean();
     }
 
+    // ── Always sync PO products with latest order data ─────────────────────
+    // This ensures added/removed products and updated images/prices always reflect
+    if (poVersion) {
+
+      try {
+        const order = await Order.findById(orderId)
+          .populate('selectedProducts.vendor')
+          .lean();
+
+        if (order) {
+          const vendorProducts = (order.selectedProducts || []).filter(
+            (p) => p.vendor?._id?.toString() === vendorId || p.vendor?.toString() === vendorId
+          );
+
+          // Build a map of current order products by product_id for quick lookup
+          const orderProductMap = {};
+          vendorProducts.forEach(p => {
+            if (p.product_id) orderProductMap[p.product_id] = p;
+          });
+
+          // Build a map of existing PO products by product_id to preserve edits
+          const poProductMap = {};
+          (poVersion.products || []).forEach(p => {
+            if (p.product_id) poProductMap[p.product_id] = p;
+          });
+
+          // Rebuild products list:
+          // - Keep products that still exist in order (preserve PO edits)
+          // - Add new products from order not yet in PO
+          // - Remove products no longer in order for this vendor
+          const syncedProducts = vendorProducts.map(orderProduct => {
+            const existing = poProductMap[orderProduct.product_id];
+            const opts = orderProduct.selectedOptions || {};
+            const netCost = computeNetCost(orderProduct);
+            const qty = orderProduct.quantity || 1;
+
+            if (existing) {
+              // Product exists in PO — refresh ALL fields from order (source of truth)
+              // Only preserve PO-specific fields: poNumber, notes, unitPrice overrides
+              const specs = [];
+              if (opts.specifications) specs.push(opts.specifications);
+              if (opts.finish) specs.push(`Finish: ${opts.finish}`);
+              if (opts.fabric) specs.push(`Fabric: ${opts.fabric}`);
+              if (opts.size) specs.push(`Size: ${opts.size}`);
+
+              return {
+                ...existing,
+                name: orderProduct.name || existing.name,
+                category: orderProduct.category || existing.category,
+                quantity: qty,
+                unitPrice: netCost,
+                totalPrice: netCost * qty,
+                description: specs.join('\n') || '',   // always from order
+                selectedOptions: {
+                  ...existing.selectedOptions,
+                  // ── Always refresh from order ──
+                  finish:             opts.finish             || '',
+                  fabric:             opts.fabric             || '',
+                  size:               opts.size               || '',
+                  specifications:     opts.specifications     || '',
+                  image:              opts.image              || '',
+                  images:             opts.images             || [],
+                  uploadedImages:     (opts.uploadedImages || []).map(img => ({
+                    filename: img.filename || '', contentType: img.contentType || '',
+                    url: img.url || '', key: img.key || '',
+                    size: img.size || 0, uploadedAt: img.uploadedAt || new Date(),
+                  })),
+                  msrp:               parseFloat(opts.msrp)  || 0,
+                  netCostOverride:    opts.netCostOverride    ?? null,
+                  units:              opts.units              || 'Each',
+                  sidemark:           opts.sidemark           || '',
+                  shipToName:         opts.shipToName         || '',
+                  shippingStreet:     opts.shippingStreet     || '',
+                  shippingCity:       opts.shippingCity       || '',
+                  shippingState:      opts.shippingState      || '',
+                  shippingPostalCode: opts.shippingPostalCode || '',
+                  shipToPhone:        opts.shipToPhone        || '',
+                  // ── Preserve PO-only fields ──
+                  // notes, poNumber, vendorOrderNumber stay as edited in PO
+                }
+              };
+            } else {
+              // New product — build fresh from order data
+              const specs = [];
+              if (opts.specifications) specs.push(opts.specifications);
+              if (opts.finish) specs.push(`Finish: ${opts.finish}`);
+              if (opts.fabric) specs.push(`Fabric: ${opts.fabric}`);
+              if (opts.size) specs.push(`Size: ${opts.size}`);
+
+              return {
+                product_id: orderProduct.product_id || '',
+                name: orderProduct.name || '',
+                category: orderProduct.category || '',
+                spotName: orderProduct.spotName || '',
+                quantity: qty,
+                unitPrice: netCost,
+                totalPrice: netCost * qty,
+                description: specs.join('\n') || '',
+                selectedOptions: {
+                  finish: opts.finish || '',
+                  fabric: opts.fabric || '',
+                  size: opts.size || '',
+                  specifications: opts.specifications || '',
+                  image: opts.image || '',
+                  images: opts.images || [],
+                  notes: opts.notes || '',
+                  poNumber: opts.poNumber || '',
+                  sidemark: opts.sidemark || '',
+                  uploadedImages: (opts.uploadedImages || []).map(img => ({
+                    filename: img.filename || '',
+                    contentType: img.contentType || '',
+                    url: img.url || '',
+                    key: img.key || '',
+                    size: img.size || 0,
+                    uploadedAt: img.uploadedAt || new Date(),
+                  })),
+                  units: opts.units || 'Each',
+                  msrp: parseFloat(opts.msrp) || 0,
+                  netCostOverride: opts.netCostOverride ?? null,
+                  markupPercent: opts.markupPercent || 0,
+                  shipToName: opts.shipToName || '',
+                  shippingStreet: opts.shippingStreet || '',
+                  shippingCity: opts.shippingCity || '',
+                  shippingState: opts.shippingState || '',
+                  shippingPostalCode: opts.shippingPostalCode || '',
+                  shipToPhone: opts.shipToPhone || '',
+                }
+              };
+            }
+          });
+
+          // Recalculate subTotal based on synced products
+          const subTotal = syncedProducts.reduce((sum, p) => sum + (p.totalPrice || 0), 0);
+
+          // Update PO in DB with synced products (only latest version)
+          if (version === 'latest') {
+            await POVersion.findByIdAndUpdate(poVersion._id, {
+              products: syncedProducts,
+              subTotal,
+              total: subTotal + (poVersion.shipping || 0) + (poVersion.others || 0),
+            });
+          }
+
+          poVersion = { ...poVersion, products: syncedProducts, subTotal };
+        }
+      } catch (syncErr) {
+        // Sync failure should not block PO load — log and continue
+        console.error('⚠️ PO sync warning:', syncErr.message);
+      }
+    }
+
     // If no PO exists, create initial version from order data
     if (!poVersion) {
       const order = await Order.findById(orderId)
