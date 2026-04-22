@@ -284,7 +284,7 @@ const getPurchaseOrder = async (req, res) => {
           // Recalculate subTotal based on synced products
           const subTotal = syncedProducts.reduce((sum, p) => sum + (p.totalPrice || 0), 0);
 
-          // Also fetch latest vendor data to sync header fields
+          // Fetch latest vendor data to sync ALL header fields
           let vendorTerms = poVersion.terms || '';
           let vendorRepName = poVersion.repName || '';
           let vendorRepPhone = poVersion.repPhone || '';
@@ -294,42 +294,60 @@ const getPurchaseOrder = async (req, res) => {
           try {
             const latestVendor = await Vendor.findById(vendorId).lean();
             if (latestVendor) {
-              vendorTerms = latestVendor.termsAndPayment?.terms || poVersion.terms || '';
-              vendorRepName = latestVendor.representativeName || poVersion.repName || '';
-              vendorRepPhone = latestVendor.contactInfo?.phone || poVersion.repPhone || '';
-              vendorRepEmail = latestVendor.contactInfo?.email || poVersion.repEmail || '';
-              vendorAccountNumber = latestVendor.accountNumber || poVersion.accountNumber || '';
-              vendorInfoLatest = mapVendorToInfo(latestVendor);
+              vendorTerms         = latestVendor.termsAndPayment?.terms || '';
+              vendorRepName       = latestVendor.representativeName || '';
+              vendorRepPhone      = latestVendor.contactInfo?.phone || '';
+              vendorRepEmail      = latestVendor.contactInfo?.email || '';
+              vendorAccountNumber = latestVendor.accountNumber || '';
+              vendorInfoLatest    = mapVendorToInfo(latestVendor);
             }
           } catch (vendorErr) {
             console.warn('⚠️ Could not fetch vendor for sync:', vendorErr.message);
           }
 
-          // Update PO in DB with synced products and vendor fields (only latest version)
+          // Build shipTo from latest order product shipping data
+          let shipToLatest = poVersion.shipTo || {};
+          const orderProductWithShipping = vendorProducts.find(
+            p => p.selectedOptions?.shippingStreet || p.selectedOptions?.shipToName
+          );
+          if (orderProductWithShipping) {
+            const opts = orderProductWithShipping.selectedOptions;
+            shipToLatest = {
+              name:      opts.shipToName || '',
+              address:   opts.shippingStreet || '',
+              city:      [opts.shippingCity, opts.shippingState, opts.shippingPostalCode].filter(Boolean).join(', '),
+              attention: poVersion.shipTo?.attention || '',
+              phone:     opts.shipToPhone || '',
+            };
+          }
+
+          // Update PO in DB (only latest version)
           if (version === 'latest') {
             await POVersion.findByIdAndUpdate(poVersion._id, {
-              products: syncedProducts,
+              products:      syncedProducts,
               subTotal,
-              total: subTotal + (poVersion.shipping || 0) + (poVersion.others || 0),
-              terms: vendorTerms,
-              repName: vendorRepName,
-              repPhone: vendorRepPhone,
-              repEmail: vendorRepEmail,
+              total:         subTotal + (poVersion.shipping || 0) + (poVersion.others || 0),
+              terms:         vendorTerms,
+              repName:       vendorRepName,
+              repPhone:      vendorRepPhone,
+              repEmail:      vendorRepEmail,
               accountNumber: vendorAccountNumber,
-              vendorInfo: vendorInfoLatest,
+              vendorInfo:    vendorInfoLatest,
+              shipTo:        shipToLatest,
             });
           }
 
           poVersion = {
             ...poVersion,
-            products: syncedProducts,
+            products:      syncedProducts,
             subTotal,
-            terms: vendorTerms,
-            repName: vendorRepName,
-            repPhone: vendorRepPhone,
-            repEmail: vendorRepEmail,
+            terms:         vendorTerms,
+            repName:       vendorRepName,
+            repPhone:      vendorRepPhone,
+            repEmail:      vendorRepEmail,
             accountNumber: vendorAccountNumber,
-            vendorInfo: vendorInfoLatest,
+            vendorInfo:    vendorInfoLatest,
+            shipTo:        shipToLatest,
           };
         }
       } catch (syncErr) {
