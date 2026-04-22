@@ -62,7 +62,7 @@ const userSchema = new mongoose.Schema({
   teamAssignment: {
     designer: {
       type: String,
-      enum: ['Joanna Staniszewski', 'Janelle Balci', 'Ash Agustin', ''],
+      enum: ['Janelle Balci', 'Ash Agustin', 'Savanna Gonzales', 'Madeline Clifford', ''],
       default: ''
     },
     projectManager: {

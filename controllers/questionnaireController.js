@@ -296,6 +296,20 @@ const getAllQuestionnaires = async (req, res) => {
 };
 
 // Send questionnaire completion notification to admin
+// Mapping email berdasarkan nama team member
+const TEAM_EMAILS = {
+  // Project Managers
+  'Madeline Clifford': 'madeline@henderson.house',
+  'Daiki Matsumaru': 'daiki@henderson.house',
+  'Savanna Gonzales': 'savanna@henderson.house',
+  // Project Manager Assistants
+  'Haley Spitz': 'haley@henderson.house',
+  'Florence Sosrita': 'flo@henderson.house',
+  // Designers (tidak ada di list, skip kalau kosong)
+  // Designer Assistants
+  'Benny Kristanto': 'benny@henderson.house',
+};
+
 const sendQuestionnaireCompletionNotification = async (user) => {
   try {
     const { questionnaireCompletionAdminTemplate } = require('../utils/emailTemplates');
@@ -307,7 +321,6 @@ const sendQuestionnaireCompletionNotification = async (user) => {
       timeStyle: 'short'
     });
 
-    // Build questionnaire summary
     const questionnaireSummary = {
       preferred_collection: user.questionnaire?.preferred_collection || [],
       style_direction: user.questionnaire?.style_direction || [],
@@ -333,17 +346,50 @@ const sendQuestionnaireCompletionNotification = async (user) => {
       questionnaireSummary: questionnaireSummary
     });
 
-    await sendEmail({
-      to: 'almer@henderson.house',
-      toName: 'Almer Andromeda',
-      subject: `✅ Questionnaire Completed - ${user.name} (Unit ${user.unitNumber})`,
-      htmlContent: htmlContent
-    });
+    // Kumpulkan semua penerima dari teamAssignment
+    const teamAssignment = user.teamAssignment || {};
+    const recipients = [];
 
-    console.log('✅ Questionnaire completion notification sent to admin');
+    const roles = [
+      { role: 'projectManager', name: teamAssignment.projectManager },
+      { role: 'projectManagerAssistant', name: teamAssignment.projectManagerAssistant },
+      { role: 'designer', name: teamAssignment.designer },
+      { role: 'designerAssistant', name: teamAssignment.designerAssistant },
+    ];
+
+    for (const { role, name } of roles) {
+      if (name && TEAM_EMAILS[name]) {
+        recipients.push({ name, email: TEAM_EMAILS[name], role });
+      }
+    }
+
+    // Selalu include almer sebagai fallback
+    const almerEmail = 'gustianggara@henderson.house';
+    const almerInList = recipients.some(r => r.email === almerEmail);
+    if (!almerInList) {
+      recipients.push({ name: 'A Gusti Anggara Putra', email: almerEmail, role: 'admin' });
+    }
+
+    console.log(`📧 Sending questionnaire notification to ${recipients.length} recipient(s):`);
+    recipients.forEach(r => console.log(`   - ${r.name} <${r.email}> (${r.role})`));
+
+    // Kirim ke semua penerima secara parallel
+    const emailPromises = recipients.map(({ name, email }) =>
+      sendEmail({
+        to: email,
+        toName: name,
+        subject: `✅ Questionnaire Completed - ${user.name} (Unit ${user.unitNumber})`,
+        htmlContent: htmlContent
+      }).catch(err => {
+        console.error(`⚠️ Failed to send to ${name} <${email}>:`, err.message);
+      })
+    );
+
+    await Promise.all(emailPromises);
+    console.log('✅ All questionnaire completion notifications sent');
+
   } catch (error) {
     console.error('❌ Error sending questionnaire completion notification:', error);
-    // Don't throw - this is non-critical notification
   }
 };
 
