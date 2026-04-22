@@ -34,7 +34,7 @@ const buildProductData = (body, uploadedFile = null) => {
     description: body.description  || '',
     category:    body.category     || 'General',
     collection:  body.collection   || 'General',
-    package:     (['Lani','Nalu'].includes(body.package) ? body.package : ''),
+    package:     (['Lani','Nalu','Mainland'].includes(body.package) ? body.package : ''),
     dimension:   body.dimension    || '',
     price:       parseFloat(body.price) || 0,
     woodFinish,
@@ -178,14 +178,47 @@ const deleteProduct = async (req, res) => {
 };
 
 // ─── BULK DELETE ───────────────────────────────────────────────────────────
+// Accepts either:
+//   { product_ids: ['SKU1', 'SKU2'] }           — legacy, SKU-only
+//   { filters: [{ product_id, name, category }] } — new, multi-field match
 const bulkDeleteProducts = async (req, res) => {
   try {
-    const { product_ids } = req.body;
-    if (!Array.isArray(product_ids) || !product_ids.length)
-      return res.status(400).json({ message: 'product_ids array is required' });
+    const { product_ids, filters } = req.body;
 
-    const products = await Product.find({ product_id: { $in: product_ids } });
+    // Build MongoDB $or query from filters array
+    // Each filter row = AND within the row (all provided fields must match)
+    // Multiple rows = OR between rows
+    let query;
 
+    if (filters && Array.isArray(filters) && filters.length > 0) {
+      const orConditions = filters.map(row => {
+        const and = {};
+        if (row.product_id) and.product_id = { $regex: `^${row.product_id.trim()}$`, $options: 'i' };
+        if (row.name)       and.name       = { $regex: `^${row.name.trim()}$`,       $options: 'i' };
+        if (row.category)   and.category   = { $regex: `^${row.category.trim()}$`,   $options: 'i' };
+        return and;
+      }).filter(cond => Object.keys(cond).length > 0);
+
+      if (!orConditions.length)
+        return res.status(400).json({ message: 'No valid filter criteria provided' });
+
+      query = orConditions.length === 1 ? orConditions[0] : { $or: orConditions };
+
+    } else if (product_ids && Array.isArray(product_ids) && product_ids.length) {
+      // Legacy: delete by SKU array
+      query = { product_id: { $in: product_ids } };
+
+    } else {
+      return res.status(400).json({ message: 'Provide either filters or product_ids' });
+    }
+
+    // Find matching products first (for S3 cleanup)
+    const products = await Product.find(query);
+
+    if (!products.length)
+      return res.json({ message: 'No matching products found', deletedCount: 0 });
+
+    // Delete S3 images
     await Promise.all(products.map(async p => {
       if (p.image?.key) {
         try {
@@ -198,10 +231,11 @@ const bulkDeleteProducts = async (req, res) => {
       }
     }));
 
-    const result = await Product.deleteMany({ product_id: { $in: product_ids } });
+    const result = await Product.deleteMany(query);
     res.json({ message: 'Products deleted successfully', deletedCount: result.deletedCount });
   } catch (error) {
-    res.status(500).json({ message: 'Error deleting products' });
+    console.error('bulkDeleteProducts error:', error);
+    res.status(500).json({ message: 'Error deleting products', error: error.message });
   }
 };
 
@@ -294,6 +328,19 @@ const getProductVariants = async (req, res) => {
   }
 };
 
+
+// ─── GET unique categories (for filter dropdowns) ─────────────────────────
+const getProductCategories = async (req, res) => {
+  try {
+    const categories = await Product.distinct('category', { category: { $nin: ['', null, 'General'] } });
+    const sorted = categories.filter(Boolean).sort((a, b) => a.localeCompare(b));
+    res.json({ categories: sorted });
+  } catch (error) {
+    console.error('getProductCategories error:', error);
+    res.status(500).json({ message: 'Error fetching categories' });
+  }
+};
+
 module.exports = {
   getProducts,
   getProduct,
@@ -305,4 +352,5 @@ module.exports = {
   bulkDeleteProducts,
   createProductFromCustomOrder,
   updateCustomAttributes,
+  getProductCategories,
 };

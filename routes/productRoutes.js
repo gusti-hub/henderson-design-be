@@ -15,7 +15,8 @@ const {
   getProductVariants,
   bulkDeleteProducts,
   createProductFromCustomOrder,
-  updateCustomAttributes
+  updateCustomAttributes,
+  getProductCategories,
 } = require('../controllers/productController');
 
 // Protected routes
@@ -24,6 +25,7 @@ router.use(protect);
 // ✅ Static/specific routes FIRST
 router.get('/basic-info', getProductsBasicInfo);
 router.post('/bulk-delete', bulkDeleteProducts);
+router.get('/categories', getProductCategories);
 
 // ✅ Custom order routes
 router.post('/custom-order-product', createProductFromCustomOrder);

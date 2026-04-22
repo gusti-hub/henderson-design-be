@@ -36,7 +36,12 @@ const getOrderVendors = async (req, res) => {
         };
       }
 
-      const totalPrice = (product.unitPrice || 0) * (product.quantity || 1);
+      // Use net/purchase price (msrp), not selling price (unitPrice)
+      const opts = product.selectedOptions || {};
+      const netCost = (opts.netCostOverride != null && opts.netCostOverride !== '')
+        ? parseFloat(opts.netCostOverride)
+        : parseFloat(opts.msrp || 0);
+      const totalPrice = netCost * (product.quantity || 1);
       vendorMap[vendorId].products.push({ ...product, totalPrice });
       vendorMap[vendorId].totalAmount += totalPrice;
       vendorMap[vendorId].productCount += 1;
@@ -141,7 +146,6 @@ const getPurchaseOrder = async (req, res) => {
     // ── Always sync PO products with latest order data ─────────────────────
     // This ensures added/removed products and updated images/prices always reflect
     if (poVersion) {
-
       try {
         const order = await Order.findById(orderId)
           .populate('selectedProducts.vendor')
@@ -178,7 +182,11 @@ const getPurchaseOrder = async (req, res) => {
               // Product exists in PO — refresh ALL fields from order (source of truth)
               // Only preserve PO-specific fields: poNumber, notes, unitPrice overrides
               const specs = [];
-              if (opts.specifications) specs.push(opts.specifications);
+              if (opts.vendorDescription) {
+                specs.push(opts.vendorDescription);
+              } else {
+                if (opts.specifications) specs.push(opts.specifications);
+              }
               if (opts.finish) specs.push(`Finish: ${opts.finish}`);
               if (opts.fabric) specs.push(`Fabric: ${opts.fabric}`);
               if (opts.size) specs.push(`Size: ${opts.size}`);
@@ -222,7 +230,11 @@ const getPurchaseOrder = async (req, res) => {
             } else {
               // New product — build fresh from order data
               const specs = [];
-              if (opts.specifications) specs.push(opts.specifications);
+              if (opts.vendorDescription) {
+                specs.push(opts.vendorDescription);
+              } else {
+                if (opts.specifications) specs.push(opts.specifications);
+              }
               if (opts.finish) specs.push(`Finish: ${opts.finish}`);
               if (opts.fabric) specs.push(`Fabric: ${opts.fabric}`);
               if (opts.size) specs.push(`Size: ${opts.size}`);
@@ -272,16 +284,53 @@ const getPurchaseOrder = async (req, res) => {
           // Recalculate subTotal based on synced products
           const subTotal = syncedProducts.reduce((sum, p) => sum + (p.totalPrice || 0), 0);
 
-          // Update PO in DB with synced products (only latest version)
+          // Also fetch latest vendor data to sync header fields
+          let vendorTerms = poVersion.terms || '';
+          let vendorRepName = poVersion.repName || '';
+          let vendorRepPhone = poVersion.repPhone || '';
+          let vendorRepEmail = poVersion.repEmail || '';
+          let vendorAccountNumber = poVersion.accountNumber || '';
+          let vendorInfoLatest = poVersion.vendorInfo || {};
+          try {
+            const latestVendor = await Vendor.findById(vendorId).lean();
+            if (latestVendor) {
+              vendorTerms = latestVendor.termsAndPayment?.terms || poVersion.terms || '';
+              vendorRepName = latestVendor.representativeName || poVersion.repName || '';
+              vendorRepPhone = latestVendor.contactInfo?.phone || poVersion.repPhone || '';
+              vendorRepEmail = latestVendor.contactInfo?.email || poVersion.repEmail || '';
+              vendorAccountNumber = latestVendor.accountNumber || poVersion.accountNumber || '';
+              vendorInfoLatest = mapVendorToInfo(latestVendor);
+            }
+          } catch (vendorErr) {
+            console.warn('⚠️ Could not fetch vendor for sync:', vendorErr.message);
+          }
+
+          // Update PO in DB with synced products and vendor fields (only latest version)
           if (version === 'latest') {
             await POVersion.findByIdAndUpdate(poVersion._id, {
               products: syncedProducts,
               subTotal,
               total: subTotal + (poVersion.shipping || 0) + (poVersion.others || 0),
+              terms: vendorTerms,
+              repName: vendorRepName,
+              repPhone: vendorRepPhone,
+              repEmail: vendorRepEmail,
+              accountNumber: vendorAccountNumber,
+              vendorInfo: vendorInfoLatest,
             });
           }
 
-          poVersion = { ...poVersion, products: syncedProducts, subTotal };
+          poVersion = {
+            ...poVersion,
+            products: syncedProducts,
+            subTotal,
+            terms: vendorTerms,
+            repName: vendorRepName,
+            repPhone: vendorRepPhone,
+            repEmail: vendorRepEmail,
+            accountNumber: vendorAccountNumber,
+            vendorInfo: vendorInfoLatest,
+          };
         }
       } catch (syncErr) {
         // Sync failure should not block PO load — log and continue
@@ -323,7 +372,11 @@ const getPurchaseOrder = async (req, res) => {
 
         // Build description from specifications + key fields
         const specs = [];
-        if (opts.specifications) specs.push(opts.specifications);
+        if (opts.vendorDescription) {
+          specs.push(opts.vendorDescription);
+        } else {
+          if (opts.specifications) specs.push(opts.specifications);
+        }
         if (opts.finish) specs.push(`Finish: ${opts.finish}`);
         if (opts.fabric) specs.push(`Fabric: ${opts.fabric}`);
         if (opts.size) specs.push(`Size: ${opts.size}`);

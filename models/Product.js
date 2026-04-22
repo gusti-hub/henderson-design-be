@@ -34,7 +34,7 @@ const productSchema = new mongoose.Schema({
   description: { type: String, default: '' },
   category:    { type: String, default: 'General' },
   collection:  { type: String, default: 'General' },
-  package:     { type: String, enum: ['', 'Lani', 'Nalu'], default: '' },
+  package:     { type: String, enum: ['', 'Lani', 'Nalu', 'Mainland'], default: '' },
 
   // Specs
   dimension: { type: String, default: '' },

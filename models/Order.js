@@ -64,7 +64,7 @@ const orderSchema = new mongoose.Schema({
     // ✅ NEW: package dari product catalog (Lani / Nalu)
     package: {
       type: String,
-      enum: ['', 'Lani', 'Nalu'],
+      enum: ['', 'Lani', 'Nalu', 'Mainland'],
       default: ''
     },
 
