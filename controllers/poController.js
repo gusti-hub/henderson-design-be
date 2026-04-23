@@ -305,7 +305,7 @@ const getPurchaseOrder = async (req, res) => {
             console.warn('⚠️ Could not fetch vendor for sync:', vendorErr.message);
           }
 
-          // Build shipTo from latest order product shipping data
+          // Build shipTo from Shipping tab fields in CustomProductManager
           let shipToLatest = poVersion.shipTo || {};
           const orderProductWithShipping = vendorProducts.find(
             p => p.selectedOptions?.shippingStreet || p.selectedOptions?.shipToName
@@ -316,7 +316,7 @@ const getPurchaseOrder = async (req, res) => {
               name:      opts.shipToName || '',
               address:   opts.shippingStreet || '',
               city:      [opts.shippingCity, opts.shippingState, opts.shippingPostalCode].filter(Boolean).join(', '),
-              attention: poVersion.shipTo?.attention || '',
+              attention: '',
               phone:     opts.shipToPhone || '',
             };
           }
