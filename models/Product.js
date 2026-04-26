@@ -40,6 +40,12 @@ const productSchema = new mongoose.Schema({
   dimension: { type: String, default: '' },
   price:     { type: Number, required: true, default: 0 },
 
+  colorFinish:       { type: String, default: '' },
+  itemUrl:           { type: String, default: '' },
+  itemClass:         { type: String, default: '' },
+  vendorDescription: { type: String, default: '' },
+
+
   // Finish attributes — auto-parsed from SKU, overridable
   woodFinish: { type: String, enum: ['', 'MD', 'DK'], default: '' },
   fabric:     { type: String, default: '' },   // one of FABRIC_CODES or ''

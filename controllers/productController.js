@@ -36,6 +36,10 @@ const buildProductData = (body, uploadedFile = null) => {
     collection:  body.collection   || 'General',
     package:     (['Lani','Nalu','Mainland'].includes(body.package) ? body.package : ''),
     dimension:   body.dimension    || '',
+    colorFinish:       body.colorFinish       || '',
+    itemUrl:           body.itemUrl           || '',
+    itemClass:         body.itemClass         || '',
+    vendorDescription: body.vendorDescription || '',
     price:       parseFloat(body.price) || 0,
     woodFinish,
     fabric,
@@ -73,7 +77,7 @@ const getProducts = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('product_id name description category collection package dimension price woodFinish fabric others image uploadedImages')
+        .select('product_id name description vendorDescription category collection package dimension colorFinish itemUrl itemClass price woodFinish fabric others image uploadedImages')
         .lean()
     ]);
 

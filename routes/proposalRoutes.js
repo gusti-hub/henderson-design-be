@@ -1,4 +1,6 @@
-// routes/proposals.js - NEW FILE
+// routes/proposalRoutes.js (or wherever proposal routes are defined)
+// ✅ Add/update these routes — especially the new ensure-number endpoint
+
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
@@ -6,21 +8,25 @@ const {
   getProposalData,
   saveProposal,
   saveAsNewVersion,
-  getAllVersions
+  getAllVersions,
+  ensureProposalNumberEndpoint,
 } = require('../controllers/proposalController');
 
-router.use(protect);
+// ── Ensure proposal number (called by CustomProductManager on mount) ──────────
+// Idempotent: generates and persists if not set, returns existing if already set.
+// Formula: Hen-[ClientCode]-[last6charsOrderId] — unique per project, deterministic.
+router.post('/:orderId/ensure-number', protect, ensureProposalNumberEndpoint);
 
-// Get proposal data (latest or specific version)
-router.get('/:orderId/:version?', getProposalData);
+// ── Get proposal data (latest or specific version) ────────────────────────────
+router.get('/:orderId/latest',          protect, (req, res) => {
+  req.params.version = 'latest';
+  getProposalData(req, res);
+});
+router.get('/:orderId/:version',        protect, getProposalData);
+router.get('/:orderId/versions/all',    protect, getAllVersions);
 
-// Save proposal (update current version)
-router.put('/:orderId', saveProposal);
-
-// Save as new version
-router.post('/:orderId/new-version', saveAsNewVersion);
-
-// Get all versions
-router.get('/:orderId/versions/all', getAllVersions);
+// ── Save / update ─────────────────────────────────────────────────────────────
+router.put('/:orderId',                 protect, saveProposal);
+router.post('/:orderId/new-version',    protect, saveAsNewVersion);
 
 module.exports = router;

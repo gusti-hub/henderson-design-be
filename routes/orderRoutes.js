@@ -18,7 +18,8 @@ const {
   uploadOrderFloorPlan,         // ✅ ADD
   generateInstallBinder,
   generateStatusReport,
-  getUploadPresignedUrl
+  getUploadPresignedUrl,
+  generateCogExcel,
 } = require('../controllers/orderController');
 const { 
   handlePaymentProofUpload,
@@ -26,6 +27,8 @@ const {
   handleFloorPlanUpload         // ✅ ADD
 } = require('../config/s3');
 const proposalVersionController = require('../controllers/proposalVersionController');
+const { ensureProposalNumber } = require('../controllers/proposalController');
+
 
 router.post('/presigned-url', getUploadPresignedUrl);
 
@@ -35,6 +38,8 @@ router.use(protect);
 // ===================================
 // ✅ IMAGE & FILE UPLOADS (BEFORE /:id routes)
 // ===================================
+
+router.get('/:id/cog-report', generateCogExcel);
 
 // Upload custom product images
 router.post(
