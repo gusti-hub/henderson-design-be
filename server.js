@@ -14,6 +14,7 @@ const agreementRoutes = require('./routes/agreementRoutes');
 const proposalRoutes = require('./routes/proposalRoutes');
 const vendorRoutes = require('./routes/vendorRoutes');
 const poRoutes = require('./routes/poRoutes');
+const expenseRoutes = require('./routes/expenseRoutes');
 
 // Load env vars
 dotenv.config();
@@ -81,6 +82,7 @@ app.use('/api/quickbooks', quickbooksRoutes);
 app.use('/api/agreements', agreementRoutes);
 app.use('/api/proposals', proposalRoutes);
 app.use('/api/vendors', vendorRoutes);
+app.use('/api/expenses', expenseRoutes);
 
 // Enhanced error handling
 app.use((err, req, res, next) => {
