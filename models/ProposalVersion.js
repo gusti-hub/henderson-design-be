@@ -37,8 +37,27 @@ const proposalVersionSchema = new mongoose.Schema({
       size: String,
       insetPanel: String,
       image: String,
+      images: [String],
       specifications: String,
-      notes: String
+      notes: String,
+      sidemark: String,
+      itemClass: String,
+      vendorDescription: String,
+      room: String,
+      units: String,
+      msrp: Number,
+      discountPercent: Number,
+      netCostOverride: Number,
+      markupPercent: Number,
+      salesTaxRate: Number,
+      uploadedImages: [{
+        filename: String,
+        contentType: String,
+        url: String,
+        key: String,
+        size: Number,
+        uploadedAt: Date
+      }]
     }
   }],
   
