@@ -1,33 +1,40 @@
 // controllers/proposalController.js
-// ✅ FINAL: Proposal number guaranteed unique per project
-//   Format: Hen-[ClientCode]-[6-char orderId suffix]
-//   Example: Hen-LAN-4f8a2c
-//   - Deterministic: same orderId always yields same number
-//   - Generated ONCE per order, never overwritten
-//   - All code paths use ensureProposalNumber() — single source of truth
+// ✅ FIXED: Proposal number now uses sequential counter format: Hen-[ClientCode]-[000001]
+//   - ClientCode = 3 huruf dari last name client
+//   - Counter = nomor urut 6 digit dari total proposals yang sudah ada
+//   - Contoh: Hen-LAN-000001, Hen-FAR-000002
+//   - Idempotent: jika sudah ada, tidak dibuat ulang
 
 const Order = require('../models/Order');
 const ProposalVersion = require('../models/ProposalVersion');
 
 // ─── Single canonical proposal number generator ───────────────────────────────
-// Uses last 6 chars of orderId (hex) — globally unique because orderId is unique.
-// ClientCode from last name for readability.
-// Idempotent: if already set, returns existing.
 const ensureProposalNumber = async (order) => {
   if (order.proposalNumber) return order.proposalNumber;
 
+  // Client code: 3 huruf dari last name
   const clientName = order.clientInfo?.name || 'CLT';
-  const nameParts  = clientName.trim().split(/\s+/);
-  const lastName   = nameParts[nameParts.length - 1] || nameParts[0] || 'CLT';
-  const clientCode = lastName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
-  const numPart    = order._id.toString().slice(-6).toUpperCase();
-  const proposalNumber = `Hen-${clientCode}-${numPart}`;
+  // Extract first alphabetic word from client name — handles formats like:
+  // "Fang - The Park - Unit 1015" → "FAN"
+  // "Langford" → "LAN"
+  // "John Smith" → "JOH"
+  const nameParts  = clientName.trim().split(/[\s\-\/]+/);
+  const firstWord  = nameParts.find(p => /[a-zA-Z]/.test(p)) || 'CLT';
+  const clientCode = firstWord.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+
+  // ✅ FIX: Counter urut — hitung orders yang sudah punya proposalNumber
+  const count = await Order.countDocuments({
+    proposalNumber: { $exists: true, $ne: null, $ne: '' }
+  });
+  const counter = String(count + 1).padStart(6, '0'); // "000001", "000002", dst
+
+  const proposalNumber = `Hen-${clientCode}-${counter}`;
 
   // Persist — use findByIdAndUpdate with $set to avoid race conditions
   await Order.findByIdAndUpdate(
     order._id,
     { $set: { proposalNumber } },
-    { new: false } // don't need return value
+    { new: false }
   );
 
   console.log(`[proposal] Generated proposalNumber: ${proposalNumber} for order ${order._id}`);
@@ -40,7 +47,6 @@ const getProposalData = async (req, res) => {
     const { orderId, version } = req.params;
 
     if (version && version !== 'latest') {
-      // Specific version — fetch both ProposalVersion and Order.proposalNumber
       const [proposalVersion, order] = await Promise.all([
         ProposalVersion.findOne({ orderId, version: parseInt(version) }),
         Order.findById(orderId).select('proposalNumber clientInfo').lean(),
@@ -50,7 +56,6 @@ const getProposalData = async (req, res) => {
         return res.status(404).json({ message: 'Proposal version not found' });
       }
 
-      // Ensure proposalNumber exists on the order
       let proposalNumber = order?.proposalNumber;
       if (!proposalNumber && order) {
         const fullOrder = await Order.findById(orderId);
@@ -67,10 +72,9 @@ const getProposalData = async (req, res) => {
     }
 
     // Latest version
-    const order = await Order.findById(orderId).populate('user').lean();
+    const order = await Order.findById(orderId).populate('user', 'name email address unitNumber phoneNumber').lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    // Ensure proposalNumber exists
     let proposalNumber = order.proposalNumber;
     if (!proposalNumber) {
       const fullOrder = await Order.findById(orderId);
@@ -113,7 +117,6 @@ const saveProposal = async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    // Ensure proposalNumber — idempotent, safe to call every time
     const proposalNumber = await ensureProposalNumber(order);
 
     if (version === 0) {
@@ -215,8 +218,7 @@ const getAllVersions = async (req, res) => {
   }
 };
 
-// ─── ENSURE proposal number (called by CustomProductManager on mount) ─────────
-// Idempotent endpoint — returns existing number or generates new one.
+// ─── ENSURE proposal number endpoint ─────────────────────────────────────────
 const ensureProposalNumberEndpoint = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -230,10 +232,53 @@ const ensureProposalNumberEndpoint = async (req, res) => {
   }
 };
 
+
+// ─── ONE-TIME MIGRATION: Reset old hex-format proposal numbers ───────────────
+// @route POST /api/proposals/migrate-numbers
+// Run once to reset all old "Hen-XXX-8FC2CA" format numbers so they get
+// regenerated as sequential "Hen-LAN-000001" format on next proposal open.
+// Safe to call multiple times — only touches old hex-format numbers.
+const migrateProposalNumbers = async (req, res) => {
+  try {
+    // Match old format: Hen-[3 letters]-[6 hex chars]  e.g. Hen-LAN-8FC2CA
+    const oldFormatRegex = /^Hen-[A-Z]{3}-[0-9A-F]{6}$/;
+
+    // Find all orders with old-format proposal numbers
+    const orders = await Order.find({
+      proposalNumber: { $exists: true, $ne: null, $ne: '' }
+    }).select('proposalNumber').lean();
+
+    const toReset = orders.filter(o => oldFormatRegex.test(o.proposalNumber));
+
+    if (toReset.length === 0) {
+      return res.json({ success: true, message: 'No old-format numbers found. Nothing to migrate.', reset: 0 });
+    }
+
+    // Unset proposalNumber on all old-format orders
+    const ids = toReset.map(o => o._id);
+    await Order.updateMany(
+      { _id: { $in: ids } },
+      { $unset: { proposalNumber: '' } }
+    );
+
+    console.log(`[migration] Reset ${toReset.length} old proposal numbers`);
+    res.json({
+      success: true,
+      message: `Reset ${toReset.length} old proposal numbers. New sequential numbers will be generated when each proposal is next opened.`,
+      reset: toReset.length,
+      examples: toReset.slice(0, 5).map(o => o.proposalNumber),
+    });
+  } catch (error) {
+    console.error('migrateProposalNumbers error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getProposalData,
   saveProposal,
   saveAsNewVersion,
   getAllVersions,
   ensureProposalNumberEndpoint,
+  migrateProposalNumbers,
 };

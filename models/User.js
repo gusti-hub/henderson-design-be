@@ -81,6 +81,14 @@ const userSchema = new mongoose.Schema({
       default: ''
     }
   },
+  address: {
+    street:  { type: String, default: '' },
+    city:    { type: String, default: '' },
+    state:   { type: String, default: '' },
+    zipcode: { type: String, default: '' },
+    country: { type: String, default: '' },
+    fax:     { type: String, default: '' },
+  },
   floorPlan: {
     type: String,
     required: false,

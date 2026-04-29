@@ -45,7 +45,6 @@ const getFloorPlanConfigId = (floorPlan, collection, packageType = 'investor') =
   }
   
   // For custom/investor, use collection to determine
-
   const isLani = collection?.includes('Lani') && !collection?.includes('Developer');
   
   const residenceMap = {
@@ -446,43 +445,32 @@ const recordPayment = async (req, res) => {
 };
 
 const generateClientCode = async (name, unitNumber) => {
-  // Get the last user to determine the next sequential number
   const lastUser = await User.findOne({ clientCode: { $regex: /^\d{3}[A-Z]{1,3}\d{4}$/ } })
     .sort({ clientCode: -1 });
 
   let sequentialNumber = 1;
   if (lastUser && lastUser.clientCode) {
-    // Extract the first 3 digits from the last client code
     const lastNumber = parseInt(lastUser.clientCode.substring(0, 3), 10);
     sequentialNumber = lastNumber + 1;
   }
 
-  // Format sequential number to 3 digits
   const formattedSequentialNumber = String(sequentialNumber).padStart(3, "0");
-
-  // Extract name code (1-3 capital letters from first letters of words)
   const nameCode = extractNameCode(name);
-
-  // Format unit number to 4 digits
   const formattedUnitNumber = String(unitNumber).padStart(4, "0");
 
-  // Combine: 001JUN2342 or 002GO0045
   return formattedSequentialNumber + nameCode + formattedUnitNumber;
 };
 
 const extractNameCode = (name) => {
   if (!name) return "";
 
-  // Remove extra spaces and split by space
   const words = name.trim().split(/\s+/);
   
-  // Get first letter of each word (up to 3)
   let nameCode = words
     .slice(0, 3)
     .map(word => word.charAt(0).toUpperCase())
     .join('');
 
-  // If less than 3 letters, try to get more from first word
   if (nameCode.length < 3 && words.length > 0) {
     const firstWord = words[0].toUpperCase();
     for (let i = 1; i < firstWord.length && nameCode.length < 3; i++) {
@@ -490,7 +478,6 @@ const extractNameCode = (name) => {
     }
   }
 
-  // Return as is (1-3 characters), no padding with X
   return nameCode.substring(0, 3);
 };
 
@@ -519,12 +506,12 @@ const createClient = async (req, res) => {
       bedroomCount,
       packageType = 'investor',
       customNotes,
-      teamAssignment // ✅ NEW: Team assignment object
+      teamAssignment,
+      address           // ✅ NEW: Address object
     } = req.body;
 
     const email = rawEmail && rawEmail.trim() !== '' ? rawEmail.trim() : null;
 
-    // Log untuk konfirmasi
     console.log('📧 Email normalized:', email);
 
     if (!name || !password || !unitNumber) {
@@ -579,6 +566,16 @@ const createClient = async (req, res) => {
       designerAssistant: teamAssignment?.designerAssistant || ''
     };
 
+    // ✅ Process address
+    const processedAddress = {
+      street:  address?.street  || '',
+      city:    address?.city    || '',
+      state:   address?.state   || '',
+      zipcode: address?.zipcode || '',
+      country: address?.country || '',
+      fax:     address?.fax     || '',
+    };
+
     // Create user
     const user = await User.create({
       clientCode,
@@ -601,7 +598,8 @@ const createClient = async (req, res) => {
       bedroomCount: bedroomCount || 0,
       packageType,
       customNotes: customNotes || '',
-      teamAssignment: processedTeamAssignment, // ✅ NEW FIELD
+      teamAssignment: processedTeamAssignment,
+      address: processedAddress,                // ✅ NEW
       registrationType: 'admin-created',
       status: 'approved',
       approvedAt: new Date(),
@@ -617,6 +615,7 @@ const createClient = async (req, res) => {
 
     console.log('✅ Client created:', user.clientCode, 'Package:', packageType);
     console.log('✅ Team assigned:', processedTeamAssignment);
+    console.log('✅ Address saved:', processedAddress);
 
     // AUTO-INITIALIZE JOURNEY
     const journey = await Journey.create({
@@ -658,8 +657,8 @@ const createClient = async (req, res) => {
         id: floorPlanConfigId,
         title: user.floorPlan || 'Residence',
         description: collection
-  ? (packageType === 'custom' ? `${collection} - Custom Package` : `${collection} - ${bedroomCount} Bedroom`)
-  : 'Library Package',
+          ? (packageType === 'custom' ? `${collection} - Custom Package` : `${collection} - ${bedroomCount} Bedroom`)
+          : 'Library Package',
         image: floorPlanImage,
         clientInfo: {
           name: user.name,
@@ -668,8 +667,8 @@ const createClient = async (req, res) => {
         }
       },
       Package: collection
-  ? (packageType === 'custom' ? collection : `${collection} - ${bedroomCount}BR`)
-  : 'Library',
+        ? (packageType === 'custom' ? collection : `${collection} - ${bedroomCount}BR`)
+        : 'Library',
       selectedProducts: [],
       occupiedSpots: {},
       status: 'ongoing',
@@ -678,15 +677,12 @@ const createClient = async (req, res) => {
 
     console.log('✅ Order auto-created:', order._id, 'Config:', floorPlanConfigId, 'Package Type:', packageType);
 
-    // Send approval email
-    // Send approval email — only if email exists
     if (user.email) {
       try {
         await sendApprovalEmail(user, password);
         console.log(`✅ Approval email sent to ${user.email}`);
       } catch (emailError) {
         console.error('❌ Failed to send approval email (non-fatal):', emailError.message);
-        // Tidak throw error — client tetap terbuat meski email gagal
       }
     }
 
@@ -701,7 +697,8 @@ const createClient = async (req, res) => {
         unitNumber: user.unitNumber,
         status: user.status,
         packageType: user.packageType,
-        teamAssignment: user.teamAssignment, // ✅ Return team info
+        teamAssignment: user.teamAssignment,
+        address: user.address,               // ✅ NEW
         totalAmount,
         journeyId: journey._id,
         orderId: order._id
@@ -735,77 +732,89 @@ const updateClient = async (req, res) => {
     const allowedUpdates = [
       'name', 'email', 'unitNumber', 'phoneNumber', 'propertyType',
       'floorPlan', 'questionnaire', 'paymentInfo', 'collection', 
-      'bedroomCount', 'packageType', 'teamAssignment', 'unitNumber2','floorPlan2','unitNumber3','floorPlan3',
+      'bedroomCount', 'packageType', 'teamAssignment', 'address',  // ✅ 'address' added
+      'unitNumber2','floorPlan2','unitNumber3','floorPlan3',
       'unitNumber4','floorPlan4','unitNumber5','floorPlan5'
     ];
     
-  const updates = {};
-  allowedUpdates.forEach(field => {
-    if (req.body[field] !== undefined) {
-      updates[field] = req.body[field];
-    }
-  });
-
-
-  // ✅ Normalize bedroomCount
-  if (updates.bedroomCount !== undefined) {
-    const bc = String(updates.bedroomCount).trim();
-    updates.bedroomCount = (bc && bc !== '0') ? bc : undefined;
-    if (updates.bedroomCount === undefined) delete updates.bedroomCount;
-  }
-
-  // Get current client data
-  const currentClient = await User.findById(req.params.id);
-  if (!currentClient) {
-    return res.status(404).json({ 
-      success: false,
-      message: 'Client not found' 
+    const updates = {};
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
     });
-  }
 
-  // Regenerate client code if name or unitNumber changed
-  if (req.body.name || req.body.unitNumber) {
-    const newName = req.body.name || currentClient.name;
-    const newUnitNumber = req.body.unitNumber || currentClient.unitNumber;
-    updates.clientCode = await generateClientCode(newName, newUnitNumber);
-  }
-
-  // Process team assignment
-  if (req.body.teamAssignment) {
-    updates.teamAssignment = {
-      designer: req.body.teamAssignment.designer || '',
-      projectManager: req.body.teamAssignment.projectManager || '',
-      projectManagerAssistant: req.body.teamAssignment.projectManagerAssistant || '',
-      designerAssistant: req.body.teamAssignment.designerAssistant || ''
-    };
-  }
-
-  if (req.body.password && req.body.password.trim() !== '') {
-    const salt = await bcrypt.genSalt(10);
-    updates.password = await bcrypt.hash(req.body.password, salt);
-  }
-
-  // ✅ Handle email — unset jika dikosongkan
-  const unsetFields = {};
-  if (req.body.email !== undefined) {
-    if (!req.body.email || req.body.email.trim() === '') {
-      unsetFields.email = '';
-      delete updates.email;
-    } else {
-      updates.email = req.body.email.trim();
+    // ✅ Normalize bedroomCount
+    if (updates.bedroomCount !== undefined) {
+      const bc = String(updates.bedroomCount).trim();
+      updates.bedroomCount = (bc && bc !== '0') ? bc : undefined;
+      if (updates.bedroomCount === undefined) delete updates.bedroomCount;
     }
-  }
 
-  const updateQuery = Object.keys(unsetFields).length > 0
-    ? { $set: updates, $unset: unsetFields }
-    : { $set: updates };
+    // Get current client data
+    const currentClient = await User.findById(req.params.id);
+    if (!currentClient) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Client not found' 
+      });
+    }
 
-  const client = await User.findByIdAndUpdate(
-    req.params.id,
-    updateQuery,
-    { new: true, runValidators: false }
-  ).select('-password');
-    
+    // Regenerate client code if name or unitNumber changed
+    if (req.body.name || req.body.unitNumber) {
+      const newName = req.body.name || currentClient.name;
+      const newUnitNumber = req.body.unitNumber || currentClient.unitNumber;
+      updates.clientCode = await generateClientCode(newName, newUnitNumber);
+    }
+
+    // Process team assignment
+    if (req.body.teamAssignment) {
+      updates.teamAssignment = {
+        designer: req.body.teamAssignment.designer || '',
+        projectManager: req.body.teamAssignment.projectManager || '',
+        projectManagerAssistant: req.body.teamAssignment.projectManagerAssistant || '',
+        designerAssistant: req.body.teamAssignment.designerAssistant || ''
+      };
+    }
+
+    // ✅ Process address
+    if (req.body.address) {
+      updates.address = {
+        street:  req.body.address.street  || '',
+        city:    req.body.address.city    || '',
+        state:   req.body.address.state   || '',
+        zipcode: req.body.address.zipcode || '',
+        country: req.body.address.country || '',
+        fax:     req.body.address.fax     || '',
+      };
+    }
+
+    if (req.body.password && req.body.password.trim() !== '') {
+      const salt = await bcrypt.genSalt(10);
+      updates.password = await bcrypt.hash(req.body.password, salt);
+    }
+
+    // ✅ Handle email — unset jika dikosongkan
+    const unsetFields = {};
+    if (req.body.email !== undefined) {
+      if (!req.body.email || req.body.email.trim() === '') {
+        unsetFields.email = '';
+        delete updates.email;
+      } else {
+        updates.email = req.body.email.trim();
+      }
+    }
+
+    const updateQuery = Object.keys(unsetFields).length > 0
+      ? { $set: updates, $unset: unsetFields }
+      : { $set: updates };
+
+    const client = await User.findByIdAndUpdate(
+      req.params.id,
+      updateQuery,
+      { new: true, runValidators: false }
+    ).select('-password');
+      
     if (!client) {
       return res.status(404).json({ 
         success: false,
@@ -841,8 +850,8 @@ const updateClient = async (req, res) => {
           id: floorPlanConfigId,
           title: floorPlan || 'Residence',
           Package: collection
-  ? (packageType === 'custom' ? collection : `${collection} - ${bedroomCount}BR`)
-  : 'Library',
+            ? (packageType === 'custom' ? collection : `${collection} - ${bedroomCount}BR`)
+            : 'Library',
           image: floorPlanImage,
           clientInfo: {
             name: client.name,
@@ -897,8 +906,9 @@ const updateClient = async (req, res) => {
           selectedPlan: orderUpdateFields.selectedPlan || {
             id: floorPlanConfigId,
             title: client.floorPlan || 'Residence',
-            description: client.collection ? (packageType === 'custom' ? `${collection} - Custom Package` : `${collection} - ${bedroomCount} Bedroom`)
-  : 'Library Package',
+            description: client.collection
+              ? (packageType === 'custom' ? `${collection} - Custom Package` : `${collection} - ${client.bedroomCount} Bedroom`)
+              : 'Library Package',
             image: floorPlanImage,
             clientInfo: {
               name: client.name,
@@ -919,6 +929,9 @@ const updateClient = async (req, res) => {
     console.log('✅ Client updated successfully:', client.clientCode);
     if (updates.teamAssignment) {
       console.log('✅ Team updated:', client.teamAssignment);
+    }
+    if (updates.address) {
+      console.log('✅ Address updated:', client.address);
     }
     
     res.json({
@@ -952,15 +965,12 @@ const deleteClient = async (req, res) => {
     
     console.log('🗑️ Deleting client:', client.clientCode);
     
-    // ✅ DELETE ASSOCIATED ORDER(S)
     const deletedOrders = await Order.deleteMany({ user: client._id });
     console.log(`✅ Deleted ${deletedOrders.deletedCount} order(s) for client ${client.clientCode}`);
     
-    // ✅ DELETE ASSOCIATED JOURNEY
     const deletedJourney = await Journey.deleteOne({ clientId: client._id });
     console.log(`✅ Deleted journey for client ${client.clientCode}`);
     
-    // ✅ DELETE CLIENT
     await client.deleteOne();
     console.log(`✅ Client ${client.clientCode} deleted successfully`);
     
@@ -1144,7 +1154,9 @@ const exportClientsToExcel = async (req, res) => {
       'Primary Unit', 'Floor Plan', 'Unit 2', 'Unit 3', 'Unit 4', 'Unit 5',
       'Designer', 'Project Manager', 'PM Assistant', 'Designer Asst.',
       'Step', 'Journey Stage',
-      'Collection', 'Bedrooms', 'Package', 'Property Type', 'Status', 'Registered'
+      'Collection', 'Bedrooms', 'Package', 'Property Type', 'Status', 'Registered',
+      // ✅ NEW: Address columns
+      'Street', 'City', 'State', 'Zip Code', 'Country', 'Fax'
     ];
  
     const COL_WIDTHS = [
@@ -1152,7 +1164,9 @@ const exportClientsToExcel = async (req, res) => {
       10, 20, 10, 10, 10, 10,
       22, 22, 18, 18,
       7, 24,
-      20, 10, 12, 20, 14, 14
+      20, 10, 12, 20, 14, 14,
+      // ✅ NEW: Address column widths
+      26, 18, 14, 12, 16, 14
     ];
  
     const GROUPS = [
@@ -1163,6 +1177,7 @@ const exportClientsToExcel = async (req, res) => {
       { label: 'JOURNEY',              s: 15, e: 16, bg: C.AMBER     },
       { label: 'COLLECTION & PRICING', s: 17, e: 20, bg: C.BLUE      },
       { label: 'STATUS',               s: 21, e: 22, bg: C.TEAL_DARK },
+      { label: 'ADDRESS',              s: 23, e: 28, bg: C.GREEN     }, // ✅ NEW
     ];
  
     const row2groups = Array(COL_HEADERS.length).fill(null);
@@ -1199,6 +1214,13 @@ const exportClientsToExcel = async (req, res) => {
           client.propertyType || '',
           client.status || '',
           client.createdAt ? new Date(client.createdAt).toLocaleDateString('en-US') : '',
+          // ✅ NEW: Address fields
+          client.address?.street  || '',
+          client.address?.city    || '',
+          client.address?.state   || '',
+          client.address?.zipcode || '',
+          client.address?.country || '',
+          client.address?.fax     || '',
         ];
       }),
       [],
@@ -1490,10 +1512,8 @@ const exportClientsToExcel = async (req, res) => {
           border:    border(),
         };
       }
-      // Name col — bold
       const na = XLSX.utils.encode_cell({ r, c: 0 });
       if (ws3[na]) ws3[na].s.font = { bold: true, sz: 9, color: { rgb: C.DARK }, name: 'Arial' };
-      // Role col — colored badge style
       const ra = XLSX.utils.encode_cell({ r, c: 1 });
       if (ws3[ra]) ws3[ra].s = {
         font:      { bold: true, sz: 9, color: { rgb: rc.accent }, name: 'Arial' },
@@ -1501,7 +1521,6 @@ const exportClientsToExcel = async (req, res) => {
         alignment: { horizontal: 'center', vertical: 'center' },
         border:    border(),
       };
-      // Count col — large number
       const ca = XLSX.utils.encode_cell({ r, c: 2 });
       if (ws3[ca]) ws3[ca].s = {
         font:      { bold: true, sz: 14, color: { rgb: rc.accent }, name: 'Arial' },
