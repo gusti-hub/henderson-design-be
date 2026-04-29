@@ -2279,31 +2279,30 @@ const getUploadPresignedUrl = async (req, res) => {
 // Format: Row1=project title, Row2=yellow bar, Row3=black header, data, SUM total
 const generateCogExcel = async (req, res) => {
   try {
-    const ExcelJS  = require('exceljs'); // ✅ fetch PO numbers from here
+    const ExcelJS   = require('exceljs');
 
     const order = await Order.findById(req.params.id)
       .populate('selectedProducts.vendor')
       .lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    const clientName  = order.clientInfo?.name || 'Client';
-    const unitNumber  = order.clientInfo?.unitNumber || '';
-    const shortId     = req.params.id.toString().slice(-4).toUpperCase();
-    const nameParts   = clientName.trim().split(/\s+/);
-    const lastName    = nameParts[nameParts.length - 1] || nameParts[0] || 'CLT';
-    const clientCode  = lastName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
-    const lotLabel    = unitNumber ? ` - Lot ${unitNumber}` : '';
+    const clientName   = order.clientInfo?.name || 'Client';
+    const unitNumber   = order.clientInfo?.unitNumber || '';
+    const shortId      = req.params.id.toString().slice(-4).toUpperCase();
+    const nameParts    = clientName.trim().split(/\s+/);
+    const lastName     = nameParts[nameParts.length - 1] || nameParts[0] || 'CLT';
+    const clientCode   = lastName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+    const lotLabel     = unitNumber ? ` - Lot ${unitNumber}` : '';
     const projectLabel = `Project: ${clientName}${lotLabel} - ${shortId}`;
 
     const products = order.selectedProducts || [];
 
-    // ✅ Fetch latest POVersion per vendor for this order
-    // Sorted desc so first-seen = latest version
+    // ✅ Fetch latest POVersion per vendor — for PO number lookup
     const poVersions = await POVersion.find({ orderId: req.params.id })
       .sort({ version: -1 })
       .lean();
 
-    // vendorId (string) → poNumber from latest PO version
+    // vendorId (string) → { poNumber, poVersionDoc }
     const vendorPOMap = new Map();
     poVersions.forEach(po => {
       const key = po.vendorId?.toString();
@@ -2314,38 +2313,40 @@ const generateCogExcel = async (req, res) => {
 
     const getVendorName = (p) => {
       if (p.vendor && typeof p.vendor === 'object' && p.vendor.name) return p.vendor.name;
-      return p.selectedOptions?.shipToName || 'Unknown Vendor';
+      return p.selectedOptions?.shipToName || 'HDG Inventory';
     };
 
-    const map = new Map();
+    // ✅ GROUP BY VENDOR (not PO#) so all vendors appear even without a PO
+    // Within each vendor group, show the PO# if one exists
+    const vendorMap = new Map();
+
     products.forEach((p) => {
-      // ✅ Priority: POVersion.poNumber → selectedOptions.poNumber → "(No PO#)"
-      const vendorId  = p.vendor?._id?.toString() || p.vendor?.toString();
-      const poFromPOV = vendorId ? (vendorPOMap.get(vendorId) || '') : '';
-      const poNumber  = poFromPOV.trim() ||
-                        p.selectedOptions?.poNumber?.trim() ||
-                        '(No PO#)';
+      const vendorId   = p.vendor?._id?.toString() || p.vendor?.toString() || 'no_vendor';
       const vendorName = getVendorName(p);
+      const poFromPOV  = vendorId !== 'no_vendor' ? (vendorPOMap.get(vendorId) || '') : '';
+      const poNumber   = poFromPOV.trim() ||
+                         p.selectedOptions?.poNumber?.trim() ||
+                         '(No PO# yet)';
 
-      // Sell price — matches ProposalEditor ProductSection formula
-      const opts      = p.selectedOptions || {};
-      const qty       = parseFloat(p.quantity) || 1;
-      const msrp      = parseFloat(opts.msrp) || 0;
-      const discount  = parseFloat(opts.discountPercent) || 0;
-      const netCost   = (opts.netCostOverride != null && opts.netCostOverride !== '')
-                          ? parseFloat(opts.netCostOverride)
-                          : msrp * (1 - discount / 100);
-      const markup    = parseFloat(opts.markupPercent) || 0;
-      const unitSell  = netCost * (1 + markup / 100);
-      const sellTotal = unitSell * qty;
+      // ✅ PURCHASE PRICE — net cost to HDG (not sell price to client)
+      // netCost = netCostOverride ?? (msrp * (1 - discount%))
+      const opts        = p.selectedOptions || {};
+      const qty         = parseFloat(p.quantity) || 1;
+      const msrp        = parseFloat(opts.msrp) || 0;
+      const discount    = parseFloat(opts.discountPercent) || 0;
+      const netCost     = (opts.netCostOverride != null && opts.netCostOverride !== '')
+                            ? parseFloat(opts.netCostOverride)
+                            : msrp * (1 - discount / 100);
+      const purchaseTotal = netCost * qty;
 
-      if (map.has(poNumber)) {
-        map.get(poNumber).total += sellTotal;
+      if (vendorMap.has(vendorId)) {
+        vendorMap.get(vendorId).total += purchaseTotal;
       } else {
-        map.set(poNumber, { poNumber, vendorName, total: sellTotal });
+        vendorMap.set(vendorId, { poNumber, vendorName, total: purchaseTotal });
       }
     });
-    const poRows = Array.from(map.values());
+
+    const poRows = Array.from(vendorMap.values());
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Henderson Design Group';
@@ -2393,11 +2394,19 @@ const generateCogExcel = async (req, res) => {
       vendorCell.alignment = { horizontal: 'left',  vertical: 'middle', indent: 1 };
       totalCell.alignment  = { horizontal: 'right', vertical: 'middle' };
       totalCell.numFmt     = '"$"#,##0.00';
+
+      // ✅ Gray out rows without a PO yet — visual indicator for forecast
+      if (row.poNumber === '(No PO# yet)') {
+        [poCell, vendorCell, totalCell].forEach(c => {
+          c.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF999999' } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+        });
+      }
     });
 
     // Grand total row
-    const lastData   = poRows.length + 3;
-    const totalRowN  = poRows.length + 4;
+    const lastData  = poRows.length + 3;
+    const totalRowN = poRows.length + 4;
     ws.getRow(totalRowN).height = 22;
     const grandTotal = ws.getCell(totalRowN, 3);
     grandTotal.value     = { formula: `SUM(C4:C${lastData})` };

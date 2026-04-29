@@ -1,9 +1,9 @@
-// routes/productRoutes.js - UPDATED
+// routes/productRoutes.js
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
 const { 
-  handleProductImagesUpload  // ✅ CORRECT name from new s3.js
+  handleProductImagesUpload
 } = require('../config/s3');
 const {
   getProducts,
@@ -17,29 +17,31 @@ const {
   createProductFromCustomOrder,
   updateCustomAttributes,
   getProductCategories,
+  bulkUpdatePreview,
+  bulkUpdateProducts,
+  exportAllProducts
 } = require('../controllers/productController');
 
-// Protected routes
 router.use(protect);
 
-// ✅ Static/specific routes FIRST
-router.get('/basic-info', getProductsBasicInfo);
-router.post('/bulk-delete', bulkDeleteProducts);
-router.get('/categories', getProductCategories);
-
-// ✅ Custom order routes
+// ── Static routes (harus di atas /:id) ────────────────────────────────────
+router.get('/basic-info',            getProductsBasicInfo);
+router.get('/categories',            getProductCategories);
+router.get('/export/all',            exportAllProducts);
+router.post('/bulk-delete',          bulkDeleteProducts);
+router.post('/bulk-update/preview',  bulkUpdatePreview);
+router.put('/bulk-update',           bulkUpdateProducts);
 router.post('/custom-order-product', createProductFromCustomOrder);
 
-// ✅ Routes with specific patterns
-router.get('/:id/variants', getProductVariants);
-router.put('/:id/custom-attributes', updateCustomAttributes);
-
-// ✅ Main collection route - use handleProductImagesUpload
+// ── Collection route ───────────────────────────────────────────────────────
 router.route('/')
   .get(getProducts)
   .post(handleProductImagesUpload, createProduct);
 
-// ✅ Dynamic ID routes LAST
+// ── Dynamic :id routes (harus paling bawah) ───────────────────────────────
+router.get('/:id/variants',              getProductVariants);
+router.put('/:id/custom-attributes',     updateCustomAttributes);
+
 router.route('/:id')
   .get(getProduct)
   .put(handleProductImagesUpload, updateProduct)

@@ -345,6 +345,203 @@ const getProductCategories = async (req, res) => {
   }
 };
 
+const buildUpdatePayloadFromRow = (row) => {
+  const payload = {};
+ 
+  const str = (v) => (v !== undefined && v !== null ? String(v).trim() : undefined);
+  const num = (v) => { const n = parseFloat(v); return isNaN(n) ? undefined : n; };
+  const arr = (v) => {
+    if (!v && v !== 0) return undefined;
+    const s = String(v).trim();
+    if (!s) return [];
+    return s.split(',').map(x => x.trim()).filter(Boolean);
+  };
+ 
+  const VALID_PACKAGES = ['', 'Lani', 'Nalu', 'Mainland'];
+ 
+  if (row.name              !== undefined) payload.name              = str(row.name);
+  if (row.description       !== undefined) payload.description       = str(row.description);
+  if (row.vendorDescription !== undefined) payload.vendorDescription = str(row.vendorDescription);
+  if (row.category          !== undefined) payload.category          = str(row.category) || 'General';
+  if (row.collection        !== undefined) payload.collection        = str(row.collection) || 'General';
+  if (row.dimension         !== undefined) payload.dimension         = str(row.dimension);
+  if (row.colorFinish        !== undefined) payload.colorFinish       = str(row.colorFinish);
+  if (row.itemUrl            !== undefined) payload.itemUrl           = str(row.itemUrl);
+  if (row.itemClass          !== undefined) payload.itemClass         = str(row.itemClass);
+  if (row.woodFinish         !== undefined) payload.woodFinish        = str(row.woodFinish);
+  if (row.fabric             !== undefined) payload.fabric            = str(row.fabric);
+ 
+  if (row.price !== undefined) {
+    const p = num(row.price);
+    if (p !== undefined) payload.price = p;
+  }
+ 
+  if (row.package !== undefined) {
+    const pkg = str(row.package);
+    payload.package = VALID_PACKAGES.includes(pkg) ? pkg : '';
+  }
+ 
+  if (row.others !== undefined) {
+    payload.others = arr(row.others) ?? [];
+  }
+ 
+  if (row.imageUrl !== undefined && str(row.imageUrl)) {
+    payload.image = { url: str(row.imageUrl), key: '' };
+  }
+ 
+  return payload;
+};
+ 
+// ─── Compare existing doc vs new payload — return only changed fields ─────
+const diffProduct = (existing, payload) => {
+  const changes = {};
+ 
+  const strEq = (a, b) => String(a ?? '').trim() === String(b ?? '').trim();
+  const numEq = (a, b) => {
+    const na = parseFloat(a), nb = parseFloat(b);
+    return isNaN(na) && isNaN(nb) ? true : na === nb;
+  };
+  const arrEq = (a, b) => JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
+ 
+  const numFields = ['price'];
+  const arrFields = ['others'];
+  const imgFields = ['imageUrl'];
+ 
+  for (const [key, newVal] of Object.entries(payload)) {
+    if (key === 'image') {
+      const oldUrl = existing.image?.url ?? '';
+      const newUrl = newVal?.url ?? '';
+      if (!strEq(oldUrl, newUrl)) changes['imageUrl'] = { old: oldUrl, new: newUrl };
+      continue;
+    }
+    const oldVal = existing[key];
+    let equal;
+    if (numFields.includes(key))      equal = numEq(oldVal, newVal);
+    else if (arrFields.includes(key)) equal = arrEq(oldVal, newVal);
+    else                              equal = strEq(oldVal, newVal);
+    if (!equal) changes[key] = { old: oldVal, new: newVal };
+  }
+ 
+  return changes;
+};
+ 
+// ─── POST /api/products/bulk-update/preview ───────────────────────────────
+const bulkUpdatePreview = async (req, res) => {
+  try {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || !rows.length)
+      return res.status(400).json({ message: 'rows array is required' });
+ 
+    // Deduplicate by product_id (keep last)
+    const skuMap = {};
+    rows.forEach(r => { if (r.product_id) skuMap[r.product_id.trim()] = r; });
+    const uniqueRows = Object.values(skuMap);
+ 
+    const skus = uniqueRows.map(r => r.product_id);
+    const existing = await Product.find({ product_id: { $in: skus } }).lean();
+    const existingMap = {};
+    existing.forEach(p => { existingMap[p.product_id] = p; });
+ 
+    const preview = uniqueRows.map(row => {
+      const sku = row.product_id.trim();
+      const doc = existingMap[sku];
+      if (!doc) return { product_id: sku, name: row.name || '', notFound: true, changes: {} };
+ 
+      const payload = buildUpdatePayloadFromRow(row);
+      const changes = diffProduct(doc, payload);
+ 
+      return {
+        product_id: sku,
+        name:       doc.name,
+        _id:        doc._id,
+        notFound:   false,
+        changes,
+      };
+    });
+ 
+    res.json({ preview });
+  } catch (error) {
+    console.error('bulkUpdatePreview error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+ 
+// ─── PUT /api/products/bulk-update ────────────────────────────────────────
+const bulkUpdateProducts = async (req, res) => {
+  try {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || !rows.length)
+      return res.status(400).json({ message: 'rows array is required' });
+ 
+    // Deduplicate
+    const skuMap = {};
+    rows.forEach(r => { if (r.product_id) skuMap[r.product_id.trim()] = r; });
+    const uniqueRows = Object.values(skuMap);
+ 
+    const skus = uniqueRows.map(r => r.product_id);
+    const existing = await Product.find({ product_id: { $in: skus } }).lean();
+    const existingMap = {};
+    existing.forEach(p => { existingMap[p.product_id] = p; });
+ 
+    let updatedCount  = 0;
+    let skippedCount  = 0;
+    let notFoundCount = 0;
+    const errors      = [];
+ 
+    await Promise.all(uniqueRows.map(async (row) => {
+      const sku = row.product_id.trim();
+      const doc = existingMap[sku];
+ 
+      if (!doc) { notFoundCount++; return; }
+ 
+      try {
+        const payload = buildUpdatePayloadFromRow(row);
+        const changes = diffProduct(doc, payload);
+ 
+        if (!Object.keys(changes).length) { skippedCount++; return; }
+ 
+        // Apply only changed fields
+        const update = {};
+        for (const key of Object.keys(changes)) {
+          if (key === 'imageUrl') update.image = payload.image;
+          else update[key] = payload[key];
+        }
+        update.updatedAt = new Date();
+ 
+        await Product.updateOne({ _id: doc._id }, { $set: update });
+        updatedCount++;
+      } catch (err) {
+        errors.push({ product_id: sku, message: err.message });
+      }
+    }));
+ 
+    res.json({
+      message:      'Bulk update complete',
+      updatedCount,
+      skippedCount,
+      notFoundCount,
+      errors,
+    });
+  } catch (error) {
+    console.error('bulkUpdateProducts error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const exportAllProducts = async (req, res) => {
+  try {
+    const products = await Product.find()
+      .sort({ createdAt: -1 })
+      .select('product_id name description vendorDescription category collection package dimension colorFinish itemUrl itemClass price woodFinish fabric others image')
+      .lean();
+
+    res.json({ products, total: products.length });
+  } catch (error) {
+    console.error('exportAllProducts error:', error);
+    res.status(500).json({ message: 'Error exporting products' });
+  }
+};
+
 module.exports = {
   getProducts,
   getProduct,
@@ -357,4 +554,7 @@ module.exports = {
   createProductFromCustomOrder,
   updateCustomAttributes,
   getProductCategories,
+  bulkUpdatePreview,
+  bulkUpdateProducts,
+  exportAllProducts
 };
