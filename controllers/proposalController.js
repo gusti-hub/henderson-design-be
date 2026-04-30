@@ -18,15 +18,23 @@ const ensureProposalNumber = async (order) => {
   // "Fang - The Park - Unit 1015" → "FAN"
   // "Langford" → "LAN"
   // "John Smith" → "JOH"
-  const nameParts  = clientName.trim().split(/[\s\-\/]+/);
-  const firstWord  = nameParts.find(p => /[a-zA-Z]/.test(p)) || 'CLT';
-  const clientCode = firstWord.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+  // Use last alphabetic word from client name as code
+  // "Tang, Sam and Tammy" → last word "Tammy" → "TAM"
+  // "Fang - The Park - Unit 1015" → last alpha word "Park" → "PAR"  
+  // "Langford" → "LAN"
+  const nameParts  = clientName.trim().split(/[\s\-\/,]+/);
+  const lastWord   = [...nameParts].reverse().find(p => /[a-zA-Z]/.test(p)) || 'CLT';
+  const clientCode = lastWord.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
 
-  // ✅ FIX: Counter urut — hitung orders yang sudah punya proposalNumber
-  const count = await Order.countDocuments({
-    proposalNumber: { $exists: true, $ne: null, $ne: '' }
-  });
-  const counter = String(count + 1).padStart(6, '0'); // "000001", "000002", dst
+  // Atomic autoincrement per clientCode — each client starts from 000001
+  // e.g. Hen-TAM-000001, Hen-TAM-000002 and Hen-FAN-000001 independently
+  const Counter = require('../models/Counter');
+  const counterDoc = await Counter.findOneAndUpdate(
+    { _id: `proposalNumber_${clientCode}` },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  const counter = String(counterDoc.seq).padStart(6, '0');
 
   const proposalNumber = `Hen-${clientCode}-${counter}`;
 
