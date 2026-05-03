@@ -78,6 +78,15 @@ const proposalVersionSchema = new mongoose.Schema({
     enum: ['draft', 'sent', 'approved', 'rejected'],
     default: 'draft'
   },
+
+  quickbooksId: {
+    type: String,
+    default: null,
+  },
+  quickbooksSyncedAt: {
+    type: Date,
+    default: null,
+  },
   
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,

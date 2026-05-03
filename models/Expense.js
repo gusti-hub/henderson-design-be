@@ -35,6 +35,14 @@ const expenseSchema = new mongoose.Schema({
     enum: ['draft', 'review', 'confirmed', 'paid'],
     default: 'draft',
   },
+  employeeName: { type: String, default: '' },
+
+  // QuickBooks sync tracking
+  quickbooksId:       { type: String, default: null },
+  quickbooksSyncedAt: { type: Date,   default: null },
+  quickbooksStatus:   { type: String, enum: ['synced', 'failed', null], default: null },
+  quickbooksError:    { type: String, default: null },
+
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },

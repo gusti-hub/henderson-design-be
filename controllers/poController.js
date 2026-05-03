@@ -694,11 +694,40 @@ const getAllPOsForOrder = async (req, res) => {
   }
 };
 
+// ✅ UPDATE PO status
+// @route PUT /api/orders/:orderId/po/:vendorId/status
+const updatePOStatus = async (req, res) => {
+  try {
+    const { orderId, vendorId } = req.params;
+    const { version, status } = req.body;
+
+    const validStatuses = ['draft', 'sent', 'confirmed', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const po = await POVersion.findOne({ orderId, vendorId, version });
+    if (!po) return res.status(404).json({ success: false, message: 'PO version not found' });
+
+    if (po.status === 'confirmed') {
+      return res.status(400).json({ success: false, message: 'Confirmed PO cannot be changed' });
+    }
+
+    po.status = status;
+    await po.save();
+
+    res.json({ success: true, status });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getOrderVendors,
   getPurchaseOrder,
   updatePurchaseOrder,
   createPOVersion,
   getAllPOVersions,
-  getAllPOsForOrder
+  getAllPOsForOrder,
+  updatePOStatus,
 };

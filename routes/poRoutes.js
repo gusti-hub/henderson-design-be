@@ -7,7 +7,8 @@ const {
   updatePurchaseOrder,
   createPOVersion,
   getAllPOVersions,
-  getAllPOsForOrder
+  getAllPOsForOrder,
+  updatePOStatus
 } = require('../controllers/poController');
 
 // Protect all routes
@@ -27,6 +28,8 @@ router.post('/:orderId/po/:vendorId/new-version', createPOVersion);
 
 // Get PO (latest or specific version) - auto-creates if none exists
 router.get('/:orderId/po/:vendorId/:version?', getPurchaseOrder);
+
+router.put('/:orderId/po/:vendorId/status', updatePOStatus);
 
 // Update existing PO version
 router.put('/:orderId/po/:vendorId', updatePurchaseOrder);

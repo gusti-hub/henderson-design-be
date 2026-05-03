@@ -91,7 +91,7 @@ const getProposalData = async (req, res) => {
 
     const latestVersion = await ProposalVersion.findOne(
       { orderId },
-      { version: 1 },
+      { version: 1, status: 1 },
       { sort: { version: -1 } }
     );
 
@@ -100,6 +100,7 @@ const getProposalData = async (req, res) => {
       data: {
         orderId:          order._id,
         version:          latestVersion ? latestVersion.version : 0,
+        status:           latestVersion ? latestVersion.status : 'draft',
         proposalNumber,
         clientInfo:       order.clientInfo,
         user:             order.user,
@@ -282,6 +283,43 @@ const migrateProposalNumbers = async (req, res) => {
   }
 };
 
+const updateProposalStatus = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body;
+
+    const validStatuses = ['draft', 'sent', 'approved', 'rejected'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' });
+    }
+
+    // Find the latest version for this order
+    const latestVersion = await ProposalVersion.findOne(
+      { orderId },
+      {},
+      { sort: { version: -1 } }
+    );
+
+    if (!latestVersion) {
+      return res.status(404).json({ message: 'No proposal version found' });
+    }
+
+    if (latestVersion.status === 'approved') {
+      return res.status(400).json({ message: 'Approved proposals cannot be changed' });
+    }
+
+    latestVersion.status = status;
+    latestVersion.updatedAt = new Date();
+    latestVersion.updatedBy = req.user.id;
+    await latestVersion.save();
+
+    res.json({ success: true, status });
+  } catch (error) {
+    console.error('Error updating status:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getProposalData,
   saveProposal,
@@ -289,4 +327,5 @@ module.exports = {
   getAllVersions,
   ensureProposalNumberEndpoint,
   migrateProposalNumbers,
+  updateProposalStatus,
 };

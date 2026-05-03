@@ -1,5 +1,5 @@
 const Order = require('../models/Order');
-const POVersion = require('../models/POversion');
+const POVersion = require('../models/POVersion');
 const User = require('../models/User'); // ✅ ADDED
 const ProposalVersion = require('../models/ProposalVersion');
 const { s3Client } = require('../config/s3');
@@ -143,6 +143,7 @@ const updateOrder = async (req, res) => {
             vendorOrderNumber:  product.selectedOptions?.vendorOrderNumber  || '',
             trackingInfo:       product.selectedOptions?.trackingInfo       || '',
             deliveryStatus:     product.selectedOptions?.deliveryStatus     || '',
+            installerNotes:     product.selectedOptions?.installerNotes     || '',
           
             // ── Status Report ──
             room:                     product.selectedOptions?.room                     || '',
@@ -2432,6 +2433,44 @@ const generateCogExcel = async (req, res) => {
   }
 };
 
+const getLatestConfirmedPOs = async (req, res) => {
+  try {
+    const mongoose  = require('mongoose');
+    const POVersion = require('../models/POVersion');
+    const { orderId } = req.params;
+ 
+    const confirmed = await POVersion.aggregate([
+      { $match: {
+          orderId: mongoose.Types.ObjectId.createFromHexString(orderId),
+          status: 'confirmed'
+      }},
+      { $sort: { vendorId: 1, version: -1 } },
+      { $group: {
+          _id:         '$vendorId',
+          poVersionId: { $first: '$_id' },
+          poNumber:    { $first: '$poNumber' },
+          vendorName:  { $first: '$vendorInfo.name' },
+      }},
+    ]);
+ 
+    if (!confirmed.length) {
+      return res.status(404).json({ message: 'No confirmed POs found for this order' });
+    }
+ 
+    res.json({
+      success:      true,
+      poVersionIds: confirmed.map(c => c.poVersionId.toString()),
+      details:      confirmed.map(c => ({
+        poVersionId: c.poVersionId,
+        poNumber:    c.poNumber,
+        vendorName:  c.vendorName,
+      })),
+    });
+  } catch (error) {
+    console.error('getLatestConfirmedPOs error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
 
 module.exports = {
   createOrder,
@@ -2451,5 +2490,6 @@ module.exports = {
   generateInstallBinder,
   generateStatusReport,
   getUploadPresignedUrl,
-  generateCogExcel
+  generateCogExcel,
+  getLatestConfirmedPOs
 };

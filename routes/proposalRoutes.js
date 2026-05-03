@@ -1,6 +1,3 @@
-// routes/proposalRoutes.js (or wherever proposal routes are defined)
-// ✅ Add/update these routes — especially the new ensure-number endpoint
-
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
@@ -10,23 +7,26 @@ const {
   saveAsNewVersion,
   getAllVersions,
   ensureProposalNumberEndpoint,
+  updateProposalStatus,
+  migrateProposalNumbers,
 } = require('../controllers/proposalController');
 
-// ── Ensure proposal number (called by CustomProductManager on mount) ──────────
-// Idempotent: generates and persists if not set, returns existing if already set.
-// Formula: Hen-[ClientCode]-[last6charsOrderId] — unique per project, deterministic.
-router.post('/:orderId/ensure-number', protect, ensureProposalNumberEndpoint);
+// ── Specific routes FIRST ─────────────────────────────────────────────────────
+router.post('/:orderId/ensure-number',  protect, ensureProposalNumberEndpoint);
+router.post('/:orderId/new-version',    protect, saveAsNewVersion);
+router.post('/migrate-numbers',         protect, migrateProposalNumbers);
 
-// ── Get proposal data (latest or specific version) ────────────────────────────
+router.get('/:orderId/versions/all',    protect, getAllVersions);
 router.get('/:orderId/latest',          protect, (req, res) => {
   req.params.version = 'latest';
   getProposalData(req, res);
 });
-router.get('/:orderId/:version',        protect, getProposalData);
-router.get('/:orderId/versions/all',    protect, getAllVersions);
 
-// ── Save / update ─────────────────────────────────────────────────────────────
+// ── Status update BEFORE generic PUT /:orderId ────────────────────────────────
+router.put('/:orderId/status',          protect, updateProposalStatus);
+
+// ── Generic routes LAST ───────────────────────────────────────────────────────
 router.put('/:orderId',                 protect, saveProposal);
-router.post('/:orderId/new-version',    protect, saveAsNewVersion);
+router.get('/:orderId/:version',        protect, getProposalData);
 
 module.exports = router;

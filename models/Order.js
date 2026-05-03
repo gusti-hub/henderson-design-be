@@ -17,6 +17,8 @@ const orderSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  proposalQbId:      { type: String, default: null },
+  proposalQbSyncedAt:{ type: Date,   default: null },
 
   customFloorPlan: {
     filename: String,
@@ -144,6 +146,7 @@ const orderSchema = new mongoose.Schema({
       vendorOrderNumber: String,
       trackingInfo:      String,
       deliveryStatus:    String,
+      installerNotes:    String,
 
       // ── Status Report ──
       room:                    String,

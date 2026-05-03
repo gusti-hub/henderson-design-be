@@ -1,47 +1,49 @@
-// routes/quickbooksRoutes.js - COMPLETE with sync endpoint
+// routes/quickbooksRoutes.js
 const express = require('express');
-const router = express.Router();
+const router  = express.Router();
 const { protect, authorize } = require('../middleware/auth');
 
-// Import all controller functions
 const {
   connectQuickBooks,
   handleOAuthCallback,
   getConnectionStatus,
   disconnectQuickBooks,
   testConnection,
-  syncInvoiceToQuickBooks
+  syncInvoiceToQuickBooks,
+  syncExpenseToQuickBooks,
+  syncPOToQuickBooks,
+  getLatestConfirmedPOs,
+  syncProposalToQuickBooks,
+  getAllPOVendors,
+  getProjectFinanceSummary,
 } = require('../controllers/quickbooksController');
 
-/**
- * QuickBooks OAuth Routes
- */
+// ─── OAuth ────────────────────────────────────────────────────────────────────
+router.get('/connect',    protect, authorize('admin', 'designer'), connectQuickBooks);
+router.get('/callback',   handleOAuthCallback);  // no auth — called by QuickBooks
+router.get('/status',     protect, authorize('admin', 'designer'), getConnectionStatus);
+router.get('/test',       protect, authorize('admin', 'designer'), testConnection);
+router.post('/disconnect',protect, authorize('admin'),             disconnectQuickBooks);
 
-// Initiate OAuth connection (admin/designer)
-router.get('/connect', protect, authorize('admin', 'designer'), connectQuickBooks);
+// ─── Legacy client invoice sync ───────────────────────────────────────────────
+router.post('/sync-invoice/:clientId/:invoiceNumber', protect, authorize('admin', 'designer'), syncInvoiceToQuickBooks);
 
-// OAuth callback (no auth - called by QuickBooks)
-router.get('/callback', handleOAuthCallback);
+// ─── Expense → QB Invoice ─────────────────────────────────────────────────────
+// Only confirmed/paid expenses can be synced
+router.post('/sync-expense/:expenseId', protect, authorize('admin', 'designer'), syncExpenseToQuickBooks);
 
-// Get connection status (admin/designer)
-router.get('/status', protect, authorize('admin', 'designer'), getConnectionStatus);
+// ─── PO → QB Bill ─────────────────────────────────────────────────────────────
+// Only confirmed POVersions can be synced
+router.post('/sync-po/:poVersionId', protect, authorize('admin', 'designer'), syncPOToQuickBooks);
 
-// Test connection (admin/designer)
-router.get('/test', protect, authorize('admin', 'designer'), testConnection);
+// ─── Get latest confirmed POs per vendor for an order ─────────────────────────
+router.get('/latest-po/:orderId', protect, authorize('admin', 'designer'), getLatestConfirmedPOs);
 
-// Disconnect QuickBooks (admin only)
-router.post('/disconnect', protect, authorize('admin'), disconnectQuickBooks);
+// ─── Proposal → QB Invoice ───────────────────────────────────────────────────
+router.post('/sync-proposal/:orderId', protect, authorize('admin', 'designer'), syncProposalToQuickBooks);
 
-/**
- * Invoice Sync Routes
- */
-
-// Sync invoice to QuickBooks (admin/designer)
-router.post(
-  '/sync-invoice/:clientId/:invoiceNumber',
-  protect,
-  authorize('admin', 'designer'),
-  syncInvoiceToQuickBooks
-);
+// ─── All PO vendors for an order (any status) ───────────────────────────────
+router.get('/po-vendors/:orderId', protect, authorize('admin', 'designer'), getAllPOVendors);
+router.get('/project-summary/:orderId', protect, authorize('admin', 'designer'), getProjectFinanceSummary);
 
 module.exports = router;

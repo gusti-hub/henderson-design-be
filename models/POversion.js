@@ -112,6 +112,15 @@ const poVersionSchema = new mongoose.Schema({
     default: 'draft'
   },
 
+  quickbooksId: {
+    type: String,
+    default: null,
+  },
+  quickbooksSyncedAt: {
+    type: Date,
+    default: null,
+  },
+
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -123,4 +132,4 @@ const poVersionSchema = new mongoose.Schema({
 // Compound index for efficient queries
 poVersionSchema.index({ orderId: 1, vendorId: 1, version: -1 });
 
-module.exports = mongoose.model('POVersion', poVersionSchema);
+module.exports = mongoose.models['POVersion'] || mongoose.model('POVersion', poVersionSchema);

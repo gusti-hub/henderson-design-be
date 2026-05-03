@@ -20,6 +20,7 @@ const {
   generateStatusReport,
   getUploadPresignedUrl,
   generateCogExcel,
+  getLatestConfirmedPOs
 } = require('../controllers/orderController');
 const { 
   handlePaymentProofUpload,
@@ -119,5 +120,7 @@ router.put('/:orderId/furniture-placements', saveFurniturePlacements);
 router.get('/:id/install-binder', generateInstallBinder);
 
 router.get('/:id/status-report', generateStatusReport); 
+
+router.get('/:orderId/po/latest-confirmed', getLatestConfirmedPOs);
 
 module.exports = router;

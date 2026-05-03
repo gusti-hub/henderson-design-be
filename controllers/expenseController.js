@@ -34,7 +34,7 @@ const getExpense = async (req, res) => {
 // ─── CREATE expense ───────────────────────────────────────────────────────────
 const createExpense = async (req, res) => {
   try {
-    const { orderId, expenseNumber, expenseDate, projectName, clientInfo, lines, taxRate, notes, status } = req.body;
+    const { orderId, expenseNumber, expenseDate, projectName, clientInfo, lines, taxRate, notes, status, employeeName } = req.body;
 
     if (!orderId) return res.status(400).json({ message: 'orderId is required' });
 
@@ -72,7 +72,7 @@ const updateExpense = async (req, res) => {
     const expense = await Expense.findById(req.params.id);
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
 
-    const { expenseNumber, expenseDate, projectName, clientInfo, lines, taxRate, notes, status } = req.body;
+    const { expenseNumber, expenseDate, projectName, clientInfo, lines, taxRate, notes, status, employeeName } = req.body;
 
     if (expenseNumber !== undefined) expense.expenseNumber = expenseNumber;
     if (expenseDate   !== undefined) expense.expenseDate   = expenseDate;
@@ -80,6 +80,7 @@ const updateExpense = async (req, res) => {
     if (clientInfo    !== undefined) expense.clientInfo    = clientInfo;
     if (taxRate       !== undefined) expense.taxRate       = parseFloat(taxRate);
     if (notes         !== undefined) expense.notes         = notes;
+    if (employeeName  !== undefined) expense.employeeName  = employeeName;
     if (status        !== undefined) expense.status        = status;
     if (lines         !== undefined) {
       expense.lines = lines.map(l => ({
