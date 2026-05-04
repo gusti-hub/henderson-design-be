@@ -117,12 +117,24 @@ const getProductsBasicInfo = async (req, res) => {
 // ─── CREATE product ────────────────────────────────────────────────────────
 const createProduct = async (req, res) => {
   try {
+    // Explicit duplicate SKU check before insert
+    const skuToCheck = (req.body.product_id || '').trim();
+    if (skuToCheck) {
+      const existing = await Product.findOne({ product_id: skuToCheck }).lean();
+      if (existing)
+        return res.status(409).json({ message: `SKU "${skuToCheck}" already exists. Use Edit to update it.` });
+    }
+
     const uploadedFile = req.file || null;
     const data = buildProductData(req.body, uploadedFile);
     const product = await Product.create({ ...data, sourceType: 'admin-created' });
     res.status(201).json(product);
   } catch (error) {
     console.error('createProduct error:', error);
+    // Fallback: catch MongoDB E11000 duplicate key error
+    if (error.code === 11000) {
+      return res.status(409).json({ message: `SKU "${req.body.product_id}" already exists. Use Edit to update it.` });
+    }
     res.status(500).json({ message: error.message });
   }
 };
@@ -181,6 +193,9 @@ const deleteProduct = async (req, res) => {
   }
 };
 
+// ─── Escape special regex characters to prevent MongoServerError 51091 ──────
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // ─── BULK DELETE ───────────────────────────────────────────────────────────
 const bulkDeleteProducts = async (req, res) => {
   try {
@@ -190,9 +205,9 @@ const bulkDeleteProducts = async (req, res) => {
     if (filters && Array.isArray(filters) && filters.length > 0) {
       const orConditions = filters.map(row => {
         const and = {};
-        if (row.product_id) and.product_id = { $regex: `^${row.product_id.trim()}$`, $options: 'i' };
-        if (row.name)       and.name       = { $regex: `^${row.name.trim()}$`,       $options: 'i' };
-        if (row.category)   and.category   = { $regex: `^${row.category.trim()}$`,   $options: 'i' };
+        if (row.product_id) and.product_id = { $regex: `^${escapeRegex(row.product_id.trim())}$`, $options: 'i' };
+        if (row.name)       and.name       = { $regex: `^${escapeRegex(row.name.trim())}$`,       $options: 'i' };
+        if (row.category)   and.category   = { $regex: `^${escapeRegex(row.category.trim())}$`,   $options: 'i' };
         return and;
       }).filter(cond => Object.keys(cond).length > 0);
 
@@ -428,20 +443,37 @@ const bulkUpdatePreview = async (req, res) => {
     rows.forEach(r => { if (r.product_id) skuMap[r.product_id.trim()] = r; });
     const uniqueRows = Object.values(skuMap);
 
-    const skus = uniqueRows.map(r => r.product_id);
-    const existing = await Product.find({ product_id: { $in: skus } }).lean();
+    const skus = uniqueRows.map(r => r.product_id.trim());
+    // Case-insensitive lookup so Excel-edited SKUs still match
+    const existing = await Product.find({
+      product_id: { $in: skus.map(s => new RegExp(`^${escapeRegex(s)}$`, 'i')) }
+    }).lean();
     const existingMap = {};
-    existing.forEach(p => { existingMap[p.product_id] = p; });
+    // Key the map by UPPERCASE so lookup is always case-insensitive
+    existing.forEach(p => { existingMap[p.product_id.toUpperCase()] = p; });
 
     const preview = uniqueRows.map(row => {
       const sku = row.product_id.trim();
-      const doc = existingMap[sku];
+      const doc = existingMap[sku.toUpperCase()];
       if (!doc) return { product_id: sku, name: row.name || '', notFound: true, changes: {} };
 
       const payload = buildUpdatePayloadFromRow(row);
       const changes = diffProduct(doc, payload);
 
-      return { product_id: sku, name: doc.name, _id: doc._id, notFound: false, changes };
+      // For skipped rows: include the identical field values so the UI can explain why
+      let identical = null;
+      if (!Object.keys(changes).length) {
+        identical = {};
+        for (const [key, val] of Object.entries(payload)) {
+          if (key === 'image') {
+            identical['imageUrl'] = doc.image?.url ?? '';
+          } else {
+            identical[key] = doc[key] ?? '';
+          }
+        }
+      }
+
+      return { product_id: sku, name: doc.name, _id: doc._id, notFound: false, changes, identical };
     });
 
     res.json({ preview });
@@ -461,10 +493,13 @@ const bulkUpdateProducts = async (req, res) => {
     rows.forEach(r => { if (r.product_id) skuMap[r.product_id.trim()] = r; });
     const uniqueRows = Object.values(skuMap);
 
-    const skus = uniqueRows.map(r => r.product_id);
-    const existing = await Product.find({ product_id: { $in: skus } }).lean();
+    const skus = uniqueRows.map(r => r.product_id.trim());
+    // Case-insensitive lookup
+    const existing = await Product.find({
+      product_id: { $in: skus.map(s => new RegExp(`^${escapeRegex(s)}$`, 'i')) }
+    }).lean();
     const existingMap = {};
-    existing.forEach(p => { existingMap[p.product_id] = p; });
+    existing.forEach(p => { existingMap[p.product_id.toUpperCase()] = p; });
 
     let updatedCount  = 0;
     let skippedCount  = 0;
@@ -473,7 +508,7 @@ const bulkUpdateProducts = async (req, res) => {
 
     await Promise.all(uniqueRows.map(async (row) => {
       const sku = row.product_id.trim();
-      const doc = existingMap[sku];
+      const doc = existingMap[sku.toUpperCase()];
 
       if (!doc) { notFoundCount++; return; }
 

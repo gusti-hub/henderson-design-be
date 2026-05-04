@@ -35,8 +35,8 @@ const productSchema = new mongoose.Schema({
   dimension: { type: String, default: '' },
 
   // ─── PRICE: split into buy & sell ───────────────────────────────────────
-  buyPrice:  { type: Number, default: 0 },   // harga beli / cost
-  sellPrice: { type: Number, required: true, default: 0 }, // harga jual / final price
+  buyPrice:  { type: Number, default: 0 },   // cost / vendor price
+  sellPrice: { type: Number, required: true, default: 0 }, // client-facing / sell price
   // Legacy field kept for backward compatibility (mirrors sellPrice)
   price:     { type: Number, default: 0 },
 
@@ -45,8 +45,8 @@ const productSchema = new mongoose.Schema({
   itemClass:         { type: String, default: '' },
   vendorDescription: { type: String, default: '' },
 
-  // Finish attributes
-  woodFinish: { type: String, enum: ['', 'MD', 'DK'], default: '' },
+  // Finish attributes — free text, no enum restriction
+  woodFinish: { type: String, default: '' },
   fabric:     { type: String, default: '' },
   others:     { type: [String], default: [] },
 
