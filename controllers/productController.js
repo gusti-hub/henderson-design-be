@@ -7,7 +7,6 @@ const { s3Client } = require('../config/s3');
 const buildProductData = (body, uploadedFile = null) => {
   const skuParsed = parseSku(body.product_id);
 
-  // Merge: explicit body values win over SKU-parsed
   const woodFinish = body.woodFinish || skuParsed.woodFinish || '';
   const fabric     = body.fabric     || skuParsed.fabric     || '';
   const others = (() => {
@@ -16,31 +15,35 @@ const buildProductData = (body, uploadedFile = null) => {
     try { return JSON.parse(body.others); } catch { return skuParsed.others; }
   })();
 
-  // Image: S3 upload > explicit URL in body
   let image = { url: '', key: '' };
   if (uploadedFile) {
     image = { url: uploadedFile.location, key: uploadedFile.key };
   } else if (body.imageUrl) {
     image = { url: body.imageUrl, key: '' };
   } else if (body.image) {
-    // Accept JSON string { url, key }
     const parsed = typeof body.image === 'string' ? JSON.parse(body.image) : body.image;
     image = { url: parsed.url || '', key: parsed.key || '' };
   }
 
+  // ─── Price: support both new (buyPrice/sellPrice) and legacy (price) ────
+  const sellPrice = parseFloat(body.sellPrice ?? body.price) || 0;
+  const buyPrice  = parseFloat(body.buyPrice)  || 0;
+
   return {
-    product_id:  body.product_id,
-    name:        body.name,
-    description: body.description  || '',
-    category:    body.category     || 'General',
-    collection:  body.collection   || 'General',
-    package:     (['Lani','Nalu','Mainland'].includes(body.package) ? body.package : ''),
-    dimension:   body.dimension    || '',
+    product_id:        body.product_id,
+    name:              body.name,
+    description:       body.description       || '',
+    category:          body.category          || 'General',
+    collection:        body.collection        || 'General',
+    package:           (['Lani','Nalu','Mainland'].includes(body.package) ? body.package : ''),
+    dimension:         body.dimension         || '',
     colorFinish:       body.colorFinish       || '',
     itemUrl:           body.itemUrl           || '',
     itemClass:         body.itemClass         || '',
     vendorDescription: body.vendorDescription || '',
-    price:       parseFloat(body.price) || 0,
+    buyPrice,
+    sellPrice,
+    price: sellPrice,  // keep legacy field in sync
     woodFinish,
     fabric,
     others,
@@ -77,7 +80,7 @@ const getProducts = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('product_id name description vendorDescription category collection package dimension colorFinish itemUrl itemClass price woodFinish fabric others image uploadedImages')
+        .select('product_id name description vendorDescription category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice price woodFinish fabric others image uploadedImages')
         .lean()
     ]);
 
@@ -114,9 +117,8 @@ const getProductsBasicInfo = async (req, res) => {
 // ─── CREATE product ────────────────────────────────────────────────────────
 const createProduct = async (req, res) => {
   try {
-    const uploadedFile = req.file || null;  // single file upload
+    const uploadedFile = req.file || null;
     const data = buildProductData(req.body, uploadedFile);
-
     const product = await Product.create({ ...data, sourceType: 'admin-created' });
     res.status(201).json(product);
   } catch (error) {
@@ -134,12 +136,10 @@ const updateProduct = async (req, res) => {
     const uploadedFile = req.file || null;
     const data = buildProductData(req.body, uploadedFile);
 
-    // If no new image provided, keep existing
     if (!uploadedFile && !req.body.imageUrl && !req.body.image) {
       data.image = existing.image;
     }
 
-    // Delete old S3 image if replaced
     if (uploadedFile && existing.image?.key) {
       try {
         await s3Client.send(new DeleteObjectCommand({
@@ -182,18 +182,11 @@ const deleteProduct = async (req, res) => {
 };
 
 // ─── BULK DELETE ───────────────────────────────────────────────────────────
-// Accepts either:
-//   { product_ids: ['SKU1', 'SKU2'] }           — legacy, SKU-only
-//   { filters: [{ product_id, name, category }] } — new, multi-field match
 const bulkDeleteProducts = async (req, res) => {
   try {
     const { product_ids, filters } = req.body;
 
-    // Build MongoDB $or query from filters array
-    // Each filter row = AND within the row (all provided fields must match)
-    // Multiple rows = OR between rows
     let query;
-
     if (filters && Array.isArray(filters) && filters.length > 0) {
       const orConditions = filters.map(row => {
         const and = {};
@@ -207,31 +200,23 @@ const bulkDeleteProducts = async (req, res) => {
         return res.status(400).json({ message: 'No valid filter criteria provided' });
 
       query = orConditions.length === 1 ? orConditions[0] : { $or: orConditions };
-
     } else if (product_ids && Array.isArray(product_ids) && product_ids.length) {
-      // Legacy: delete by SKU array
       query = { product_id: { $in: product_ids } };
-
     } else {
       return res.status(400).json({ message: 'Provide either filters or product_ids' });
     }
 
-    // Find matching products first (for S3 cleanup)
     const products = await Product.find(query);
-
     if (!products.length)
       return res.json({ message: 'No matching products found', deletedCount: 0 });
 
-    // Delete S3 images
     await Promise.all(products.map(async p => {
       if (p.image?.key) {
         try {
           await s3Client.send(new DeleteObjectCommand({
             Bucket: process.env.SPACES_BUCKET, Key: p.image.key
           }));
-        } catch (err) {
-          console.error('S3 delete error:', err);
-        }
+        } catch (err) { console.error('S3 delete error:', err); }
       }
     }));
 
@@ -258,7 +243,6 @@ const createProductFromCustomOrder = async (req, res) => {
     if (productData.customAttributes)
       Object.entries(productData.customAttributes).forEach(([k, v]) => customAttributes.set(k, v));
 
-    // Image from uploadedImages or direct URL
     const firstImage = productData.uploadedImages?.[0] || productData.images?.[0];
     const image = firstImage?.url
       ? { url: firstImage.url, key: firstImage.key || '' }
@@ -276,6 +260,8 @@ const createProductFromCustomOrder = async (req, res) => {
       }));
 
     const skuParsed = parseSku(productData.product_id);
+    const sellPrice = parseFloat(productData.sellPrice ?? productData.unitPrice) || 0;
+    const buyPrice  = parseFloat(productData.buyPrice) || 0;
 
     const product = await Product.create({
       product_id:       productData.product_id,
@@ -284,7 +270,9 @@ const createProductFromCustomOrder = async (req, res) => {
       collection:       'Custom Orders',
       description:      productData.specifications || '',
       dimension:        productData.size          || '',
-      price:            parseFloat(productData.unitPrice) || 0,
+      sellPrice,
+      buyPrice,
+      price:            sellPrice,
       woodFinish:       productData.woodFinish    || skuParsed.woodFinish || '',
       fabric:           productData.fabric        || skuParsed.fabric     || '',
       others:           productData.others        || skuParsed.others     || [],
@@ -316,15 +304,14 @@ const updateCustomAttributes = async (req, res) => {
   }
 };
 
-// ─── GET product variants (kept for backward compat — returns self) ────────
+// ─── GET product variants ──────────────────────────────────────────────────
 const getProductVariants = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ message: 'Product not found' });
-    // Return product itself as single "variant" for any code still calling this
     res.json({
       variants: [product],
-      basePrice: product.price,
+      basePrice: product.sellPrice ?? product.price,
       description: product.description
     });
   } catch (error) {
@@ -332,8 +319,7 @@ const getProductVariants = async (req, res) => {
   }
 };
 
-
-// ─── GET unique categories (for filter dropdowns) ─────────────────────────
+// ─── GET unique categories ─────────────────────────────────────────────────
 const getProductCategories = async (req, res) => {
   try {
     const categories = await Product.distinct('category', { category: { $nin: ['', null, 'General'] } });
@@ -347,7 +333,7 @@ const getProductCategories = async (req, res) => {
 
 const buildUpdatePayloadFromRow = (row) => {
   const payload = {};
- 
+
   const str = (v) => (v !== undefined && v !== null ? String(v).trim() : undefined);
   const num = (v) => { const n = parseFloat(v); return isNaN(n) ? undefined : n; };
   const arr = (v) => {
@@ -356,57 +342,64 @@ const buildUpdatePayloadFromRow = (row) => {
     if (!s) return [];
     return s.split(',').map(x => x.trim()).filter(Boolean);
   };
- 
+
   const VALID_PACKAGES = ['', 'Lani', 'Nalu', 'Mainland'];
- 
+
   if (row.name              !== undefined) payload.name              = str(row.name);
   if (row.description       !== undefined) payload.description       = str(row.description);
   if (row.vendorDescription !== undefined) payload.vendorDescription = str(row.vendorDescription);
   if (row.category          !== undefined) payload.category          = str(row.category) || 'General';
   if (row.collection        !== undefined) payload.collection        = str(row.collection) || 'General';
   if (row.dimension         !== undefined) payload.dimension         = str(row.dimension);
-  if (row.colorFinish        !== undefined) payload.colorFinish       = str(row.colorFinish);
-  if (row.itemUrl            !== undefined) payload.itemUrl           = str(row.itemUrl);
-  if (row.itemClass          !== undefined) payload.itemClass         = str(row.itemClass);
-  if (row.woodFinish         !== undefined) payload.woodFinish        = str(row.woodFinish);
-  if (row.fabric             !== undefined) payload.fabric            = str(row.fabric);
- 
-  if (row.price !== undefined) {
+  if (row.colorFinish       !== undefined) payload.colorFinish       = str(row.colorFinish);
+  if (row.itemUrl           !== undefined) payload.itemUrl           = str(row.itemUrl);
+  if (row.itemClass         !== undefined) payload.itemClass         = str(row.itemClass);
+  if (row.woodFinish        !== undefined) payload.woodFinish        = str(row.woodFinish);
+  if (row.fabric            !== undefined) payload.fabric            = str(row.fabric);
+
+  // ─── Price ───────────────────────────────────────────────────────────────
+  if (row.sellPrice !== undefined) {
+    const p = num(row.sellPrice);
+    if (p !== undefined) { payload.sellPrice = p; payload.price = p; }
+  } else if (row.price !== undefined) {
+    // legacy column support
     const p = num(row.price);
-    if (p !== undefined) payload.price = p;
+    if (p !== undefined) { payload.sellPrice = p; payload.price = p; }
   }
- 
+  if (row.buyPrice !== undefined) {
+    const p = num(row.buyPrice);
+    if (p !== undefined) payload.buyPrice = p;
+  }
+
   if (row.package !== undefined) {
     const pkg = str(row.package);
     payload.package = VALID_PACKAGES.includes(pkg) ? pkg : '';
   }
- 
+
   if (row.others !== undefined) {
     payload.others = arr(row.others) ?? [];
   }
- 
+
   if (row.imageUrl !== undefined && str(row.imageUrl)) {
     payload.image = { url: str(row.imageUrl), key: '' };
   }
- 
+
   return payload;
 };
- 
-// ─── Compare existing doc vs new payload — return only changed fields ─────
+
 const diffProduct = (existing, payload) => {
   const changes = {};
- 
+
   const strEq = (a, b) => String(a ?? '').trim() === String(b ?? '').trim();
   const numEq = (a, b) => {
     const na = parseFloat(a), nb = parseFloat(b);
     return isNaN(na) && isNaN(nb) ? true : na === nb;
   };
   const arrEq = (a, b) => JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
- 
-  const numFields = ['price'];
+
+  const numFields = ['sellPrice', 'buyPrice', 'price'];
   const arrFields = ['others'];
-  const imgFields = ['imageUrl'];
- 
+
   for (const [key, newVal] of Object.entries(payload)) {
     if (key === 'image') {
       const oldUrl = existing.image?.url ?? '';
@@ -421,107 +414,90 @@ const diffProduct = (existing, payload) => {
     else                              equal = strEq(oldVal, newVal);
     if (!equal) changes[key] = { old: oldVal, new: newVal };
   }
- 
+
   return changes;
 };
- 
-// ─── POST /api/products/bulk-update/preview ───────────────────────────────
+
 const bulkUpdatePreview = async (req, res) => {
   try {
     const { rows } = req.body;
     if (!Array.isArray(rows) || !rows.length)
       return res.status(400).json({ message: 'rows array is required' });
- 
-    // Deduplicate by product_id (keep last)
+
     const skuMap = {};
     rows.forEach(r => { if (r.product_id) skuMap[r.product_id.trim()] = r; });
     const uniqueRows = Object.values(skuMap);
- 
+
     const skus = uniqueRows.map(r => r.product_id);
     const existing = await Product.find({ product_id: { $in: skus } }).lean();
     const existingMap = {};
     existing.forEach(p => { existingMap[p.product_id] = p; });
- 
+
     const preview = uniqueRows.map(row => {
       const sku = row.product_id.trim();
       const doc = existingMap[sku];
       if (!doc) return { product_id: sku, name: row.name || '', notFound: true, changes: {} };
- 
+
       const payload = buildUpdatePayloadFromRow(row);
       const changes = diffProduct(doc, payload);
- 
-      return {
-        product_id: sku,
-        name:       doc.name,
-        _id:        doc._id,
-        notFound:   false,
-        changes,
-      };
+
+      return { product_id: sku, name: doc.name, _id: doc._id, notFound: false, changes };
     });
- 
+
     res.json({ preview });
   } catch (error) {
     console.error('bulkUpdatePreview error:', error);
     res.status(500).json({ message: error.message });
   }
 };
- 
-// ─── PUT /api/products/bulk-update ────────────────────────────────────────
+
 const bulkUpdateProducts = async (req, res) => {
   try {
     const { rows } = req.body;
     if (!Array.isArray(rows) || !rows.length)
       return res.status(400).json({ message: 'rows array is required' });
- 
-    // Deduplicate
+
     const skuMap = {};
     rows.forEach(r => { if (r.product_id) skuMap[r.product_id.trim()] = r; });
     const uniqueRows = Object.values(skuMap);
- 
+
     const skus = uniqueRows.map(r => r.product_id);
     const existing = await Product.find({ product_id: { $in: skus } }).lean();
     const existingMap = {};
     existing.forEach(p => { existingMap[p.product_id] = p; });
- 
+
     let updatedCount  = 0;
     let skippedCount  = 0;
     let notFoundCount = 0;
     const errors      = [];
- 
+
     await Promise.all(uniqueRows.map(async (row) => {
       const sku = row.product_id.trim();
       const doc = existingMap[sku];
- 
+
       if (!doc) { notFoundCount++; return; }
- 
+
       try {
         const payload = buildUpdatePayloadFromRow(row);
         const changes = diffProduct(doc, payload);
- 
+
         if (!Object.keys(changes).length) { skippedCount++; return; }
- 
-        // Apply only changed fields
+
         const update = {};
         for (const key of Object.keys(changes)) {
           if (key === 'imageUrl') update.image = payload.image;
           else update[key] = payload[key];
         }
         update.updatedAt = new Date();
- 
+
         await Product.updateOne({ _id: doc._id }, { $set: update });
         updatedCount++;
       } catch (err) {
         errors.push({ product_id: sku, message: err.message });
       }
     }));
- 
-    res.json({
-      message:      'Bulk update complete',
-      updatedCount,
-      skippedCount,
-      notFoundCount,
-      errors,
-    });
+
+    res.json({ message: 'Bulk update complete', updatedCount, skippedCount, notFoundCount, errors });
   } catch (error) {
     console.error('bulkUpdateProducts error:', error);
     res.status(500).json({ message: error.message });
@@ -532,7 +508,7 @@ const exportAllProducts = async (req, res) => {
   try {
     const products = await Product.find()
       .sort({ createdAt: -1 })
-      .select('product_id name description vendorDescription category collection package dimension colorFinish itemUrl itemClass price woodFinish fabric others image')
+      .select('product_id name description vendorDescription category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice price woodFinish fabric others image')
       .lean();
 
     res.json({ products, total: products.length });
