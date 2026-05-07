@@ -147,6 +147,7 @@ const orderSchema = new mongoose.Schema({
       trackingInfo:      String,
       deliveryStatus:    String,
       installerNotes:    String,
+      leadTime:          String,
 
       // ── Status Report ──
       room:                    String,

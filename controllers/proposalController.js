@@ -320,6 +320,62 @@ const updateProposalStatus = async (req, res) => {
   }
 };
 
+const saveCurrentVersion = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { products, clientInfo } = req.body;
+ 
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+ 
+    const proposalNumber = await ensureProposalNumber(order);
+ 
+    const latestVersion = await ProposalVersion.findOne(
+      { orderId },
+      {},
+      { sort: { version: -1 } }
+    );
+ 
+    if (latestVersion) {
+      // Update selectedProducts in-place — no version bump
+      if (products !== undefined) latestVersion.selectedProducts = products;
+      if (clientInfo) latestVersion.clientInfo = clientInfo;
+      latestVersion.updatedAt = new Date();
+      latestVersion.updatedBy = req.user.id;
+      await latestVersion.save();
+ 
+      return res.json({
+        success: true,
+        message: `Version ${latestVersion.version} updated`,
+        data: latestVersion,
+        proposalNumber,
+      });
+    }
+ 
+    // No version yet — create version 1
+    const newVersion = await ProposalVersion.create({
+      orderId,
+      version:          1,
+      selectedProducts: products || [],
+      clientInfo:       clientInfo || order.clientInfo,
+      notes:            'Initial version',
+      status:           'draft',
+      createdBy:        req.user.id,
+    });
+ 
+    return res.json({
+      success: true,
+      message: 'Version 1 created',
+      data: newVersion,
+      proposalNumber,
+    });
+ 
+  } catch (error) {
+    console.error('saveCurrentVersion error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getProposalData,
   saveProposal,
@@ -328,4 +384,5 @@ module.exports = {
   ensureProposalNumberEndpoint,
   migrateProposalNumbers,
   updateProposalStatus,
+  saveCurrentVersion
 };

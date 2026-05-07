@@ -36,6 +36,7 @@ const proposalVersionSchema = new mongoose.Schema({
       fabric: String,
       size: String,
       insetPanel: String,
+      leadTime: String,  
       image: String,
       images: [String],
       specifications: String,

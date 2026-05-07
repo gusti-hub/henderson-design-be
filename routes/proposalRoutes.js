@@ -9,11 +9,13 @@ const {
   ensureProposalNumberEndpoint,
   updateProposalStatus,
   migrateProposalNumbers,
+  saveCurrentVersion
 } = require('../controllers/proposalController');
 
 // ── Specific routes FIRST ─────────────────────────────────────────────────────
 router.post('/:orderId/ensure-number',  protect, ensureProposalNumberEndpoint);
 router.post('/:orderId/new-version',    protect, saveAsNewVersion);
+router.post('/:orderId/save-current',   protect, saveCurrentVersion); 
 router.post('/migrate-numbers',         protect, migrateProposalNumbers);
 
 router.get('/:orderId/versions/all',    protect, getAllVersions);
