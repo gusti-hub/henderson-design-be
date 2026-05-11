@@ -206,6 +206,7 @@ const getPurchaseOrder = async (req, res) => {
                   fabric:             opts.fabric             || '',
                   size:               opts.size               || '',
                   specifications:     opts.specifications     || '',
+                  vendorDescription:  opts.vendorDescription  || '',
                   image:              opts.image              || '',
                   images:             opts.images             || [],
                   uploadedImages:     (opts.uploadedImages || []).map(img => ({

@@ -2,8 +2,10 @@
 const axios = require('axios');
 
 const QUICKBOOKS_CONFIG = {
-  clientId:     process.env.QUICKBOOKS_CLIENT_ID     || 'ABnClFfpOy8b037cefQMShOEWhBAhBpofiytDzJLQ7i82WyDtu',
-  clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || 'IhxBfIvXwnNttRG8EgMjk327sofxEONjDF0FBm7c',
+  //clientId:     process.env.QUICKBOOKS_CLIENT_ID     || 'ABnClFfpOy8b037cefQMShOEWhBAhBpofiytDzJLQ7i82WyDtu',
+  clientId:     process.env.QUICKBOOKS_CLIENT_ID     || 'ABKoSh9qVAuAUeR4TRgpWx2n72Um86uTTxSfmVR0t6Ya36G4Nc',
+  //clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || 'IhxBfIvXwnNttRG8EgMjk327sofxEONjDF0FBm7c',
+  clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || 'AS1MDIt90nbJxfiS4p4HxMVJtAUcMhE4HChFLEs2',
   environment:  process.env.QUICKBOOKS_ENVIRONMENT   || 'sandbox',
   redirectUri:  process.env.QUICKBOOKS_REDIRECT_URI  || 'http://localhost:5000/api/quickbooks/callback',
   scopes:       'com.intuit.quickbooks.accounting',
