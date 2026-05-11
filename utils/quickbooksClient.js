@@ -7,7 +7,7 @@ const QUICKBOOKS_CONFIG = {
   //clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || 'IhxBfIvXwnNttRG8EgMjk327sofxEONjDF0FBm7c',
   clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || 'AS1MDIt90nbJxfiS4p4HxMVJtAUcMhE4HChFLEs2',
   environment:  process.env.QUICKBOOKS_ENVIRONMENT   || 'sandbox',
-  redirectUri:  process.env.QUICKBOOKS_REDIRECT_URI  || 'http://localhost:5000/api/quickbooks/callback',
+  redirectUri:  process.env.QUICKBOOKS_REDIRECT_URI  || 'https://de-cora.com/api/quickbooks/callback',
   scopes:       'com.intuit.quickbooks.accounting',
 };
 
