@@ -40,7 +40,7 @@ router.post('/sync-po/:poVersionId', protect, authorize('admin', 'designer'), sy
 router.get('/latest-po/:orderId', protect, authorize('admin', 'designer'), getLatestConfirmedPOs);
 
 // ─── Proposal → QB Invoice ───────────────────────────────────────────────────
-router.post('/sync-proposal/:orderId', protect, authorize('admin', 'designer'), syncProposalToQuickBooks);
+router.post('/sync-proposal/:orderId/:pvId', protect, authorize('admin', 'designer'), syncProposalToQuickBooks);
 
 // ─── All PO vendors for an order (any status) ───────────────────────────────
 router.get('/po-vendors/:orderId', protect, authorize('admin', 'designer'), getAllPOVendors);

@@ -9,25 +9,13 @@ const Order = require('../models/Order');
 const ProposalVersion = require('../models/ProposalVersion');
 
 // ─── Single canonical proposal number generator ───────────────────────────────
-const ensureProposalNumber = async (order) => {
-  if (order.proposalNumber) return order.proposalNumber;
-
-  // Client code: 3 huruf dari last name
+// Tambah di ensureProposalNumber — generate unique number per version
+const ensureProposalNumberForVersion = async (order, versionNumber) => {
   const clientName = order.clientInfo?.name || 'CLT';
-  // Extract first alphabetic word from client name — handles formats like:
-  // "Fang - The Park - Unit 1015" → "FAN"
-  // "Langford" → "LAN"
-  // "John Smith" → "JOH"
-  // Use last alphabetic word from client name as code
-  // "Tang, Sam and Tammy" → last word "Tammy" → "TAM"
-  // "Fang - The Park - Unit 1015" → last alpha word "Park" → "PAR"  
-  // "Langford" → "LAN"
   const nameParts  = clientName.trim().split(/[\s\-\/,]+/);
   const lastWord   = [...nameParts].reverse().find(p => /[a-zA-Z]/.test(p)) || 'CLT';
   const clientCode = lastWord.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
 
-  // Atomic autoincrement per clientCode — each client starts from 000001
-  // e.g. Hen-TAM-000001, Hen-TAM-000002 and Hen-FAN-000001 independently
   const Counter = require('../models/Counter');
   const counterDoc = await Counter.findOneAndUpdate(
     { _id: `proposalNumber_${clientCode}` },
@@ -35,10 +23,26 @@ const ensureProposalNumber = async (order) => {
     { new: true, upsert: true }
   );
   const counter = String(counterDoc.seq).padStart(6, '0');
+  return `Hen-${clientCode}-${counter}-v${versionNumber}`;
+};
 
+const ensureProposalNumber = async (order) => {
+  if (order.proposalNumber) return order.proposalNumber;
+
+  const clientName = order.clientInfo?.name || 'CLT';
+  const nameParts  = clientName.trim().split(/[\s\-\/,]+/);
+  const lastWord   = [...nameParts].reverse().find(p => /[a-zA-Z]/.test(p)) || 'CLT';
+  const clientCode = lastWord.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+
+  const Counter = require('../models/Counter');
+  const counterDoc = await Counter.findOneAndUpdate(
+    { _id: `proposalNumber_${clientCode}` },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  const counter = String(counterDoc.seq).padStart(6, '0');
   const proposalNumber = `Hen-${clientCode}-${counter}`;
 
-  // Persist — use findByIdAndUpdate with $set to avoid race conditions
   await Order.findByIdAndUpdate(
     order._id,
     { $set: { proposalNumber } },
@@ -64,36 +68,33 @@ const getProposalData = async (req, res) => {
         return res.status(404).json({ message: 'Proposal version not found' });
       }
 
-      let proposalNumber = order?.proposalNumber;
-      if (!proposalNumber && order) {
-        const fullOrder = await Order.findById(orderId);
-        proposalNumber = await ensureProposalNumber(fullOrder);
-      }
+      // ✅ PV dulu, fallback Order
+      const proposalNumber = proposalVersion.proposalNumber || order?.proposalNumber || null;
 
       return res.json({
         success: true,
-        data: {
-          ...proposalVersion.toObject(),
-          proposalNumber: proposalNumber || null,
-        }
+        data: { ...proposalVersion.toObject(), proposalNumber }
       });
     }
 
     // Latest version
-    const order = await Order.findById(orderId).populate('user', 'name email address unitNumber phoneNumber').lean();
+    const order = await Order.findById(orderId)
+      .populate('user', 'name email address unitNumber phoneNumber')
+      .lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    let proposalNumber = order.proposalNumber;
+    const latestVersion = await ProposalVersion.findOne(
+      { orderId },
+      {},
+      { sort: { version: -1 } }
+    ).lean();
+
+    // ✅ PV dulu, fallback Order, fallback generate baru
+    let proposalNumber = latestVersion?.proposalNumber || order.proposalNumber;
     if (!proposalNumber) {
       const fullOrder = await Order.findById(orderId);
       proposalNumber = await ensureProposalNumber(fullOrder);
     }
-
-    const latestVersion = await ProposalVersion.findOne(
-      { orderId },
-      { version: 1, status: 1 },
-      { sort: { version: -1 } }
-    );
 
     res.json({
       success: true,
@@ -105,7 +106,7 @@ const getProposalData = async (req, res) => {
         clientInfo:       order.clientInfo,
         user:             order.user,
         selectedPlan:     order.selectedPlan,
-        selectedProducts: order.selectedProducts || [],
+        selectedProducts: latestVersion?.selectedProducts || order.selectedProducts || [],
         createdAt:        order.createdAt,
         updatedAt:        order.updatedAt
       }
@@ -179,14 +180,35 @@ const saveAsNewVersion = async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    const proposalNumber = await ensureProposalNumber(order);
-
     const latestVersion = await ProposalVersion.findOne(
       { orderId },
       { version: 1 },
       { sort: { version: -1 } }
     );
     const nextVersion = (latestVersion?.version || 0) + 1;
+
+    // ✅ v1: pakai proposal number yang sudah ada di Order (atau generate baru)
+    // v2+: selalu generate nomor baru dari counter — format sama Hen-XXX-000002
+    let versionProposalNumber;
+    if (nextVersion === 1) {
+      versionProposalNumber = await ensureProposalNumber(order);
+    } else {
+      // Generate nomor baru — TIDAK pakai ensureProposalNumber karena itu idempotent
+      const clientName = order.clientInfo?.name || 'CLT';
+      const nameParts  = clientName.trim().split(/[\s\-\/,]+/);
+      const lastWord   = [...nameParts].reverse().find(p => /[a-zA-Z]/.test(p)) || 'CLT';
+      const clientCode = lastWord.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+
+      const Counter = require('../models/Counter');
+      const counterDoc = await Counter.findOneAndUpdate(
+        { _id: `proposalNumber_${clientCode}` },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      );
+      const counter = String(counterDoc.seq).padStart(6, '0');
+      versionProposalNumber = `Hen-${clientCode}-${counter}`;
+      console.log(`[proposal] Generated new proposalNumber for v${nextVersion}: ${versionProposalNumber}`);
+    }
 
     const newVersion = await ProposalVersion.create({
       orderId,
@@ -195,6 +217,7 @@ const saveAsNewVersion = async (req, res) => {
       clientInfo,
       notes,
       status:           'draft',
+      proposalNumber:   versionProposalNumber,
       createdBy:        req.user.id
     });
 
@@ -202,7 +225,7 @@ const saveAsNewVersion = async (req, res) => {
       success:        true,
       message:        `Version ${nextVersion} created`,
       data:           newVersion,
-      proposalNumber,
+      proposalNumber: versionProposalNumber,
     });
 
   } catch (error) {
@@ -215,12 +238,23 @@ const saveAsNewVersion = async (req, res) => {
 const getAllVersions = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const versions = await ProposalVersion.find({ orderId })
-      .populate('createdBy', 'name email')
-      .populate('updatedBy', 'name email')
-      .sort({ version: -1 })
-      .lean();
-    res.json({ success: true, data: versions });
+
+    const [versions, order] = await Promise.all([
+      ProposalVersion.find({ orderId })
+        .populate('createdBy', 'name email')
+        .populate('updatedBy', 'name email')
+        .sort({ version: -1 })
+        .lean(),
+      Order.findById(orderId).select('proposalNumber').lean(),
+    ]);
+
+    // ✅ Pastikan tiap version punya proposalNumber — fallback ke Order jika belum ada
+    const versionsWithNumber = versions.map(v => ({
+      ...v,
+      proposalNumber: v.proposalNumber || order?.proposalNumber || null,
+    }));
+
+    res.json({ success: true, data: versionsWithNumber });
   } catch (error) {
     console.error('Error getting versions:', error);
     res.status(500).json({ message: error.message });
@@ -324,26 +358,26 @@ const saveCurrentVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
     const { products, clientInfo } = req.body;
- 
+
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
- 
-    const proposalNumber = await ensureProposalNumber(order);
- 
+
     const latestVersion = await ProposalVersion.findOne(
       { orderId },
       {},
       { sort: { version: -1 } }
     );
- 
+
     if (latestVersion) {
-      // Update selectedProducts in-place — no version bump
       if (products !== undefined) latestVersion.selectedProducts = products;
       if (clientInfo) latestVersion.clientInfo = clientInfo;
       latestVersion.updatedAt = new Date();
       latestVersion.updatedBy = req.user.id;
       await latestVersion.save();
- 
+
+      // ✅ Pakai proposalNumber dari PV, fallback ke Order
+      const proposalNumber = latestVersion.proposalNumber || order.proposalNumber;
+
       return res.json({
         success: true,
         message: `Version ${latestVersion.version} updated`,
@@ -351,8 +385,9 @@ const saveCurrentVersion = async (req, res) => {
         proposalNumber,
       });
     }
- 
+
     // No version yet — create version 1
+    const baseProposalNumber = await ensureProposalNumber(order);
     const newVersion = await ProposalVersion.create({
       orderId,
       version:          1,
@@ -360,16 +395,17 @@ const saveCurrentVersion = async (req, res) => {
       clientInfo:       clientInfo || order.clientInfo,
       notes:            'Initial version',
       status:           'draft',
+      proposalNumber:   baseProposalNumber, // ✅ simpan ke PV
       createdBy:        req.user.id,
     });
- 
+
     return res.json({
       success: true,
       message: 'Version 1 created',
       data: newVersion,
-      proposalNumber,
+      proposalNumber: baseProposalNumber,
     });
- 
+
   } catch (error) {
     console.error('saveCurrentVersion error:', error);
     res.status(500).json({ message: error.message });

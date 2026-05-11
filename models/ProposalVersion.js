@@ -8,6 +8,11 @@ const proposalVersionSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+
+  proposalNumber: {
+    type: String,
+    default: null,
+  },
   
   version: {
     type: Number,

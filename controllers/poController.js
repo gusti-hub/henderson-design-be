@@ -707,17 +707,19 @@ const updatePOStatus = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid status' });
     }
 
+    // ✅ Cari berdasarkan version yang dikirim dari frontend
     const po = await POVersion.findOne({ orderId, vendorId, version });
     if (!po) return res.status(404).json({ success: false, message: 'PO version not found' });
 
+    // ✅ Hanya confirmed yang tidak bisa diubah
     if (po.status === 'confirmed') {
-      return res.status(400).json({ success: false, message: 'Confirmed PO cannot be changed' });
+      return res.status(400).json({ success: false, message: 'Confirmed PO cannot be changed. Create a new version instead.' });
     }
 
     po.status = status;
     await po.save();
 
-    res.json({ success: true, status });
+    res.json({ success: true, status, version: po.version });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -141,7 +141,11 @@ const disconnectQuickBooks = async (req, res) => {
 // ─── Test ─────────────────────────────────────────────────────────────────────
 const testConnection = async (req, res) => {
   try {
-    if (!quickbooksClient.accessToken) return res.status(400).json({ success: false, message: 'QuickBooks not connected' });
+    // ✅ Tambahkan ini
+    const tokensLoaded = await loadTokensFromDatabase();
+    if (!tokensLoaded) {
+      return res.status(400).json({ success: false, message: 'QuickBooks not connected. Please reconnect.', needsReconnect: true });
+    }
 
     const url = `${QUICKBOOKS_CONFIG.environment === 'production'
       ? 'https://quickbooks.api.intuit.com'
@@ -389,76 +393,67 @@ const getLatestConfirmedPOs = async (req, res) => {
 
 // ─── Sync Proposal → QB Invoice ──────────────────────────────────────────────
 // POST /api/quickbooks/sync-proposal/:orderId
-// Syncs the order's proposal total as a QB Invoice
+// POST /api/quickbooks/sync-proposal/:orderId/:pvId
 const syncProposalToQuickBooks = async (req, res) => {
   try {
     const tokensLoaded = await loadTokensFromDatabase();
     if (!tokensLoaded) return res.status(400).json({ message: 'QuickBooks not connected.', needsReconnect: true });
 
-    const order = await Order.findById(req.params.orderId)
-      .populate('user')
-      .populate('selectedProducts.vendor')
-      .lean();
+    const { orderId, pvId } = req.params;
+
+    // ✅ Load specific ProposalVersion, bukan cuma latest
+    const pv = await ProposalVersion.findById(pvId).lean();
+    if (!pv) return res.status(404).json({ message: 'Proposal version not found' });
+
+    // ✅ Guard per ProposalVersion._id, bukan per Order
+    if (pv.quickbooksId) {
+      return res.status(400).json({ message: 'Already synced to QuickBooks', quickbooksId: pv.quickbooksId });
+    }
+
+    const order = await Order.findById(orderId).populate('user').lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
-    if (!order.proposalNumber) return res.status(400).json({ message: 'No proposal number — generate a proposal first' });
-    // Check both Order.proposalQbId AND latest ProposalVersion.quickbooksId
-    if (order.proposalQbId) return res.status(400).json({ message: 'Already synced to QuickBooks', quickbooksId: order.proposalQbId });
 
-    const latestPV = await ProposalVersion.findOne(
-      { orderId: req.params.orderId },
-      { quickbooksId: 1 },
-      { sort: { version: -1 } }
-    ).lean();
-    if (latestPV?.quickbooksId) return res.status(400).json({ message: 'Already synced to QuickBooks', quickbooksId: latestPV.quickbooksId });
+    // Proposal number — ambil dari PV dulu, fallback ke Order
+    const invoiceNumber = pv.proposalNumber || order.proposalNumber;
+    if (!invoiceNumber) return res.status(400).json({ message: 'No proposal number — generate a proposal first' });
 
-    // Calculate proposal total (sell price)
+    // Hitung total dari ProposalVersion.selectedProducts
     let totalAmount = 0;
-    (order.selectedProducts || []).forEach(p => {
-      const opts     = p.selectedOptions || {};
-      const qty      = parseFloat(p.quantity) || 1;
-      const msrp     = parseFloat(opts.msrp) || 0;
-      const discount = parseFloat(opts.discountPercent) || 0;
-      const netCost  = (opts.netCostOverride != null && opts.netCostOverride !== '')
-        ? parseFloat(opts.netCostOverride) : msrp * (1 - discount / 100);
-      const markup   = parseFloat(opts.markupPercent) || 0;
-      totalAmount   += netCost * (1 + markup / 100) * qty;
+    (pv.selectedProducts || []).forEach(p => {
+      const opts = p.selectedOptions || {};
+      const qty  = parseFloat(p.quantity) || 1;
+      const msrp = parseFloat(opts.msrp) || 0;
+      const markupPct = parseFloat(opts.markupPercent) || 0;
+      const sell = msrp * (1 + markupPct / 100);
+      totalAmount += sell * qty;
     });
 
-    if (totalAmount <= 0) return res.status(400).json({ message: 'Proposal total is $0 — add products with pricing first' });
+    if (totalAmount <= 0) return res.status(400).json({ message: 'Proposal total is $0' });
 
-    // Get/create customer
     const clientName = order.clientInfo?.name || 'Unknown Client';
     const customer   = await quickbooksClient.getOrCreateCustomer({
       name:       clientName,
       email:      order.clientInfo?.email || order.user?.email || '',
       unitNumber: order.clientInfo?.unitNumber || '',
-      clientCode: order.proposalNumber,
+      clientCode: invoiceNumber,
     });
 
     const qbInvoice = await quickbooksClient.createInvoice({
       customerId:    customer.Id,
-      invoiceNumber: order.proposalNumber,
+      invoiceNumber, // ✅ unique per version
       amount:        totalAmount,
-      description:   `Proposal ${order.proposalNumber} — ${clientName}${order.clientInfo?.unitNumber ? ' Unit ' + order.clientInfo.unitNumber : ''}`,
+      description:   `Proposal ${invoiceNumber} v${pv.version} — ${clientName}`,
       invoiceDate:   new Date().toISOString().split('T')[0],
-      memo:          `Henderson Design Group Proposal`,
+      memo:          `Henderson Design Group Proposal v${pv.version}`,
     });
 
-    // Save QB ID to order
-// Save QB ID to Order
-    await Order.findByIdAndUpdate(req.params.orderId, {
-      proposalQbId:       qbInvoice.Id,
-      proposalQbSyncedAt: new Date(),
+    // ✅ Simpan QB ID ke ProposalVersion yang spesifik, bukan Order
+    await ProposalVersion.findByIdAndUpdate(pvId, {
+      quickbooksId:       qbInvoice.Id,
+      quickbooksSyncedAt: new Date(),
     });
 
-    // Save QB ID to latest ProposalVersion — ini yang dibaca FE
-    await ProposalVersion.findOneAndUpdate(
-      { orderId: req.params.orderId },
-      { quickbooksId: qbInvoice.Id, quickbooksSyncedAt: new Date() },
-      { sort: { version: -1 } }
-    );
-
-    console.log(`✅ Proposal ${order.proposalNumber} → QB Invoice ${qbInvoice.Id}`);
+    console.log(`✅ Proposal ${invoiceNumber} v${pv.version} → QB Invoice ${qbInvoice.Id}`);
     res.json({ success: true, message: 'Proposal synced to QuickBooks as Invoice', quickbooksId: qbInvoice.Id });
 
   } catch (error) {
