@@ -53,10 +53,11 @@ const createExpense = async (req, res) => {
         amount:      parseFloat(l.amount) || 0,
         unit:        l.unit        || 'hr',
       })),
-      taxRate: parseFloat(taxRate) || 4.5,
-      notes:   notes  || '',
-      status:  status || 'draft',
-      createdBy: req.user?.id,
+      taxRate:      parseFloat(taxRate) || 4.5,
+      notes:        notes        || '',
+      status:       status       || 'draft',
+      employeeName: employeeName || '',  // ✅ ini yang hilang
+      createdBy:    req.user?.id,
     });
 
     res.status(201).json({ ...expense.toJSON(), id: expense._id.toString() });

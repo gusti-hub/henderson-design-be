@@ -2,25 +2,26 @@
 const axios = require('axios');
 
 const QUICKBOOKS_CONFIG = {
-  //clientId:     process.env.QUICKBOOKS_CLIENT_ID     || 'ABnClFfpOy8b037cefQMShOEWhBAhBpofiytDzJLQ7i82WyDtu',
-  clientId:     process.env.QUICKBOOKS_CLIENT_ID     || 'ABKoSh9qVAuAUeR4TRgpWx2n72Um86uTTxSfmVR0t6Ya36G4Nc',
-  //clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || 'IhxBfIvXwnNttRG8EgMjk327sofxEONjDF0FBm7c',
-  clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || 'AS1MDIt90nbJxfiS4p4HxMVJtAUcMhE4HChFLEs2',
-  environment:  process.env.QUICKBOOKS_ENVIRONMENT   || 'sandbox',
+  clientId:     process.env.QUICKBOOKS_CLIENT_ID     || 'ABBIX7EBi1jR9C45z5ZcnHczpIbV30CeD0aO0McUGD0tJmSWg6',
+  clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || 'TP4bXyTrlvZ4bmhXf6lgRPdGk3R2RI4S8OOML1lu',
+  environment:  process.env.QUICKBOOKS_ENVIRONMENT   || 'production',
   redirectUri:  process.env.QUICKBOOKS_REDIRECT_URI  || 'https://de-cora.com/api/quickbooks/callback',
   scopes:       'com.intuit.quickbooks.accounting',
 };
 
 console.log('QuickBooks Config:', {
-  clientId:    QUICKBOOKS_CONFIG.clientId ? `${QUICKBOOKS_CONFIG.clientId.substring(0, 10)}...` : 'NOT SET',
+  clientId:     QUICKBOOKS_CONFIG.clientId ? `${QUICKBOOKS_CONFIG.clientId.substring(0, 10)}...` : 'NOT SET',
   clientSecret: QUICKBOOKS_CONFIG.clientSecret ? '***HIDDEN***' : 'NOT SET',
-  environment: QUICKBOOKS_CONFIG.environment,
-  redirectUri: QUICKBOOKS_CONFIG.redirectUri,
+  environment:  QUICKBOOKS_CONFIG.environment,
+  redirectUri:  QUICKBOOKS_CONFIG.redirectUri,
 });
 
 const BASE_URL = QUICKBOOKS_CONFIG.environment === 'production'
   ? 'https://quickbooks.api.intuit.com'
   : 'https://sandbox-quickbooks.api.intuit.com';
+
+// ─── Helper: round to 2 decimal places ───────────────────────────────────────
+const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
 class QuickBooksClient {
   constructor() {
@@ -130,24 +131,59 @@ class QuickBooksClient {
   // ─── Invoice ───────────────────────────────────────────────────────────────
   async createInvoice(invoiceData) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
-    const invoice = {
-      Line: [{
-        DetailType:           'SalesItemLineDetail',
-        Amount:               invoiceData.amount,
-        Description:          invoiceData.description,
-        SalesItemLineDetail:  {
-          ItemRef:   { value: invoiceData.itemId || '1', name: invoiceData.itemName || 'Services' },
+
+    let lines;
+
+    if (invoiceData.lines && invoiceData.lines.length > 0) {
+      lines = invoiceData.lines.map(line => {
+        const qty       = round2(line.qty || 1);
+        const unitPrice = round2(line.unitPrice || 0);
+        // ✅ Amount HARUS = round2(unitPrice * qty) — QB validasi ini strict
+        const amount    = round2(unitPrice * qty);
+
+        return {
+          DetailType:          'SalesItemLineDetail',
+          Amount:              amount,
+          Description:         (line.description || '').substring(0, 4000),
+          SalesItemLineDetail: {
+            ItemRef:   { value: '1', name: 'Services' },
+            Qty:       qty,
+            UnitPrice: unitPrice,
+          },
+        };
+      });
+    } else {
+      // Fallback: single line dari invoiceData.amount
+      const amount = round2(invoiceData.amount || 0);
+      lines = [{
+        DetailType:          'SalesItemLineDetail',
+        Amount:              amount,
+        Description:         (invoiceData.description || '').substring(0, 4000),
+        SalesItemLineDetail: {
+          ItemRef:   { value: '1', name: 'Services' },
           Qty:       1,
-          UnitPrice: invoiceData.amount,
+          UnitPrice: amount,
         },
-      }],
-      CustomerRef:   { value: invoiceData.customerId },
-      TxnDate:       invoiceData.invoiceDate || new Date().toISOString().split('T')[0],
-      DueDate:       invoiceData.dueDate,
-      DocNumber:     invoiceData.invoiceNumber,
-      PrivateNote:   invoiceData.notes || '',
-      CustomerMemo:  { value: invoiceData.memo || 'Thank you for your business!' },
+      }];
+    }
+
+    // Filter out zero-amount lines — QB reject lines dengan Amount = 0
+    lines = lines.filter(l => l.Amount > 0);
+
+    if (lines.length === 0) {
+      throw new Error('No valid line items to create invoice');
+    }
+
+    const invoice = {
+      Line:         lines,
+      CustomerRef:  { value: invoiceData.customerId },
+      TxnDate:      invoiceData.invoiceDate || new Date().toISOString().split('T')[0],
+      DueDate:      invoiceData.dueDate || invoiceData.invoiceDate || new Date().toISOString().split('T')[0],
+      DocNumber:    invoiceData.invoiceNumber,
+      PrivateNote:  (invoiceData.notes || '').substring(0, 4000),
+      CustomerMemo: { value: (invoiceData.memo || 'Thank you for your business!').substring(0, 1000) },
     };
+
     const response = await axios.post(
       `${BASE_URL}/v3/company/${this.realmId}/invoice`,
       invoice,
@@ -167,9 +203,9 @@ class QuickBooksClient {
 
   async voidInvoice(invoiceId) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
-    const invoice    = await this.getInvoice(invoiceId);
+    const invoice     = await this.getInvoice(invoiceId);
     const voidInvoice = { Id: invoiceId, SyncToken: invoice.SyncToken, sparse: true, PrivateNote: 'VOID' };
-    const response   = await axios.post(
+    const response    = await axios.post(
       `${BASE_URL}/v3/company/${this.realmId}/invoice`,
       voidInvoice,
       { params: { operation: 'void' }, headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
@@ -190,7 +226,6 @@ class QuickBooksClient {
       if (vendors.length > 0) return vendors[0];
     } catch (err) { console.warn('QB vendor search error:', err.message); }
 
-    // Create new vendor
     const createRes = await axios.post(
       `${BASE_URL}/v3/company/${this.realmId}/vendor`,
       { DisplayName: vendorName },
@@ -201,24 +236,44 @@ class QuickBooksClient {
   }
 
   // ─── Bill (for PO sync) ────────────────────────────────────────────────────
-  // ✅ NEW: Create a Bill in QuickBooks (accounts payable — vendor invoice)
   async createBill(billData) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
 
-    const bill = {
-      Line: billData.lines.map(line => ({
-        DetailType: 'AccountBasedExpenseLineDetail',
-        Amount:     line.amount,
-        Description: line.description,
-        AccountBasedExpenseLineDetail: {
-          // Account 7 = "Cost of Goods Sold" in sandbox; adjust for production
-          AccountRef: { value: billData.accountId || '7', name: billData.accountName || 'Cost of Goods Sold' },
+    let lines = billData.lines.map(line => {
+      const qty       = round2(line.qty || 1);
+      const unitPrice = round2(line.unitPrice || 0);
+      // ✅ Amount HARUS = round2(unitPrice * qty) — QB validasi ini strict
+      const amount    = round2(unitPrice * qty);
+
+      return {
+        DetailType:  'ItemBasedExpenseLineDetail',
+        Amount:      amount,
+        Description: (line.description || '').substring(0, 4000),
+        ItemBasedExpenseLineDetail: {
+          // value '1' = Services item di sandbox
+          // Di production ganti dengan Item ID Product yang sesuai
+          ItemRef:        { value: billData.itemId || '1', name: 'Product' },
+          Qty:            qty,
+          UnitPrice:      unitPrice,
+          BillableStatus: 'NotBillable',
         },
-      })),
+      };
+    });
+
+    // Filter out zero-amount lines
+    lines = lines.filter(l => l.Amount > 0);
+
+    if (lines.length === 0) {
+      throw new Error('No valid line items to create bill');
+    }
+
+    const bill = {
+      Line:        lines,
       VendorRef:   { value: billData.vendorId },
-      TxnDate:     billData.date || new Date().toISOString().split('T')[0],
+      TxnDate:     billData.date    || new Date().toISOString().split('T')[0],
+      DueDate:     billData.dueDate || billData.date || new Date().toISOString().split('T')[0],
       DocNumber:   billData.docNumber,
-      PrivateNote: billData.notes || '',
+      PrivateNote: (billData.notes || '').substring(0, 4000),
     };
 
     const response = await axios.post(
