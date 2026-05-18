@@ -324,13 +324,17 @@ const getOrders = async (req, res) => {
       Order.find(searchQuery, excludeFields)
         .populate({
           path: 'user',
-          select: 'name email clientCode unitNumber' // Only needed fields
+          select: 'name email clientCode unitNumber'
         })
-        .select('-__v') // Exclude version key
+        .populate({
+          path: 'selectedProducts.vendor',
+          select: 'name'          // ✅ FIX: populate vendor name
+        })
+        .select('-__v')
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
-        .lean() // ✅ Use lean() for faster queries
+        .lean()
     ]);
 
     console.timeEnd('getOrders');
@@ -358,6 +362,10 @@ const getOrderById = async (req, res) => {
       .populate({
         path: 'user',
         select: 'name email clientCode unitNumber'
+      })
+      .populate({
+        path: 'selectedProducts.vendor',
+        select: 'name'          // ✅ FIX: populate vendor name
       })
       .lean();
 
@@ -1733,6 +1741,274 @@ const generateInstallBinder = async (req, res) => {
   }
 };
 
+const generateInstallBinderExcel = async (req, res) => {
+  try {
+    const ExcelJS = require('exceljs');
+    const axios   = require('axios');
+ 
+    const order = await Order.findById(req.params.id)
+      .populate('user')
+      .populate('selectedProducts.vendor')
+      .lean();
+ 
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+ 
+    const products    = order.selectedProducts || [];
+    const clientName  = order.clientInfo?.name || 'Client';
+    const unitNumber  = order.clientInfo?.unitNumber || '';
+    const floorPlan   = order.clientInfo?.floorPlan || '';
+    const projectLabel = [clientName, unitNumber ? `Unit ${unitNumber}` : '', floorPlan]
+      .filter(Boolean).join(' — ');
+ 
+    // ── Helper: download image to buffer ──
+    const downloadImage = async (url) => {
+      try {
+        if (!url || url.startsWith('data:')) return null;
+        const response = await axios.get(url, {
+          responseType: 'arraybuffer',
+          timeout: 8000,
+          headers: { 'User-Agent': 'HDG-InstallBinder/1.0' }
+        });
+        const ct = response.headers['content-type'] || '';
+        let ext = 'png';
+        if (ct.includes('jpeg') || ct.includes('jpg')) ext = 'jpeg';
+        else if (ct.includes('gif')) ext = 'gif';
+        return { buffer: Buffer.from(response.data), extension: ext };
+      } catch {
+        return null;
+      }
+    };
+ 
+    // ── Helper: get primary image URL ──
+    const getPrimaryImageUrl = (p) => {
+      if (p.selectedOptions?.image) return p.selectedOptions.image;
+      if (p.selectedOptions?.images?.length > 0) return p.selectedOptions.images[0];
+      if (p.selectedOptions?.uploadedImages?.length > 0) {
+        return p.selectedOptions.uploadedImages[0].url || null;
+      }
+      return null;
+    };
+ 
+    // ── Pre-download all images ──
+    console.log(`📸 Pre-downloading images for install binder (${products.length} products)...`);
+    const imageCache = new Map();
+    await Promise.all(products.map(async (p, idx) => {
+      const url = getPrimaryImageUrl(p);
+      if (url) {
+        const imgData = await downloadImage(url);
+        if (imgData) imageCache.set(idx, imgData);
+      }
+    }));
+    console.log(`✅ Downloaded ${imageCache.size} images`);
+ 
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Henderson Design Group';
+    const ws = wb.addWorksheet('Install Binder');
+ 
+    // ── Column widths ──
+    ws.getColumn('A').width = 13;   // Photo
+    ws.getColumn('B').width = 18;   // Room
+    ws.getColumn('C').width = 20;   // Vendor Name
+    ws.getColumn('D').width = 38;   // Vendor Description
+    ws.getColumn('E').width = 16;   // HDG PO#
+    ws.getColumn('F').width = 10;   // Quantity
+    ws.getColumn('G').width = 20;   // Vendor Order Number
+    ws.getColumn('H').width = 24;   // Tracking Info
+    ws.getColumn('I').width = 26;   // Notes
+ 
+    // ── Styles ──
+    const thinBorder = {
+      top:    { style: 'thin' },
+      left:   { style: 'thin' },
+      bottom: { style: 'thin' },
+      right:  { style: 'thin' },
+    };
+    const headerFont = { name: 'Arial', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    const dataFont   = { name: 'Arial', size: 9 };
+    const wrapTop    = { vertical: 'top', wrapText: true };
+ 
+    // ── Row 1: Title ──
+    ws.mergeCells('A1:I1');
+    const titleCell = ws.getCell('A1');
+    titleCell.value     = 'Henderson Design Group — Install Binder';
+    titleCell.font      = { name: 'Arial', bold: true, size: 13, color: { argb: 'FF005670' } };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    ws.getRow(1).height = 28;
+ 
+    // ── Row 2: Project info ──
+    ws.mergeCells('A2:I2');
+    const projCell = ws.getCell('A2');
+    projCell.value     = projectLabel;
+    projCell.font      = { name: 'Arial', bold: true, size: 10 };
+    projCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    ws.getRow(2).height = 20;
+ 
+    // ── Row 3: Date printed ──
+    ws.mergeCells('A3:I3');
+    const dateCell = ws.getCell('A3');
+    dateCell.value = `Printed: ${new Date().toLocaleDateString('en-US', {
+      month: '2-digit', day: '2-digit', year: 'numeric'
+    })}`;
+    dateCell.font      = { name: 'Arial', size: 9, italic: true, color: { argb: 'FF666666' } };
+    dateCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    ws.getRow(3).height = 16;
+ 
+    // ── Row 4: Table header ──
+    const headers = [
+      'Photo', 'Room', 'Vendor Name', 'Vendor Description',
+      'HDG PO#', 'Qty', 'Vendor Order #', 'Tracking Info', 'Notes'
+    ];
+    headers.forEach((h, i) => {
+      const cell = ws.getCell(4, i + 1);
+      cell.value     = h;
+      cell.font      = headerFont;
+      cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF005670' } };
+      cell.border    = thinBorder;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    });
+    ws.getRow(4).height = 24;
+ 
+    // ── Group products by room ──
+    const grouped = {};
+    products.forEach(p => {
+      const room = p.selectedOptions?.room || p.category || p.spotName || '— No Room Assigned —';
+      if (!grouped[room]) grouped[room] = [];
+      grouped[room].push(p);
+    });
+ 
+    let rowNum = 5;
+ 
+    Object.entries(grouped).forEach(([room, roomProducts]) => {
+      // Room header row
+      ws.mergeCells(`A${rowNum}:I${rowNum}`);
+      const roomCell = ws.getCell(`A${rowNum}`);
+      roomCell.value     = room;
+      roomCell.font      = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF005670' } };
+      roomCell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F4F7' } };
+      roomCell.border    = thinBorder;
+      roomCell.alignment = { vertical: 'middle', indent: 1 };
+      ws.getRow(rowNum).height = 20;
+      rowNum++;
+ 
+      roomProducts.forEach((p) => {
+        const originalIdx = products.indexOf(p);
+        ws.getRow(rowNum).height = 90;
+ 
+        const vendorName = (p.vendor && typeof p.vendor === 'object' && p.vendor.name)
+          ? p.vendor.name
+          : 'HDG Inventory';
+ 
+        // Build vendor description
+        const descParts = [];
+        if (p.name)                               descParts.push(p.name);
+        if (p.product_id)                         descParts.push(`SKU: ${p.product_id}`);
+        if (p.selectedOptions?.specifications)    descParts.push(p.selectedOptions.specifications);
+        if (p.selectedOptions?.finish)            descParts.push(`Finish: ${p.selectedOptions.finish}`);
+        if (p.selectedOptions?.fabric)            descParts.push(`Fabric: ${p.selectedOptions.fabric}`);
+        if (p.selectedOptions?.size)              descParts.push(`Size: ${p.selectedOptions.size}`);
+        if (p.selectedOptions?.leadTime)          descParts.push(`Lead Time: ${p.selectedOptions.leadTime}`);
+        const vendorDesc = descParts.join('\n');
+ 
+        // A - Photo
+        const cellA = ws.getCell(rowNum, 1);
+        cellA.border = thinBorder;
+        if (imageCache.has(originalIdx)) {
+          try {
+            const imgData = imageCache.get(originalIdx);
+            const imageId = wb.addImage({
+              buffer: imgData.buffer,
+              extension: imgData.extension,
+            });
+            ws.addImage(imageId, {
+              tl: { col: 0.05, row: rowNum - 1 + 0.05 },
+              ext: { width: 80, height: 80 },
+              editAs: 'oneCell',
+            });
+          } catch (_) {}
+        }
+ 
+        // B - Room
+        const cellB = ws.getCell(rowNum, 2);
+        cellB.value = p.selectedOptions?.room || p.category || p.spotName || '';
+        cellB.font = dataFont; cellB.border = thinBorder; cellB.alignment = wrapTop;
+ 
+        // C - Vendor Name
+        const cellC = ws.getCell(rowNum, 3);
+        cellC.value = vendorName;
+        cellC.font = dataFont; cellC.border = thinBorder; cellC.alignment = wrapTop;
+ 
+        // D - Vendor Description
+        const cellD = ws.getCell(rowNum, 4);
+        cellD.value = vendorDesc;
+        cellD.font = dataFont; cellD.border = thinBorder; cellD.alignment = wrapTop;
+ 
+        // E - HDG PO#
+        const cellE = ws.getCell(rowNum, 5);
+        cellE.value = p.selectedOptions?.poNumber || '';
+        cellE.font = dataFont; cellE.border = thinBorder; cellE.alignment = wrapTop;
+ 
+        // F - Quantity
+        const cellF = ws.getCell(rowNum, 6);
+        cellF.value = p.quantity || 1;
+        cellF.font = dataFont; cellF.border = thinBorder;
+        cellF.alignment = { ...wrapTop, horizontal: 'center' };
+ 
+        // G - Vendor Order Number
+        const cellG = ws.getCell(rowNum, 7);
+        cellG.value = p.selectedOptions?.vendorOrderNumber || '';
+        cellG.font = dataFont; cellG.border = thinBorder; cellG.alignment = wrapTop;
+ 
+        // H - Tracking Info
+        const cellH = ws.getCell(rowNum, 8);
+        cellH.value = p.selectedOptions?.trackingInfo || '';
+        cellH.font = dataFont; cellH.border = thinBorder; cellH.alignment = wrapTop;
+ 
+        // I - Notes (gabung delivery status + notes + installer notes)
+        const cellI = ws.getCell(rowNum, 9);
+        const notesParts = [
+          p.selectedOptions?.deliveryStatus,
+          p.selectedOptions?.notes,
+          p.selectedOptions?.installerNotes,
+        ].filter(Boolean);
+        cellI.value = notesParts.join('\n') || '';
+        cellI.font = dataFont; cellI.border = thinBorder; cellI.alignment = wrapTop;
+ 
+        rowNum++;
+      });
+    });
+ 
+    if (products.length === 0) {
+      ws.mergeCells(`A${rowNum}:I${rowNum}`);
+      ws.getCell(`A${rowNum}`).value     = 'No products in this order';
+      ws.getCell(`A${rowNum}`).font      = { ...dataFont, italic: true };
+      ws.getCell(`A${rowNum}`).alignment = { horizontal: 'center' };
+      rowNum++;
+    }
+ 
+    // ── Footer ──
+    ws.mergeCells(`A${rowNum}:I${rowNum}`);
+    const footerCell = ws.getCell(`A${rowNum}`);
+    footerCell.value = 'Henderson Design Group  |  4343 Royal Place, Honolulu, HI 96816  |  (808) 315-8782';
+    footerCell.font  = { name: 'Arial', size: 8, color: { argb: 'FF999999' }, italic: true };
+    footerCell.alignment = { horizontal: 'center' };
+ 
+    // ── Send response ──
+    const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `InstallBinder_${safeName}.xlsx`;
+ 
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    await wb.xlsx.write(res);
+    res.end();
+ 
+  } catch (error) {
+    console.error('❌ Error generating install binder Excel:', error);
+    res.status(500).json({ message: 'Error generating install binder Excel', error: error.message });
+  }
+};
+
 const generateStatusReport = async (req, res) => {
   try {
     const ExcelJS = require('exceljs');
@@ -2060,6 +2336,7 @@ const generateStatusReport = async (req, res) => {
     ws2.getColumn('N').width = 27;
     ws2.getColumn('O').width = 23;
     ws2.getColumn('P').width = 21;
+    ws2.getColumn('Q').width = 26;
 
     // ── Legend ──
     ws2.mergeCells('A1:B3');
@@ -2098,7 +2375,8 @@ const generateStatusReport = async (req, res) => {
       'Room', 'Photo', 'External PO#', 'Proposal Number', 'Vendor Name',
       'Vendor Description', 'Quantity', 'Ship To', 'Order Date',
       'Expected Ship Date', 'Date Received', 'Notes', 'Shipping Carrier',
-      'Tracking #', 'Expediting Order Status', 'Vendor Order Number'
+      'Tracking #', 'Warehouse Receiving #',
+      'Expediting Order Status', 'Vendor Order Number'
     ];
     iHeaders.forEach((h, i) => {
       const cell = ws2.getCell(ih, i + 1);
@@ -2203,22 +2481,27 @@ const generateStatusReport = async (req, res) => {
         cN.value = p.selectedOptions?.trackingInfo || '';
         cN.font = dataFont; cN.border = thinBorder; cN.alignment = wrapTop;
 
-        // O - Expediting Order Status
+        // O - Warehouse Receiving # ✅ SARA
         const cO = ws2.getCell(ir, 15);
-        cO.value = p.selectedOptions?.orderStatus || p.selectedOptions?.deliveryStatus || '';
+        cO.value = p.selectedOptions?.warehouseReceivingNumber || '';
         cO.font = dataFont; cO.border = thinBorder; cO.alignment = wrapTop;
 
-        // P - Vendor Order Number
+        // P - Expediting Order Status
         const cP = ws2.getCell(ir, 16);
-        cP.value = p.selectedOptions?.vendorOrderNumber || '';
+        cP.value = p.selectedOptions?.orderStatus || p.selectedOptions?.deliveryStatus || '';
         cP.font = dataFont; cP.border = thinBorder; cP.alignment = wrapTop;
+
+        // Q - Vendor Order Number
+        const cQ = ws2.getCell(ir, 17);
+        cQ.value = p.selectedOptions?.vendorOrderNumber || '';
+        cQ.font = dataFont; cQ.border = thinBorder; cQ.alignment = wrapT
 
         ir++;
       });
     });
 
     if (products.length === 0) {
-      ws2.mergeCells(`A${ir}:P${ir}`);
+      ws2.mergeCells(`A${ir}:Q${ir}`);
       ws2.getCell(`A${ir}`).value = 'No products in this order';
       ws2.getCell(`A${ir}`).font = { ...dataFont, italic: true };
       ws2.getCell(`A${ir}`).alignment = { horizontal: 'center' };
@@ -2549,6 +2832,7 @@ module.exports = {
   uploadCustomProductImages,  // ✅ NEW
   uploadOrderFloorPlan, 
   generateInstallBinder,
+  generateInstallBinderExcel,
   generateStatusReport,
   getUploadPresignedUrl,
   generateCogExcel,

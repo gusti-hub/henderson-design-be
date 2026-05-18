@@ -9,11 +9,59 @@ const ProposalVersion = require('../models/ProposalVersion');
 const axios   = require('axios');
 const crypto  = require('crypto');
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
 const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
-// Simple in-memory state storage for OAuth (development)
 const oauthStates = new Map();
+
+// ─── Product Item ID cache ────────────────────────────────────────────────────
+let cachedProductItemId = null;
+
+const getProductItemId = async () => {
+  if (cachedProductItemId) return cachedProductItemId;
+  try {
+    const item = await quickbooksClient.findItemByName('Product');
+    if (item) {
+      cachedProductItemId = item.Id;
+      console.log('QB: Product item ID resolved:', cachedProductItemId);
+      return cachedProductItemId;
+    }
+  } catch (err) {
+    console.warn('QB: Could not find "Product" item:', err.message);
+  }
+  console.warn('QB: Falling back to item ID "1" (Services)');
+  return '1';
+};
+
+// ─── Class ID cache ───────────────────────────────────────────────────────────
+// itemClass dari selectedOptions.itemClass (e.g. "Furniture", "Lighting", dll)
+// Di-cache in-memory per class name
+const classIdCache = new Map();
+
+// resolveClassId defined below — alias for backward compat
+const getClassId = (n) => resolveClassId(n);
+
+// ─── Class ID cache ────────────────────────────────────────────
+const resolveClassId = async (itemClass) => {
+  if (!itemClass || !itemClass.trim()) {
+    console.log('QB resolveClassId: no itemClass provided, skipping');
+    return null;
+  }
+  const key = itemClass.trim();
+  if (classIdCache.has(key)) return classIdCache.get(key);
+  try {
+    const cls = await quickbooksClient.findClassByName(key);
+    if (cls) {
+      classIdCache.set(key, cls.Id);
+      console.log(`QB resolveClassId: "${key}" → ID ${cls.Id}`);
+      return cls.Id;
+    }
+    console.warn(`QB resolveClassId: class "${key}" NOT FOUND in QuickBooks — check QB Settings > Classes`);
+  } catch (err) {
+    console.warn(`QB resolveClassId: error resolving "${key}":`, err.message);
+  }
+  classIdCache.set(key, null);
+  return null;
+};
 
 // ─── Load tokens from DB ──────────────────────────────────────────────────────
 const loadTokensFromDatabase = async () => {
@@ -46,7 +94,6 @@ const loadTokensFromDatabase = async () => {
   }
 };
 
-// ─── Clean expired OAuth states ───────────────────────────────────────────────
 const cleanupExpiredStates = () => {
   const now = Date.now();
   const tenMinutes = 10 * 60 * 1000;
@@ -55,14 +102,13 @@ const cleanupExpiredStates = () => {
   }
 };
 
-// ─── Connect ─────────────────────────────────────────────────────────────────
+// ─── Connect ──────────────────────────────────────────────────────────────────
 const connectQuickBooks = async (req, res) => {
   try {
     const state = crypto.randomBytes(16).toString('hex');
     oauthStates.set(state, { userId: req.user?._id?.toString() || 'anonymous', timestamp: Date.now() });
     cleanupExpiredStates();
     const authUrl = quickbooksClient.getAuthorizationUrl(state);
-    console.log('QuickBooks OAuth initiated:', { state, authUrl });
     res.json({ success: true, authUrl });
   } catch (error) {
     console.error('QuickBooks connect error:', error);
@@ -74,17 +120,14 @@ const connectQuickBooks = async (req, res) => {
 const handleOAuthCallback = async (req, res) => {
   try {
     const { code, state, realmId, error: oauthError } = req.query;
-    console.log('QuickBooks callback received:', { code: !!code, state, realmId, oauthError });
-
     if (oauthError) return res.redirect(`${process.env.FRONTEND_URL}/admin/quickbooks?error=${encodeURIComponent(oauthError)}`);
 
     const stateData = oauthStates.get(state);
-    if (!stateData) { console.error('Invalid or expired state:', state); return res.redirect(`${process.env.FRONTEND_URL}/admin/quickbooks?error=invalid_state`); }
+    if (!stateData) return res.redirect(`${process.env.FRONTEND_URL}/admin/quickbooks?error=invalid_state`);
     oauthStates.delete(state);
 
     if (!code) return res.redirect(`${process.env.FRONTEND_URL}/admin/quickbooks?error=no_code`);
 
-    console.log('Exchanging code for tokens...');
     const tokens = await quickbooksClient.getTokensFromCode(code);
     quickbooksClient.setTokens(tokens.accessToken, tokens.refreshToken, realmId, tokens.expiresIn);
 
@@ -100,7 +143,10 @@ const handleOAuthCallback = async (req, res) => {
       { upsert: true, new: true }
     );
 
-    console.log('QuickBooks connected successfully:', { realmId });
+    // Reset caches saat reconnect — item/class ID bisa beda di company lain
+    cachedProductItemId = null;
+    classIdCache.clear();
+
     res.redirect(`${process.env.FRONTEND_URL}/admin/quickbooks?qb_connected=true`);
   } catch (error) {
     console.error('QuickBooks callback error:', error);
@@ -120,7 +166,6 @@ const getConnectionStatus = async (req, res) => {
 
     res.json({ connected: true, realmId: token.realmId, expiresAt: token.expiresAt, message: 'QuickBooks connected' });
   } catch (error) {
-    console.error('Get status error:', error);
     res.status(500).json({ connected: false, message: 'Failed to get connection status', error: error.message });
   }
 };
@@ -133,10 +178,11 @@ const disconnectQuickBooks = async (req, res) => {
     quickbooksClient.refreshToken = null;
     quickbooksClient.realmId      = null;
     quickbooksClient.tokenExpiry  = null;
-    console.log('QuickBooks disconnected successfully');
+    cachedProductItemId = null;
+    classIdCache.clear();
+    classIdCache.clear();
     res.json({ success: true, message: 'QuickBooks disconnected successfully' });
   } catch (error) {
-    console.error('Disconnect error:', error);
     res.status(500).json({ message: 'Failed to disconnect QuickBooks', error: error.message });
   }
 };
@@ -145,9 +191,7 @@ const disconnectQuickBooks = async (req, res) => {
 const testConnection = async (req, res) => {
   try {
     const tokensLoaded = await loadTokensFromDatabase();
-    if (!tokensLoaded) {
-      return res.status(400).json({ success: false, message: 'QuickBooks not connected. Please reconnect.', needsReconnect: true });
-    }
+    if (!tokensLoaded) return res.status(400).json({ success: false, message: 'QuickBooks not connected.', needsReconnect: true });
 
     const url = `${QUICKBOOKS_CONFIG.environment === 'production'
       ? 'https://quickbooks.api.intuit.com'
@@ -159,25 +203,23 @@ const testConnection = async (req, res) => {
 
     res.json({ success: true, connected: true, companyInfo: response.data.CompanyInfo });
   } catch (error) {
-    console.error('Test connection error:', error);
     res.status(500).json({ success: false, message: 'Connection test failed', error: error.response?.data || error.message });
   }
 };
 
-// ─── Sync existing client Invoice → QB ───────────────────────────────────────
+// ─── Legacy client invoice sync ───────────────────────────────────────────────
 const syncInvoiceToQuickBooks = async (req, res) => {
   try {
     const { clientId, invoiceNumber } = req.params;
     const tokensLoaded = await loadTokensFromDatabase();
-    if (!tokensLoaded) return res.status(400).json({ message: 'QuickBooks not connected. Please connect first.', needsReconnect: true });
-    if (!quickbooksClient.accessToken || !quickbooksClient.realmId) return res.status(400).json({ message: 'QuickBooks not connected.' });
+    if (!tokensLoaded) return res.status(400).json({ message: 'QuickBooks not connected.', needsReconnect: true });
 
     const client = await User.findById(clientId);
     if (!client) return res.status(404).json({ message: 'Client not found' });
 
     const invoice = client.invoices?.find(inv => inv.invoiceNumber === invoiceNumber);
     if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
-    if (invoice.quickbooksSyncStatus === 'synced') return res.status(400).json({ message: 'Invoice already synced to QuickBooks', quickbooksId: invoice.quickbooksId });
+    if (invoice.quickbooksSyncStatus === 'synced') return res.status(400).json({ message: 'Invoice already synced', quickbooksId: invoice.quickbooksId });
 
     let customerId = client.quickbooksCustomerId;
     if (!customerId) {
@@ -196,6 +238,7 @@ const syncInvoiceToQuickBooks = async (req, res) => {
       try { return new Date(date).toISOString().split('T')[0]; } catch { return new Date().toISOString().split('T')[0]; }
     };
 
+    const itemId = await getProductItemId();
     const qbInvoice = await quickbooksClient.createInvoice({
       customerId,
       invoiceNumber: invoice.invoiceNumber,
@@ -203,8 +246,8 @@ const syncInvoiceToQuickBooks = async (req, res) => {
       description:   `Design Fee Invoice (${invoice.currentPercentage || 0}%) - ${invoice.collection || 'Nalu'} - ${invoice.bedroomCount || '1'} Bedroom Package`,
       invoiceDate:   formatDate(invoice.invoiceDate),
       dueDate:       formatDate(invoice.dueDate),
-      memo:          'Thank you for your business!',
-    });
+      // memo intentionally empty
+    }, itemId);
 
     const invoiceIndex = client.invoices.findIndex(inv => inv.invoiceNumber === invoiceNumber);
     client.invoices[invoiceIndex].quickbooksSyncStatus = 'synced';
@@ -212,29 +255,18 @@ const syncInvoiceToQuickBooks = async (req, res) => {
     client.invoices[invoiceIndex].quickbooksSyncedAt   = new Date();
     await client.save();
 
-    res.json({ success: true, message: 'Invoice synced to QuickBooks successfully', quickbooksId: qbInvoice.Id, invoiceNumber });
+    res.json({ success: true, message: 'Invoice synced to QuickBooks', quickbooksId: qbInvoice.Id, invoiceNumber });
   } catch (error) {
     console.error('Sync invoice error:', error);
-    try {
-      const client = await User.findById(req.params.clientId);
-      const invoiceIndex = client.invoices?.findIndex(inv => inv.invoiceNumber === req.params.invoiceNumber);
-      if (invoiceIndex !== -1) {
-        client.invoices[invoiceIndex].quickbooksSyncStatus = 'pending';
-        client.invoices[invoiceIndex].quickbooksSyncError  = error.message;
-        await client.save();
-      }
-    } catch (updateError) { console.error('Failed to update invoice error status:', updateError); }
-    res.status(500).json({ message: 'Failed to sync invoice to QuickBooks', error: error.response?.data?.Fault?.Error?.[0]?.Detail || error.message });
+    res.status(500).json({ message: error.response?.data?.Fault?.Error?.[0]?.Detail || error.message });
   }
 };
 
 // ─── Sync Expense → QB Invoice ────────────────────────────────────────────────
-// POST /api/quickbooks/sync-expense/:expenseId
-// Only confirmed or paid expenses can be synced
 const syncExpenseToQuickBooks = async (req, res) => {
   try {
     const tokensLoaded = await loadTokensFromDatabase();
-    if (!tokensLoaded) return res.status(400).json({ message: 'QuickBooks not connected. Please connect first.', needsReconnect: true });
+    if (!tokensLoaded) return res.status(400).json({ message: 'QuickBooks not connected.', needsReconnect: true });
 
     const expense = await Expense.findById(req.params.expenseId).lean();
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
@@ -242,10 +274,10 @@ const syncExpenseToQuickBooks = async (req, res) => {
     if (expense.status !== 'confirmed' && expense.status !== 'paid') {
       return res.status(400).json({ message: 'Only confirmed or paid expenses can be synced to QuickBooks' });
     }
-    if (expense.quickbooksId) {
-      return res.status(400).json({ message: 'Already synced to QuickBooks', quickbooksId: expense.quickbooksId });
-    }
 
+    const isResync = req.query.force === 'true';
+
+    // Get or create customer — pakai client name dari expense
     const customer = await quickbooksClient.getOrCreateCustomer({
       name:       expense.clientInfo?.name  || 'Unknown Client',
       email:      expense.clientInfo?.email || '',
@@ -253,14 +285,19 @@ const syncExpenseToQuickBooks = async (req, res) => {
       clientCode: expense.expenseNumber,
     });
 
-    const taxRate = parseFloat(expense.taxRate || 0) / 100;
-
-    // ✅ Build lines — qty:1, unitPrice=total agar Amount = UnitPrice * Qty selalu valid di QB
+    const taxRate      = parseFloat(expense.taxRate || 0) / 100;
     const employeeName = expense.employeeName || '';
+
+    // Resolve classRef per line dari itemClass field
+    const lineClassRefs = await Promise.all(
+      (expense.lines || []).map(line => resolveClassId(line.itemClass || ''))
+    );
+
     const lines = [];
-    (expense.lines || []).forEach(line => {
+    for (let i = 0; i < (expense.lines || []).length; i++) {
+      const line     = expense.lines[i];
       const subtotal = round2(parseFloat(line.amount || 0));
-      if (subtotal <= 0) return;
+      if (subtotal <= 0) continue;
 
       const tax   = round2(subtotal * taxRate);
       const total = round2(subtotal + tax);
@@ -269,56 +306,74 @@ const syncExpenseToQuickBooks = async (req, res) => {
       if (line.date)        parts.push(new Date(line.date + 'T12:00:00').toLocaleDateString('en-US'));
       if (line.serviceType) parts.push(line.serviceType);
       if (line.description) parts.push(line.description);
-      if (employeeName) parts.push(`(${employeeName})`);
+      if (employeeName)     parts.push(`(${employeeName})`);
 
       lines.push({
         description: parts.filter(Boolean).join(' — '),
-        amount:      total,   // ✅ include tax
-        qty:         1,       // ✅ selalu 1 — Amount = UnitPrice * 1, tidak ada floating point issue
-        unitPrice:   total,   // ✅ sama dengan amount
+        amount:      total,
+        qty:         1,
+        unitPrice:   total,
+        classRef:    lineClassRefs[i] || null,
       });
-    });
+    }
 
     if (lines.length === 0) {
       return res.status(400).json({ message: 'No billable line items found' });
     }
 
-    // ✅ Tanggal invoice & due date dari expense
     const invoiceDate = expense.expenseDate
       ? new Date(expense.expenseDate + 'T12:00:00').toISOString().split('T')[0]
       : new Date().toISOString().split('T')[0];
 
-    const qbInvoice = await quickbooksClient.createInvoice({
+    const itemId = await getProductItemId();
+    const invoicePayload = {
       customerId:    customer.Id,
       invoiceNumber: expense.expenseNumber,
       lines,
       invoiceDate,
       dueDate:       invoiceDate,
-      memo:          `Project: ${expense.projectName || ''} | Ref: ${expense.expenseNumber}`,
-    });
+      // memo intentionally empty
+    };
+
+    let qbInvoice;
+    if (isResync && expense.quickbooksId) {
+      // UPDATE existing invoice — tidak buat baru
+      qbInvoice = await quickbooksClient.updateInvoice(expense.quickbooksId, invoicePayload, itemId);
+      console.log(`✅ Expense ${expense.expenseNumber} → QB Invoice UPDATED ${qbInvoice.Id}`);
+    } else {
+      // CREATE new invoice
+      qbInvoice = await quickbooksClient.createInvoice(invoicePayload, itemId);
+      console.log(`✅ Expense ${expense.expenseNumber} → QB Invoice CREATED ${qbInvoice.Id}`);
+    }
 
     await Expense.findByIdAndUpdate(req.params.expenseId, {
       quickbooksId:       qbInvoice.Id,
       quickbooksSyncedAt: new Date(),
       quickbooksStatus:   'synced',
+      quickbooksError:    null,
     });
 
-    console.log(`✅ Expense ${expense.expenseNumber} → QB Invoice ${qbInvoice.Id}`);
-    res.json({ success: true, message: 'Expense synced to QuickBooks as Invoice', quickbooksId: qbInvoice.Id });
+    res.json({
+      success:      true,
+      message:      isResync ? 'Expense updated in QuickBooks' : 'Expense synced to QuickBooks as Invoice',
+      quickbooksId: qbInvoice.Id,
+    });
 
   } catch (error) {
     console.error('syncExpenseToQuickBooks error:', error);
+    await Expense.findByIdAndUpdate(req.params.expenseId, {
+      quickbooksStatus: 'failed',
+      quickbooksError:  error.response?.data?.Fault?.Error?.[0]?.Detail || error.message,
+    }).catch(() => {});
     res.status(500).json({ message: error.response?.data?.Fault?.Error?.[0]?.Detail || error.message });
   }
 };
 
 // ─── Sync PO → QB Bill ────────────────────────────────────────────────────────
-// POST /api/quickbooks/sync-po/:poVersionId
-// Only confirmed POVersions can be synced
 const syncPOToQuickBooks = async (req, res) => {
   try {
     const tokensLoaded = await loadTokensFromDatabase();
-    if (!tokensLoaded) return res.status(400).json({ message: 'QuickBooks not connected. Please connect first.', needsReconnect: true });
+    if (!tokensLoaded) return res.status(400).json({ message: 'QuickBooks not connected.', needsReconnect: true });
 
     const po = await POVersion.findById(req.params.poVersionId).lean();
     if (!po) return res.status(404).json({ message: 'PO not found' });
@@ -326,38 +381,73 @@ const syncPOToQuickBooks = async (req, res) => {
     if (po.status !== 'confirmed') {
       return res.status(400).json({ message: 'Only confirmed POs can be synced to QuickBooks' });
     }
-    if (po.quickbooksId) {
-      return res.status(400).json({ message: 'Already synced to QuickBooks', quickbooksId: po.quickbooksId });
-    }
+
+    const isResync = req.query.force === 'true';
 
     const vendorName = po.vendorInfo?.name || 'Unknown Vendor';
     const vendor     = await quickbooksClient.getOrCreateVendor(vendorName);
 
-    // ✅ Build lines — qty:1, unitPrice=total agar Amount = UnitPrice * Qty selalu valid di QB
-    const lines = (po.products || [])
-      .map(p => {
+    // Get client customer (untuk CustomerRef per line di QB)
+    const order = await Order.findById(po.orderId).lean();
+    let customer = null;
+    if (order) {
+      customer = await quickbooksClient.getOrCreateCustomer({
+        name:       order.clientInfo?.name  || 'Unknown Client',
+        email:      order.clientInfo?.email || '',
+        unitNumber: order.clientInfo?.unitNumber || '',
+        clientCode: po.poNumber || '',
+      });
+    }
+
+    // Build itemClass lookup map from Order.selectedProducts
+    // POVersion snapshot often does not carry itemClass — fallback ke Order data
+    const orderProductMap = new Map();
+    if (order) {
+      (order.selectedProducts || []).forEach(op => {
+        const key = op.product_id || op._id?.toString();
+        if (key) orderProductMap.set(key, op);
+      });
+    }
+
+    // Build lines — description dari PO product details
+    const lines = (await Promise.all(
+      (po.products || []).map(async p => {
         const qty       = parseFloat(p.quantity)  || 1;
         const unitPrice = parseFloat(p.unitPrice) || 0;
         const total     = round2(unitPrice * qty);
-
         if (total <= 0) return null;
 
-        const desc = [
-          p.name,
-          p.selectedOptions?.finish   ? `Finish: ${p.selectedOptions.finish}`     : null,
-          p.selectedOptions?.fabric   ? `Fabric: ${p.selectedOptions.fabric}`     : null,
-          p.selectedOptions?.size     ? `Size: ${p.selectedOptions.size}`         : null,
-          p.selectedOptions?.sidemark ? `Sidemark: ${p.selectedOptions.sidemark}` : null,
-        ].filter(Boolean).join(' | ');
+        const opts = p.selectedOptions || {};
 
+        // itemClass: coba dari POVersion dulu, fallback ke Order.selectedProducts
+        const orderProduct = orderProductMap.get(p.product_id) || orderProductMap.get(p._id?.toString());
+        const itemClass = opts.itemClass
+          || orderProduct?.selectedOptions?.itemClass
+          || '';
+        console.log(`QB PO line "${p.name}": itemClass="${itemClass}"`);
+
+        const descParts = [];
+        if (opts.vendorDescription)   descParts.push(opts.vendorDescription);
+        else if (opts.specifications) descParts.push(opts.specifications);
+        else if (p.name)              descParts.push(p.name);
+
+        if (p.name && opts.vendorDescription) descParts.push(`(${p.name})`);
+        if (opts.finish)   descParts.push(`Finish: ${opts.finish}`);
+        if (opts.fabric)   descParts.push(`Fabric: ${opts.fabric}`);
+        if (opts.size)     descParts.push(`Size: ${opts.size}`);
+        if (opts.sidemark) descParts.push(`Sidemark: ${opts.sidemark}`);
+        if (qty > 1)       descParts.push(`Qty: ${qty}`);
+
+        const classRef = await resolveClassId(itemClass);
         return {
-          description: desc || p.name || 'Product',
-          amount:      total,   // ✅ unitPrice * qty
-          qty:         1,       // ✅ selalu 1
-          unitPrice:   total,   // ✅ sama dengan amount
+          description: descParts.join(' | ') || p.name || 'Product',
+          amount:      total,
+          qty:         1,
+          unitPrice:   total,
+          classRef:    classRef || undefined,
         };
-      })
-      .filter(Boolean);
+      }))
+    ).filter(Boolean);
 
     if (lines.length === 0) {
       return res.status(400).json({ message: 'PO has no billable line items' });
@@ -367,14 +457,27 @@ const syncPOToQuickBooks = async (req, res) => {
       ? new Date(po.orderDate).toISOString().split('T')[0]
       : new Date().toISOString().split('T')[0];
 
-    const qbBill = await quickbooksClient.createBill({
-      vendorId:  vendor.Id,
-      docNumber: po.poNumber || po._id.toString().slice(-8).toUpperCase(),
-      date:      billDate,
-      dueDate:   billDate,
+    const itemId = await getProductItemId();
+    const billPayload = {
+      vendorId:   vendor.Id,
+      customerId: customer?.Id || null,
+      docNumber:  po.poNumber || po._id.toString().slice(-8).toUpperCase(),
+      date:       billDate,
+      dueDate:    billDate,
       lines,
-      notes:     `Client: ${po.clientInfo?.name || ''} | PO v${po.version}`,
-    });
+      notes:      '',   // intentionally empty — PrivateNote di QB
+    };
+
+    let qbBill;
+    if (isResync && po.quickbooksId) {
+      // UPDATE existing bill — tidak buat baru
+      qbBill = await quickbooksClient.updateBill(po.quickbooksId, billPayload, itemId);
+      console.log(`✅ PO ${po.poNumber} → QB Bill UPDATED ${qbBill.Id}`);
+    } else {
+      // CREATE new bill
+      qbBill = await quickbooksClient.createBill(billPayload, itemId);
+      console.log(`✅ PO ${po.poNumber} → QB Bill CREATED ${qbBill.Id}`);
+    }
 
     await POVersion.findByIdAndUpdate(req.params.poVersionId, {
       quickbooksId:       qbBill.Id,
@@ -382,8 +485,11 @@ const syncPOToQuickBooks = async (req, res) => {
       quickbooksStatus:   'synced',
     });
 
-    console.log(`✅ PO ${po.poNumber} → QB Bill ${qbBill.Id}`);
-    res.json({ success: true, message: 'PO synced to QuickBooks as Bill', quickbooksId: qbBill.Id });
+    res.json({
+      success:      true,
+      message:      isResync ? 'PO updated in QuickBooks' : 'PO synced to QuickBooks as Bill',
+      quickbooksId: qbBill.Id,
+    });
 
   } catch (error) {
     console.error('syncPOToQuickBooks error:', error);
@@ -391,29 +497,133 @@ const syncPOToQuickBooks = async (req, res) => {
   }
 };
 
-// ─── Get latest confirmed PO versions for an order (for bulk sync) ────────────
-// GET /api/orders/:orderId/po/latest-confirmed
+// ─── Sync Proposal → QB Invoice ──────────────────────────────────────────────
+const syncProposalToQuickBooks = async (req, res) => {
+  try {
+    const tokensLoaded = await loadTokensFromDatabase();
+    if (!tokensLoaded) return res.status(400).json({ message: 'QuickBooks not connected.', needsReconnect: true });
+
+    const { orderId, pvId } = req.params;
+    const isResync = req.query.force === 'true';
+
+    const pv = await ProposalVersion.findById(pvId).lean();
+    if (!pv) return res.status(404).json({ message: 'Proposal version not found' });
+
+    const order = await Order.findById(orderId).populate('user').lean();
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    const invoiceNumber = pv.proposalNumber || order.proposalNumber;
+    if (!invoiceNumber) return res.status(400).json({ message: 'No proposal number — generate a proposal first' });
+
+    const clientName = order.clientInfo?.name || 'Unknown Client';
+
+    const customer = await quickbooksClient.getOrCreateCustomer({
+      name:       clientName,
+      email:      order.clientInfo?.email || order.user?.email || '',
+      unitNumber: order.clientInfo?.unitNumber || '',
+      clientCode: invoiceNumber,
+    });
+
+    // Build lines — description dari product details
+    const lines = [];
+    for (const p of (pv.selectedProducts || [])) {
+      const opts      = p.selectedOptions || {};
+      const qty       = parseFloat(p.quantity) || 1;
+      const msrp      = parseFloat(opts.msrp) || 0;
+      const markupPct = parseFloat(opts.markupPercent) || 0;
+      const sell      = round2(msrp * (1 + markupPct / 100));
+      const subtotal  = round2(sell * qty);
+      const taxRate   = parseFloat(opts.salesTaxRate) || 0;
+      const tax       = round2(subtotal * (taxRate / 100));
+      const total     = round2(subtotal + tax);
+      if (total <= 0) return;
+
+      // Description: room + name + specs + finish + fabric + size + leadTime
+      const descParts = [];
+      if (opts.room)           descParts.push(`Room: ${opts.room}`);
+      if (p.name)              descParts.push(p.name);
+      if (opts.specifications) descParts.push(opts.specifications);
+      if (opts.finish)         descParts.push(`Finish: ${opts.finish}`);
+      if (opts.fabric)         descParts.push(`Fabric: ${opts.fabric}`);
+      if (opts.size)           descParts.push(`Size: ${opts.size}`);
+      if (opts.leadTime)       descParts.push(`Lead Time: ${opts.leadTime}`);
+
+      // Resolve QB Class from itemClass field
+      const classRef = await resolveClassId(opts.itemClass || '');
+      lines.push({
+        description: descParts.join(' | '),
+        amount:      total,
+        qty:         1,
+        unitPrice:   total,
+        classRef:    classRef || undefined,
+      });
+    }
+
+    if (lines.length === 0) {
+      return res.status(400).json({ message: 'Proposal has no products with pricing' });
+    }
+
+    const invoiceDate = pv.createdAt
+      ? new Date(pv.createdAt).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0];
+
+    const itemId = await getProductItemId();
+    const invoicePayload = {
+      customerId:    customer.Id,
+      invoiceNumber,
+      lines,
+      invoiceDate,
+      dueDate:       invoiceDate,
+      // memo intentionally empty
+    };
+
+    let qbInvoice;
+    if (isResync && pv.quickbooksId) {
+      // UPDATE existing invoice — tidak buat baru
+      qbInvoice = await quickbooksClient.updateInvoice(pv.quickbooksId, invoicePayload, itemId);
+      console.log(`✅ Proposal ${invoiceNumber} v${pv.version} → QB Invoice UPDATED ${qbInvoice.Id}`);
+    } else {
+      // CREATE new invoice
+      qbInvoice = await quickbooksClient.createInvoice(invoicePayload, itemId);
+      console.log(`✅ Proposal ${invoiceNumber} v${pv.version} → QB Invoice CREATED ${qbInvoice.Id}`);
+    }
+
+    await ProposalVersion.findByIdAndUpdate(pvId, {
+      quickbooksId:       qbInvoice.Id,
+      quickbooksSyncedAt: new Date(),
+    });
+
+    res.json({
+      success:      true,
+      message:      isResync ? 'Proposal updated in QuickBooks' : 'Proposal synced to QuickBooks as Invoice',
+      quickbooksId: qbInvoice.Id,
+    });
+
+  } catch (error) {
+    console.error('syncProposalToQuickBooks error:', error);
+    res.status(500).json({ message: error.response?.data?.Fault?.Error?.[0]?.Detail || error.message });
+  }
+};
+
+// ─── Get latest confirmed POs ────────────────────────────────────────────────
 const getLatestConfirmedPOs = async (req, res) => {
   try {
     const { orderId } = req.params;
-
     const confirmed = await POVersion.aggregate([
       { $match: { orderId: require('mongoose').Types.ObjectId.createFromHexString(orderId), status: 'confirmed' } },
       { $sort: { vendorId: 1, version: -1 } },
       { $group: {
-          _id:               '$vendorId',
-          poVersionId:       { $first: '$_id' },
-          poNumber:          { $first: '$poNumber' },
-          vendorName:        { $first: '$vendorInfo.name' },
-          quickbooksId:      { $first: '$quickbooksId' },
-          quickbooksSyncedAt:{ $first: '$quickbooksSyncedAt' },
-          quickbooksStatus:  { $first: '$quickbooksStatus' },
+          _id:                '$vendorId',
+          poVersionId:        { $first: '$_id' },
+          poNumber:           { $first: '$poNumber' },
+          vendorName:         { $first: '$vendorInfo.name' },
+          quickbooksId:       { $first: '$quickbooksId' },
+          quickbooksSyncedAt: { $first: '$quickbooksSyncedAt' },
+          quickbooksStatus:   { $first: '$quickbooksStatus' },
       }},
     ]);
 
-    if (!confirmed.length) {
-      return res.status(404).json({ message: 'No confirmed POs found for this order' });
-    }
+    if (!confirmed.length) return res.status(404).json({ message: 'No confirmed POs found for this order' });
 
     res.json({
       success:      true,
@@ -421,6 +631,7 @@ const getLatestConfirmedPOs = async (req, res) => {
       details:      confirmed.map(c => ({
         poVersionId:        c.poVersionId,
         poNumber:           c.poNumber,
+        vendorId:           c._id,          // ← vendor ObjectId
         vendorName:         c.vendorName,
         quickbooksId:       c.quickbooksId       || null,
         quickbooksSyncedAt: c.quickbooksSyncedAt || null,
@@ -433,104 +644,7 @@ const getLatestConfirmedPOs = async (req, res) => {
   }
 };
 
-// ─── Sync Proposal → QB Invoice ──────────────────────────────────────────────
-// POST /api/quickbooks/sync-proposal/:orderId/:pvId
-const syncProposalToQuickBooks = async (req, res) => {
-  try {
-    const tokensLoaded = await loadTokensFromDatabase();
-    if (!tokensLoaded) return res.status(400).json({ message: 'QuickBooks not connected.', needsReconnect: true });
-
-    const { orderId, pvId } = req.params;
-
-    const pv = await ProposalVersion.findById(pvId).lean();
-    if (!pv) return res.status(404).json({ message: 'Proposal version not found' });
-
-    if (pv.quickbooksId) {
-      return res.status(400).json({ message: 'Already synced to QuickBooks', quickbooksId: pv.quickbooksId });
-    }
-
-    const order = await Order.findById(orderId).populate('user').lean();
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-
-    const invoiceNumber = pv.proposalNumber || order.proposalNumber;
-    if (!invoiceNumber) return res.status(400).json({ message: 'No proposal number — generate a proposal first' });
-
-    const clientName = order.clientInfo?.name || 'Unknown Client';
-
-    // ✅ Build lines — qty:1, unitPrice=total agar Amount = UnitPrice * Qty selalu valid di QB
-    const lines = [];
-    (pv.selectedProducts || []).forEach(p => {
-      const opts      = p.selectedOptions || {};
-      const qty       = parseFloat(p.quantity) || 1;
-      const msrp      = parseFloat(opts.msrp) || 0;
-      const markupPct = parseFloat(opts.markupPercent) || 0;
-      const sell      = round2(msrp * (1 + markupPct / 100));
-      const subtotal  = round2(sell * qty);
-      const taxRate   = parseFloat(opts.salesTaxRate) || 0;
-      const tax       = round2(subtotal * (taxRate / 100));
-      const total     = round2(subtotal + tax);
-
-      if (total <= 0) return;
-
-      const desc = [
-        p.name,
-        opts.room     ? `Room: ${opts.room}`         : null,
-        opts.finish   ? `Finish: ${opts.finish}`      : null,
-        opts.fabric   ? `Fabric: ${opts.fabric}`      : null,
-        opts.size     ? `Size: ${opts.size}`          : null,
-        opts.leadTime ? `Lead Time: ${opts.leadTime}` : null,
-      ].filter(Boolean).join(' | ');
-
-      lines.push({
-        description: desc,
-        amount:      total,   // ✅ include tax
-        qty:         1,       // ✅ selalu 1
-        unitPrice:   total,   // ✅ sama dengan amount
-      });
-    });
-
-    if (lines.length === 0) {
-      return res.status(400).json({ message: 'Proposal has no products with pricing' });
-    }
-
-    const customer = await quickbooksClient.getOrCreateCustomer({
-      name:       clientName,
-      email:      order.clientInfo?.email || order.user?.email || '',
-      unitNumber: order.clientInfo?.unitNumber || '',
-      clientCode: invoiceNumber,
-    });
-
-    // ✅ Tanggal dari ProposalVersion.createdAt
-    const invoiceDate = pv.createdAt
-      ? new Date(pv.createdAt).toISOString().split('T')[0]
-      : new Date().toISOString().split('T')[0];
-
-    const qbInvoice = await quickbooksClient.createInvoice({
-      customerId:    customer.Id,
-      invoiceNumber,
-      lines,
-      invoiceDate,
-      dueDate:       invoiceDate,
-      memo:          `Henderson Design Group Proposal v${pv.version}`,
-    });
-
-    await ProposalVersion.findByIdAndUpdate(pvId, {
-      quickbooksId:       qbInvoice.Id,
-      quickbooksSyncedAt: new Date(),
-    });
-
-    console.log(`✅ Proposal ${invoiceNumber} v${pv.version} → QB Invoice ${qbInvoice.Id}`);
-    res.json({ success: true, message: 'Proposal synced to QuickBooks as Invoice', quickbooksId: qbInvoice.Id });
-
-  } catch (error) {
-    console.error('syncProposalToQuickBooks error:', error);
-    res.status(500).json({ message: error.response?.data?.Fault?.Error?.[0]?.Detail || error.message });
-  }
-};
-
-// ─── Get all vendors with any PO version for an order ────────────────────────
-// GET /api/orders/:orderId/po/vendors
-// Returns all vendors regardless of PO status (draft, sent, confirmed, etc)
+// ─── Get all PO vendors ───────────────────────────────────────────────────────
 const getAllPOVendors = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -540,14 +654,14 @@ const getAllPOVendors = async (req, res) => {
       { $match: { orderId: mongoose.Types.ObjectId.createFromHexString(orderId) } },
       { $sort: { vendorId: 1, version: -1 } },
       { $group: {
-          _id:               '$vendorId',
-          poVersionId:       { $first: '$_id' },
-          poNumber:          { $first: '$poNumber' },
-          vendorName:        { $first: '$vendorInfo.name' },
-          status:            { $first: '$status' },
-          quickbooksId:      { $first: '$quickbooksId' },
-          quickbooksSyncedAt:{ $first: '$quickbooksSyncedAt' },
-          quickbooksStatus:  { $first: '$quickbooksStatus' },
+          _id:                '$vendorId',
+          poVersionId:        { $first: '$_id' },
+          poNumber:           { $first: '$poNumber' },
+          vendorName:         { $first: '$vendorInfo.name' },
+          status:             { $first: '$status' },
+          quickbooksId:       { $first: '$quickbooksId' },
+          quickbooksSyncedAt: { $first: '$quickbooksSyncedAt' },
+          quickbooksStatus:   { $first: '$quickbooksStatus' },
       }},
       { $sort: { vendorName: 1 } },
     ]);
@@ -557,6 +671,7 @@ const getAllPOVendors = async (req, res) => {
       vendors: vendors.map(v => ({
         poVersionId:        v.poVersionId,
         poNumber:           v.poNumber           || '',
+        vendorId:           v._id,               // ← vendor ObjectId
         vendorName:         v.vendorName         || 'Unknown Vendor',
         status:             v.status             || 'draft',
         quickbooksId:       v.quickbooksId       || null,
@@ -570,14 +685,11 @@ const getAllPOVendors = async (req, res) => {
   }
 };
 
-// ─── Get finance summary for a project ───────────────────────────────────────
-// GET /api/quickbooks/project-summary/:orderId
-// Returns proposal status + all PO vendors with status
+// ─── Get finance summary ──────────────────────────────────────────────────────
 const getProjectFinanceSummary = async (req, res) => {
   try {
     const { orderId } = req.params;
     const mongoose = require('mongoose');
-    const ProposalVersion = require('../models/ProposalVersion');
     const oid = mongoose.Types.ObjectId.createFromHexString(orderId);
 
     const latestProposal = await ProposalVersion.findOne(
@@ -590,14 +702,14 @@ const getProjectFinanceSummary = async (req, res) => {
       { $match: { orderId: oid } },
       { $sort: { vendorId: 1, version: -1 } },
       { $group: {
-          _id:               '$vendorId',
-          poVersionId:       { $first: '$_id' },
-          poNumber:          { $first: '$poNumber' },
-          vendorName:        { $first: '$vendorInfo.name' },
-          status:            { $first: '$status' },
-          quickbooksId:      { $first: '$quickbooksId' },
-          quickbooksSyncedAt:{ $first: '$quickbooksSyncedAt' },
-          quickbooksStatus:  { $first: '$quickbooksStatus' },
+          _id:                '$vendorId',
+          poVersionId:        { $first: '$_id' },
+          poNumber:           { $first: '$poNumber' },
+          vendorName:         { $first: '$vendorInfo.name' },
+          status:             { $first: '$status' },
+          quickbooksId:       { $first: '$quickbooksId' },
+          quickbooksSyncedAt: { $first: '$quickbooksSyncedAt' },
+          quickbooksStatus:   { $first: '$quickbooksStatus' },
       }},
       { $sort: { vendorName: 1 } },
     ]);
@@ -612,6 +724,7 @@ const getProjectFinanceSummary = async (req, res) => {
       poVendors: poVendors.map(v => ({
         poVersionId:        v.poVersionId,
         poNumber:           v.poNumber           || '',
+        vendorId:           v._id,               // ← vendor ObjectId
         vendorName:         v.vendorName         || 'Unknown Vendor',
         status:             v.status             || 'draft',
         quickbooksId:       v.quickbooksId       || null,
@@ -633,7 +746,6 @@ module.exports = {
   testConnection,
   syncInvoiceToQuickBooks,
   loadTokensFromDatabase,
-  // ✅ New:
   syncExpenseToQuickBooks,
   syncPOToQuickBooks,
   getLatestConfirmedPOs,

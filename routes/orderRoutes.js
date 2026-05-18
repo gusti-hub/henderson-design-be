@@ -17,6 +17,7 @@ const {
   uploadCustomProductImages,  // ✅ ADD
   uploadOrderFloorPlan,         // ✅ ADD
   generateInstallBinder,
+  generateInstallBinderExcel,
   generateStatusReport,
   getUploadPresignedUrl,
   generateCogExcel,
@@ -118,6 +119,7 @@ router.put('/:id/payment-status', updatePaymentStatus);
 router.put('/:orderId/furniture-placements', saveFurniturePlacements);
 
 router.get('/:id/install-binder', generateInstallBinder);
+router.get('/:id/install-binder-excel', generateInstallBinderExcel);
 
 router.get('/:id/status-report', generateStatusReport); 
 

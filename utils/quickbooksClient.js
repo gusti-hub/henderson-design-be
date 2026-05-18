@@ -9,18 +9,10 @@ const QUICKBOOKS_CONFIG = {
   scopes:       'com.intuit.quickbooks.accounting',
 };
 
-console.log('QuickBooks Config:', {
-  clientId:     QUICKBOOKS_CONFIG.clientId ? `${QUICKBOOKS_CONFIG.clientId.substring(0, 10)}...` : 'NOT SET',
-  clientSecret: QUICKBOOKS_CONFIG.clientSecret ? '***HIDDEN***' : 'NOT SET',
-  environment:  QUICKBOOKS_CONFIG.environment,
-  redirectUri:  QUICKBOOKS_CONFIG.redirectUri,
-});
-
 const BASE_URL = QUICKBOOKS_CONFIG.environment === 'production'
   ? 'https://quickbooks.api.intuit.com'
   : 'https://sandbox-quickbooks.api.intuit.com';
 
-// ─── Helper: round to 2 decimal places ───────────────────────────────────────
 const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
 class QuickBooksClient {
@@ -79,7 +71,66 @@ class QuickBooksClient {
     return { accessToken: access_token, refreshToken: refresh_token, expiresIn: expires_in };
   }
 
-  // ─── Customer ──────────────────────────────────────────────────────────────
+  // ─── Find Item by Name ───────────────────────────────────────────────────────
+  async findItemByName(name) {
+    if (this.isTokenExpired()) await this.refreshAccessToken();
+    try {
+      const safeName = name.replace(/'/g, "\\'");
+      const response = await axios.get(`${BASE_URL}/v3/company/${this.realmId}/query`, {
+        params: { query: `SELECT * FROM Item WHERE Name = '${safeName}' MAXRESULTS 5` },
+        headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Accept': 'application/json' },
+      });
+      const items = response.data.QueryResponse?.Item || [];
+      return items.length > 0 ? items[0] : null;
+    } catch (err) {
+      console.warn('QB findItemByName error:', err.message);
+      return null;
+    }
+  }
+
+  // ─── Find Class by Name ──────────────────────────────────────────────────────
+  // Dipakai untuk resolve itemClass (e.g. "Furniture") → QB Class ID
+  // QB Class tracking: Settings > All Lists > Classes
+  async findClassByName(name) {
+    if (!name || !name.trim()) return null;
+    if (this.isTokenExpired()) await this.refreshAccessToken();
+    try {
+      const safeName = name.trim().replace(/'/g, "\\'");
+      const response = await axios.get(`${BASE_URL}/v3/company/${this.realmId}/query`, {
+        params: { query: `SELECT * FROM Class WHERE Name = '${safeName}' MAXRESULTS 5` },
+        headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Accept': 'application/json' },
+      });
+      const classes = response.data.QueryResponse?.Class || [];
+      if (classes.length > 0) {
+        console.log(`QB: Class "${name}" resolved to ID ${classes[0].Id}`);
+        return classes[0];
+      }
+      console.warn(`QB: Class "${name}" not found`);
+      return null;
+    } catch (err) {
+      console.warn('QB findClassByName error:', err.message);
+      return null;
+    }
+  }
+
+  // ─── Find Class by Name ─────────────────────────────────────────────────────
+  async findClassByName(name) {
+    if (this.isTokenExpired()) await this.refreshAccessToken();
+    try {
+      const safeName = name.replace(/'/g, "\'");
+      const response = await axios.get(`${BASE_URL}/v3/company/${this.realmId}/query`, {
+        params: { query: `SELECT * FROM Class WHERE Name = '${safeName}' MAXRESULTS 5` },
+        headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Accept': 'application/json' },
+      });
+      const classes = response.data.QueryResponse?.Class || [];
+      return classes.length > 0 ? classes[0] : null;
+    } catch (err) {
+      console.warn('QB findClassByName error:', err.message);
+      return null;
+    }
+  }
+
+  // ─── Customer ────────────────────────────────────────────────────────────────
   async createCustomer(customerData) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
     const customer = {
@@ -128,60 +179,57 @@ class QuickBooksClient {
     return customer;
   }
 
-  // ─── Invoice ───────────────────────────────────────────────────────────────
-  async createInvoice(invoiceData) {
+  // ─── Invoice — CREATE ────────────────────────────────────────────────────────
+  // line shape: { description, amount, qty, unitPrice, classRef? }
+  // classRef: QB Class ID string, di-resolve oleh controller via findClassByName
+  // CustomerMemo: ' ' (1 spasi) — QB tidak clear memo dengan '' kosong
+  async createInvoice(invoiceData, itemId = '1') {
     if (this.isTokenExpired()) await this.refreshAccessToken();
 
     let lines;
-
     if (invoiceData.lines && invoiceData.lines.length > 0) {
       lines = invoiceData.lines.map(line => {
         const qty       = round2(line.qty || 1);
         const unitPrice = round2(line.unitPrice || 0);
-        // ✅ Amount HARUS = round2(unitPrice * qty) — QB validasi ini strict
         const amount    = round2(unitPrice * qty);
-
         return {
           DetailType:          'SalesItemLineDetail',
           Amount:              amount,
           Description:         (line.description || '').substring(0, 4000),
           SalesItemLineDetail: {
-            ItemRef:   { value: '1', name: 'Services' },
+            ItemRef:   { value: itemId, name: 'Product' },
             Qty:       qty,
             UnitPrice: unitPrice,
+            ...(line.classRef ? { ClassRef: { value: line.classRef } } : {}),
           },
         };
       });
     } else {
-      // Fallback: single line dari invoiceData.amount
       const amount = round2(invoiceData.amount || 0);
       lines = [{
         DetailType:          'SalesItemLineDetail',
         Amount:              amount,
         Description:         (invoiceData.description || '').substring(0, 4000),
         SalesItemLineDetail: {
-          ItemRef:   { value: '1', name: 'Services' },
+          ItemRef:   { value: itemId, name: 'Product' },
           Qty:       1,
           UnitPrice: amount,
         },
       }];
     }
 
-    // Filter out zero-amount lines — QB reject lines dengan Amount = 0
     lines = lines.filter(l => l.Amount > 0);
-
-    if (lines.length === 0) {
-      throw new Error('No valid line items to create invoice');
-    }
+    if (lines.length === 0) throw new Error('No valid line items to create invoice');
 
     const invoice = {
+      sparse:       true,
       Line:         lines,
       CustomerRef:  { value: invoiceData.customerId },
       TxnDate:      invoiceData.invoiceDate || new Date().toISOString().split('T')[0],
       DueDate:      invoiceData.dueDate || invoiceData.invoiceDate || new Date().toISOString().split('T')[0],
       DocNumber:    invoiceData.invoiceNumber,
-      PrivateNote:  (invoiceData.notes || '').substring(0, 4000),
-      CustomerMemo: { value: (invoiceData.memo || 'Thank you for your business!').substring(0, 1000) },
+      PrivateNote:  '',
+      CustomerMemo: { value: '' },
     };
 
     const response = await axios.post(
@@ -201,6 +249,68 @@ class QuickBooksClient {
     return response.data.Invoice;
   }
 
+  // ─── Invoice — UPDATE (sparse, tidak buat baru) ───────────────────────────────
+  async updateInvoice(invoiceId, invoiceData, itemId = '1') {
+    if (this.isTokenExpired()) await this.refreshAccessToken();
+    const existing = await this.getInvoice(invoiceId);
+
+    let lines;
+    if (invoiceData.lines && invoiceData.lines.length > 0) {
+      lines = invoiceData.lines.map(line => {
+        const qty       = round2(line.qty || 1);
+        const unitPrice = round2(line.unitPrice || 0);
+        const amount    = round2(unitPrice * qty);
+        return {
+          DetailType:          'SalesItemLineDetail',
+          Amount:              amount,
+          Description:         (line.description || '').substring(0, 4000),
+          SalesItemLineDetail: {
+            ItemRef:   { value: itemId, name: 'Product' },
+            Qty:       qty,
+            UnitPrice: unitPrice,
+            ...(line.classRef ? { ClassRef: { value: line.classRef } } : {}),
+          },
+        };
+      });
+    } else {
+      const amount = round2(invoiceData.amount || 0);
+      lines = [{
+        DetailType:          'SalesItemLineDetail',
+        Amount:              amount,
+        Description:         (invoiceData.description || '').substring(0, 4000),
+        SalesItemLineDetail: {
+          ItemRef:   { value: itemId, name: 'Product' },
+          Qty:       1,
+          UnitPrice: amount,
+        },
+      }];
+    }
+
+    lines = lines.filter(l => l.Amount > 0);
+    if (lines.length === 0) throw new Error('No valid line items to update invoice');
+
+    const invoice = {
+      sparse:       true,
+      Id:           invoiceId,
+      SyncToken:    existing.SyncToken,
+      Line:         lines,
+      CustomerRef:  { value: invoiceData.customerId },
+      TxnDate:      invoiceData.invoiceDate || existing.TxnDate,
+      DueDate:      invoiceData.dueDate     || existing.DueDate,
+      DocNumber:    invoiceData.invoiceNumber,
+      PrivateNote:  '',
+      CustomerMemo: { value: '' },
+    };
+
+    const response = await axios.post(
+      `${BASE_URL}/v3/company/${this.realmId}/invoice`,
+      invoice,
+      { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
+    );
+    console.log('QB: Updated invoice:', response.data.Invoice.Id);
+    return response.data.Invoice;
+  }
+
   async voidInvoice(invoiceId) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
     const invoice     = await this.getInvoice(invoiceId);
@@ -213,7 +323,7 @@ class QuickBooksClient {
     return response.data.Invoice;
   }
 
-  // ─── Vendor ────────────────────────────────────────────────────────────────
+  // ─── Vendor ──────────────────────────────────────────────────────────────────
   async getOrCreateVendor(vendorName) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
     try {
@@ -235,37 +345,32 @@ class QuickBooksClient {
     return createRes.data.Vendor;
   }
 
-  // ─── Bill (for PO sync) ────────────────────────────────────────────────────
-  async createBill(billData) {
+  // ─── Bill — CREATE ────────────────────────────────────────────────────────────
+  // line shape: { description, amount, qty, unitPrice, classRef? }
+  async createBill(billData, itemId = '1') {
     if (this.isTokenExpired()) await this.refreshAccessToken();
 
     let lines = billData.lines.map(line => {
       const qty       = round2(line.qty || 1);
       const unitPrice = round2(line.unitPrice || 0);
-      // ✅ Amount HARUS = round2(unitPrice * qty) — QB validasi ini strict
       const amount    = round2(unitPrice * qty);
-
       return {
         DetailType:  'ItemBasedExpenseLineDetail',
         Amount:      amount,
         Description: (line.description || '').substring(0, 4000),
         ItemBasedExpenseLineDetail: {
-          // value '1' = Services item di sandbox
-          // Di production ganti dengan Item ID Product yang sesuai
-          ItemRef:        { value: billData.itemId || '1', name: 'Product' },
+          ItemRef:        { value: itemId, name: 'Product' },
           Qty:            qty,
           UnitPrice:      unitPrice,
           BillableStatus: 'NotBillable',
+          ...(billData.customerId ? { CustomerRef: { value: billData.customerId } } : {}),
+          ...(line.classRef       ? { ClassRef:    { value: line.classRef }       } : {}),
         },
       };
     });
 
-    // Filter out zero-amount lines
     lines = lines.filter(l => l.Amount > 0);
-
-    if (lines.length === 0) {
-      throw new Error('No valid line items to create bill');
-    }
+    if (lines.length === 0) throw new Error('No valid line items to create bill');
 
     const bill = {
       Line:        lines,
@@ -273,7 +378,7 @@ class QuickBooksClient {
       TxnDate:     billData.date    || new Date().toISOString().split('T')[0],
       DueDate:     billData.dueDate || billData.date || new Date().toISOString().split('T')[0],
       DocNumber:   billData.docNumber,
-      PrivateNote: (billData.notes || '').substring(0, 4000),
+      PrivateNote: '',   // intentionally empty
     };
 
     const response = await axios.post(
@@ -282,6 +387,62 @@ class QuickBooksClient {
       { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
     );
     console.log('QB: Created bill:', response.data.Bill.Id, 'for vendor:', billData.vendorId);
+    return response.data.Bill;
+  }
+
+  async getBill(billId) {
+    if (this.isTokenExpired()) await this.refreshAccessToken();
+    const response = await axios.get(
+      `${BASE_URL}/v3/company/${this.realmId}/bill/${billId}`,
+      { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Accept': 'application/json' } }
+    );
+    return response.data.Bill;
+  }
+
+  // ─── Bill — UPDATE (sparse, tidak buat baru) ──────────────────────────────────
+  async updateBill(billId, billData, itemId = '1') {
+    if (this.isTokenExpired()) await this.refreshAccessToken();
+    const existing = await this.getBill(billId);
+
+    let lines = billData.lines.map(line => {
+      const qty       = round2(line.qty || 1);
+      const unitPrice = round2(line.unitPrice || 0);
+      const amount    = round2(unitPrice * qty);
+      return {
+        DetailType:  'ItemBasedExpenseLineDetail',
+        Amount:      amount,
+        Description: (line.description || '').substring(0, 4000),
+        ItemBasedExpenseLineDetail: {
+          ItemRef:        { value: itemId, name: 'Product' },
+          Qty:            qty,
+          UnitPrice:      unitPrice,
+          BillableStatus: 'NotBillable',
+          ...(billData.customerId ? { CustomerRef: { value: billData.customerId } } : {}),
+          ...(line.classRef       ? { ClassRef:    { value: line.classRef }       } : {}),
+        },
+      };
+    });
+
+    lines = lines.filter(l => l.Amount > 0);
+    if (lines.length === 0) throw new Error('No valid line items to update bill');
+
+    const bill = {
+      Id:          billId,
+      SyncToken:   existing.SyncToken,
+      Line:        lines,
+      VendorRef:   { value: billData.vendorId },
+      TxnDate:     billData.date    || existing.TxnDate,
+      DueDate:     billData.dueDate || existing.DueDate,
+      DocNumber:   billData.docNumber,
+      PrivateNote: '',   // intentionally empty
+    };
+
+    const response = await axios.post(
+      `${BASE_URL}/v3/company/${this.realmId}/bill`,
+      bill,
+      { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
+    );
+    console.log('QB: Updated bill:', response.data.Bill.Id);
     return response.data.Bill;
   }
 }
