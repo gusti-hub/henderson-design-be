@@ -547,6 +547,9 @@ const updatePurchaseOrder = async (req, res) => {
     if (estimateNumber !== undefined) poVersion.estimateNumber = estimateNumber;
     if (shipping   !== undefined) poVersion.shipping     = shipping;
     if (others     !== undefined) poVersion.others       = others;
+    if (req.body.additionalLines !== undefined) {
+      poVersion.additionalLines = req.body.additionalLines;
+    }
     if (status)                  poVersion.status        = status;
 
     poVersion.total = poVersion.subTotal + (poVersion.shipping || 0) + (poVersion.others || 0);

@@ -95,6 +95,12 @@ const poVersionSchema = new mongoose.Schema({
     }
   }],
 
+  additionalLines: [{
+    description: { type: String, default: '' },
+    lineType:    { type: String, default: 'Other' },
+    amount:      { type: Number, default: 0 },
+  }],
+
   // Totals
   subTotal: { type: Number, default: 0 },
   shipping: { type: Number, default: 0 },
