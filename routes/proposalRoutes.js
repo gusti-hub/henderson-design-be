@@ -9,7 +9,8 @@ const {
   ensureProposalNumberEndpoint,
   updateProposalStatus,
   migrateProposalNumbers,
-  saveCurrentVersion
+  saveCurrentVersion,
+  getAvailableProducts
 } = require('../controllers/proposalController');
 
 // ── Specific routes FIRST ─────────────────────────────────────────────────────
@@ -30,5 +31,11 @@ router.put('/:orderId/status',          protect, updateProposalStatus);
 // ── Generic routes LAST ───────────────────────────────────────────────────────
 router.put('/:orderId',                 protect, saveProposal);
 router.get('/:orderId/:version',        protect, getProposalData);
+
+router.get(
+  '/:orderId/:version/available-products',
+  protect,
+  getAvailableProducts
+);
 
 module.exports = router;

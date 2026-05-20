@@ -1405,6 +1405,21 @@ const uploadOrderFloorPlan = async (req, res) => {
   }
 };
 
+// ── REPLACE buildVendorPoNumberMap ──────────────────────────────────────
+const buildVendorPoNumberMap = (poVersions) => {
+  // Group by vendorId, pick the latest version (already sorted desc by caller)
+  const map = new Map(); // vendorId → poNumber of latest version
+  poVersions.forEach(po => {
+    const key = po.vendorId?.toString();
+    if (key && !map.has(key)) {
+      // First entry per vendor = latest version (sorted desc)
+      map.set(key, po.poNumber || '');
+    }
+  });
+  return map;
+};
+
+// ── REPLACE generateInstallBinder ───────────────────────────────────────
 const generateInstallBinder = async (req, res) => {
   try {
     const Order = require('../models/Order');
@@ -1420,26 +1435,50 @@ const generateInstallBinder = async (req, res) => {
     }
 
     const products = order.selectedProducts || [];
-    
+
+    // Build vendorId → latest PO number (latest version = highest version number)
+    const allPoVersions = await POVersion.find({ orderId: req.params.id })
+      .sort({ version: -1 })
+      .lean();
+
+    const byVendor = new Map();
+    allPoVersions.forEach(po => {
+      const key = po.vendorId?.toString();
+      if (!key) return;
+      if (!byVendor.has(key)) byVendor.set(key, []);
+      byVendor.get(key).push(po);
+    });
+
+    const vendorPOMap = new Map();
+    byVendor.forEach((versions, vendorId) => {
+      // versions already sorted desc — index 0 = latest version
+      vendorPOMap.set(vendorId, versions[0]?.poNumber || '');
+    });
+
+    const getPoNumber = (p) => {
+      let vid = null;
+      if (p.vendor) {
+        if (typeof p.vendor === 'object' && p.vendor._id) {
+          vid = p.vendor._id.toString();          // populated object
+        } else {
+          vid = p.vendor.toString();              // raw ObjectId or string
+        }
+      }
+      if (vid && vendorPOMap.has(vid)) return vendorPOMap.get(vid);
+      return p.selectedOptions?.poNumber || '';
+    };
+
     // Calculate total pages (3 products per page)
     const totalProducts = products.length;
     const totalPages = Math.ceil(totalProducts / 3);
 
-    // Helper function to get vendor info
     const getVendorInfo = (product) => {
       if (product.vendor) {
-        return {
-          name: product.vendor.name || 'N/A',
-          description: product.name || ''
-        };
+        return { name: product.vendor.name || 'N/A', description: product.name || '' };
       }
-      return {
-        name: 'HDG Inventory',
-        description: '*HNL Inventory'
-      };
+      return { name: 'HDG Inventory', description: '*HNL Inventory' };
     };
 
-    // Helper to escape HTML entities
     const escapeHtml = (text) => {
       if (!text) return '';
       return String(text)
@@ -1450,183 +1489,44 @@ const generateInstallBinder = async (req, res) => {
         .replace(/'/g, '&#039;');
     };
 
-    // Generate HTML
     const htmlTemplate = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <style>
-        @page {
-            size: letter landscape;
-            margin: 0.5in;
-        }
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: Arial, sans-serif;
-            font-size: 9pt;
-            line-height: 1.3;
-        }
-        .page {
-            page-break-after: always;
-            position: relative;
-            min-height: 7.5in;
-        }
-        .page:last-child {
-            page-break-after: avoid;
-        }
-        
-        /* Header */
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #000;
-        }
-        .header-left {
-            display: flex;
-            align-items: center;
-        }
-        .header-left img {
-            height: 60px;
-            width: auto;
-            object-fit: contain;
-            filter: brightness(0) saturate(100%) invert(21%) sepia(98%) saturate(1160%) hue-rotate(160deg) brightness(92%) contrast(90%);
-        }
-        .header-right {
-            text-align: right;
-            font-size: 8pt;
-        }
-        .header-right h2 {
-            font-size: 20pt;
-            font-weight: bold;
-            margin-bottom: 8px;
-        }
-        
-        /* Project Info */
-        .project-info {
-            margin-bottom: 15px;
-            font-size: 9pt;
-        }
-        .project-info p {
-            margin: 2px 0;
-        }
-        
-        /* Table */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 8pt;
-        }
-        th {
-            background-color: #f0f0f0;
-            border: 1px solid #000;
-            padding: 6px 4px;
-            text-align: left;
-            font-weight: bold;
-            font-size: 7pt;
-        }
-        td {
-            border: 1px solid #000;
-            padding: 6px 4px;
-            vertical-align: top;
-        }
-        
-        /* Photo column */
-        td.photo {
-            width: 80px;
-            text-align: center;
-            padding: 4px;
-        }
-        td.photo img {
-            max-width: 70px;
-            max-height: 70px;
-            object-fit: contain;
-        }
-        
-        /* Room column */
-        td.room {
-            width: 100px;
-            font-weight: 600;
-        }
-        
-        /* Vendor Name */
-        td.vendor-name {
-            width: 100px;
-        }
-        
-        /* Vendor Description */
-        td.vendor-desc {
-            width: auto;
-            min-width: 150px;
-        }
-        .product-name {
-            font-weight: bold;
-            margin-bottom: 3px;
-        }
-        .product-details {
-            font-size: 7pt;
-            color: #333;
-            line-height: 1.4;
-        }
-        
-        /* PO column */
-        td.po {
-            width: 85px;
-        }
-        
-        /* Quantity */
-        td.quantity {
-            width: 50px;
-            text-align: center;
-        }
-        
-        /* Vendor Order Number */
-        td.order-num {
-            width: 90px;
-        }
-        
-        /* Tracking */
-        td.tracking {
-            width: 120px;
-            font-size: 7pt;
-        }
-        
-        /* Notes */
-        td.notes {
-            width: 120px;
-            font-size: 7pt;
-            white-space: pre-line;
-        }
-        
-        /* Footer */
-        .footer {
-            position: absolute;
-            bottom: 0;
-            right: 0;
-            font-size: 8pt;
-            color: #666;
-        }
-        
-        /* Empty cell styling */
-        .empty {
-            background-color: #fafafa;
-        }
+        @page { size: letter landscape; margin: 0.5in; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; font-size: 9pt; line-height: 1.3; }
+        .page { page-break-after: always; position: relative; min-height: 7.5in; }
+        .page:last-child { page-break-after: avoid; }
+        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #000; }
+        .header-left img { height: 60px; width: auto; object-fit: contain; filter: brightness(0) saturate(100%) invert(21%) sepia(98%) saturate(1160%) hue-rotate(160deg) brightness(92%) contrast(90%); }
+        .header-right { text-align: right; font-size: 8pt; }
+        .header-right h2 { font-size: 20pt; font-weight: bold; margin-bottom: 8px; }
+        table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+        th { background-color: #f0f0f0; border: 1px solid #000; padding: 6px 4px; text-align: left; font-weight: bold; font-size: 7pt; }
+        td { border: 1px solid #000; padding: 6px 4px; vertical-align: top; }
+        td.photo { width: 80px; text-align: center; padding: 4px; }
+        td.photo img { max-width: 70px; max-height: 70px; object-fit: contain; }
+        td.room { width: 100px; font-weight: 600; }
+        td.vendor-name { width: 100px; }
+        td.vendor-desc { width: auto; min-width: 150px; }
+        .product-name { font-weight: bold; margin-bottom: 3px; }
+        .product-details { font-size: 7pt; color: #333; line-height: 1.4; }
+        td.po { width: 85px; }
+        td.quantity { width: 50px; text-align: center; }
+        td.order-num { width: 90px; }
+        td.tracking { width: 120px; font-size: 7pt; }
+        td.notes { width: 120px; font-size: 7pt; white-space: pre-line; }
+        .footer { position: absolute; bottom: 0; right: 0; font-size: 8pt; color: #666; }
     </style>
 </head>
 <body>
-    ${Array.from({ length: totalPages }, (_, pageIndex) => {
+    \${Array.from({ length: totalPages }, (_, pageIndex) => {
       const startIdx = pageIndex * 3;
       const pageProducts = products.slice(startIdx, startIdx + 3);
-      
-      return `
+      return \`
     <div class="page">
-        <!-- Header -->
         <div class="header">
             <div class="header-left">
                 <img src="/images/HDG-Logo.png" alt="Henderson Design Group">
@@ -1634,135 +1534,159 @@ const generateInstallBinder = async (req, res) => {
             <div class="header-right">
                 <h2>Install Binder</h2>
                 <p><strong>Designer:</strong> Henderson Design Group</p>
-                <p><strong>Client:</strong> ${escapeHtml(order.clientInfo?.name || 'N/A')}</p>
-                <p><strong>Project:</strong> ${escapeHtml(
-                  [
-                    order.clientInfo?.name,
-                    order.clientInfo?.floorPlan
-                  ].filter(Boolean).join(' - ')
-                )}</p>
+                <p><strong>Client:</strong> \${escapeHtml(order.clientInfo?.name || 'N/A')}</p>
+                <p><strong>Project:</strong> \${escapeHtml([order.clientInfo?.name, order.clientInfo?.floorPlan].filter(Boolean).join(' - '))}</p>
             </div>
         </div>
-        
-        <!-- Table -->
         <table>
             <thead>
                 <tr>
-                    <th>Photo</th>
-                    <th>Room</th>
-                    <th>Vendor Name</th>
-                    <th>Vendor Description</th>
-                    <th>PO #</th>
-                    <th>Quantity</th>
-                    <th>Vendor Order Number</th>
-                    <th>Shipment Tracking Info</th>
-                    <th>Notes</th>
+                    <th>Photo</th><th>Room</th><th>Vendor Name</th><th>Vendor Description</th>
+                    <th>PO #</th><th>Quantity</th><th>Vendor Order Number</th>
+                    <th>Shipment Tracking Info</th><th>Notes</th>
                 </tr>
             </thead>
             <tbody>
-                ${pageProducts.map(product => {
+                \${pageProducts.map(product => {
                   const vendorInfo = getVendorInfo(product);
-                  
-                  // ✅ FIX: Check multiple image sources with priority
                   let primaryImage = null;
-                  
-                  // Priority 1: Direct image field
-                  if (product.selectedOptions?.image) {
-                    primaryImage = product.selectedOptions.image;
+                  if (product.selectedOptions?.image) primaryImage = product.selectedOptions.image;
+                  else if (product.selectedOptions?.images?.length > 0) primaryImage = product.selectedOptions.images[0];
+                  else if (product.selectedOptions?.uploadedImages?.length > 0) {
+                    const u = product.selectedOptions.uploadedImages[0];
+                    primaryImage = u.url || (u.data ? \`data:\${u.contentType};base64,\${u.data}\` : null);
                   }
-                  // Priority 2: Images array first item
-                  else if (product.selectedOptions?.images && product.selectedOptions.images.length > 0) {
-                    primaryImage = product.selectedOptions.images[0];
-                  }
-                  // Priority 3: Uploaded images first item
-                  else if (product.selectedOptions?.uploadedImages && product.selectedOptions.uploadedImages.length > 0) {
-                    const uploadedImg = product.selectedOptions.uploadedImages[0];
-                    primaryImage = uploadedImg.url || (uploadedImg.data ? `data:${uploadedImg.contentType};base64,${uploadedImg.data}` : null);
-                  }
-                  
-                  return `
+                  return \`
                 <tr>
                     <td class="photo">
-                        ${primaryImage ? 
-                          `<img src="${escapeHtml(primaryImage)}" alt="${escapeHtml(product.name)}" onerror="this.parentElement.innerHTML='<span style=\\'color: #999; font-size: 7pt;\\'>No Image</span>'">` : 
-                          '<span style="color: #999; font-size: 7pt;">No Image</span>'}
+                        \${primaryImage
+                          ? \`<img src="\${escapeHtml(primaryImage)}" alt="\${escapeHtml(product.name)}" onerror="this.parentElement.innerHTML='<span style=\\'color:#999;font-size:7pt\\'>No Image</span>'">\`
+                          : '<span style="color:#999;font-size:7pt">No Image</span>'}
                     </td>
-                    <td class="room">${escapeHtml(product.category || product.spotName || 'General')}</td>
-                    <td class="vendor-name">${escapeHtml(vendorInfo.name)}</td>
+                    <td class="room">\${escapeHtml(product.category || product.spotName || 'General')}</td>
+                    <td class="vendor-name">\${escapeHtml(vendorInfo.name)}</td>
                     <td class="vendor-desc">
-                        <div class="product-name">${escapeHtml(product.name || 'N/A')}</div>
+                        <div class="product-name">\${escapeHtml(product.name || 'N/A')}</div>
                         <div class="product-details">
-                            ${product.product_id ? `<div>Product ID: ${escapeHtml(product.product_id)}</div>` : ''}
-                            ${product.selectedOptions?.specifications ? 
-                              `<div>${escapeHtml(product.selectedOptions.specifications)}</div>` : ''}
-                            ${product.selectedOptions?.finish ? 
-                              `<div>Finish: ${escapeHtml(product.selectedOptions.finish)}</div>` : ''}
-                            ${product.selectedOptions?.fabric ? 
-                              `<div>Fabric: ${escapeHtml(product.selectedOptions.fabric)}</div>` : ''}
-                            ${product.selectedOptions?.size ? 
-                              `<div>Size: ${escapeHtml(product.selectedOptions.size)}</div>` : ''}
+                            \${product.product_id ? \`<div>Product ID: \${escapeHtml(product.product_id)}</div>\` : ''}
+                            \${product.selectedOptions?.specifications ? \`<div>\${escapeHtml(product.selectedOptions.specifications)}</div>\` : ''}
+                            \${product.selectedOptions?.finish ? \`<div>Finish: \${escapeHtml(product.selectedOptions.finish)}</div>\` : ''}
+                            \${product.selectedOptions?.fabric ? \`<div>Fabric: \${escapeHtml(product.selectedOptions.fabric)}</div>\` : ''}
+                            \${product.selectedOptions?.size ? \`<div>Size: \${escapeHtml(product.selectedOptions.size)}</div>\` : ''}
                         </div>
                     </td>
-                    <td class="po">${escapeHtml(product.selectedOptions?.poNumber || '')}</td>
-                    <td class="quantity">${product.quantity || 1}</td>
-                    <td class="order-num">${escapeHtml(product.selectedOptions?.vendorOrderNumber || '')}</td>
-                    <td class="tracking">${escapeHtml(product.selectedOptions?.trackingInfo || '')}</td>
-                    <td class="notes">${escapeHtml(product.selectedOptions?.deliveryStatus || 
-                                        product.selectedOptions?.notes || '')}</td>
-                </tr>
-                  `;
+                    <td class="po">\${escapeHtml(getPoNumber(product))}</td>
+                    <td class="quantity">\${product.quantity || 1}</td>
+                    <td class="order-num">\${escapeHtml(product.selectedOptions?.vendorOrderNumber || '')}</td>
+                    <td class="tracking">\${escapeHtml(product.selectedOptions?.trackingInfo || '')}</td>
+                    <td class="notes">\${escapeHtml(product.selectedOptions?.deliveryStatus || product.selectedOptions?.notes || '')}</td>
+                </tr>\`;
                 }).join('')}
             </tbody>
         </table>
-        
-        <!-- Footer -->
-        <div class="footer">
-            Page ${pageIndex + 1} of ${totalPages}
-        </div>
-    </div>
-      `;
+        <div class="footer">Page \${pageIndex + 1} of \${totalPages}</div>
+    </div>\`;
     }).join('')}
 </body>
 </html>`;
 
-    // Set response headers to display HTML in browser (same as proposal)
     res.setHeader('Content-Type', 'text/html');
-    res.setHeader('Content-Disposition', 'inline');
-    
-    // Send HTML for browser display
+    const clientNameSafe = (order.clientInfo?.name || 'Client').replace(/[^a-zA-Z0-9 ]/g, '').trim();
+    res.setHeader('Content-Disposition', `inline; filename="InstallBinder_\${clientNameSafe}.html"`);
     res.send(htmlTemplate);
 
   } catch (error) {
     console.error('❌ Error generating install binder:', error);
-    res.status(500).json({ 
-      message: 'Error generating install binder',
-      error: error.message 
-    });
+    res.status(500).json({ message: 'Error generating install binder', error: error.message });
   }
 };
 
+// ── REPLACE generateInstallBinderExcel ──────────────────────────────────
 const generateInstallBinderExcel = async (req, res) => {
   try {
-    const ExcelJS = require('exceljs');
-    const axios   = require('axios');
- 
+    const ExcelJS  = require('exceljs');
+    const axios    = require('axios');
+    const mongoose = require('mongoose');
+
     const order = await Order.findById(req.params.id)
       .populate('user')
       .populate('selectedProducts.vendor')
       .lean();
- 
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
-    }
- 
-    const products    = order.selectedProducts || [];
-    const clientName  = order.clientInfo?.name || 'Client';
-    const unitNumber  = order.clientInfo?.unitNumber || '';
-    const floorPlan   = order.clientInfo?.floorPlan || '';
+
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    const products   = order.selectedProducts || [];
+    const clientName = order.clientInfo?.name  || 'Client';
+    const unitNumber = order.clientInfo?.unitNumber || '';
+    const floorPlan  = order.clientInfo?.floorPlan  || '';
     const projectLabel = [clientName, unitNumber ? `Unit ${unitNumber}` : '', floorPlan]
       .filter(Boolean).join(' — ');
- 
-    // ── Helper: download image to buffer ──
+
+    // ── Build product_id → PO number map ─────────────────────────────────
+    // Logic: for each product_id, find which PO version contains it.
+    // A product may appear in multiple PO versions (re-ordered).
+    // We want the EARLIEST version that contains the product
+    // (i.e., the first PO it was ordered on).
+    //
+    // Steps:
+    // 1. Fetch ALL PO versions for this vendor (all vendors in this order)
+    // 2. Sort ASC by version (earliest first)
+    // 3. For each product_id, record the first PO version that contains it
+    // ─────────────────────────────────────────────────────────────────────
+    const orderObjectId = mongoose.Types.ObjectId.isValid(req.params.id)
+      ? new mongoose.Types.ObjectId(req.params.id)
+      : req.params.id;
+
+    // Fetch ALL PO versions, ASC so earliest first
+    const allPoVersions = await POVersion.find({ orderId: orderObjectId })
+      .sort({ version: 1 })   // ASC — earliest version first
+      .lean();
+
+    console.log(`[InstallBinder] ${allPoVersions.length} PO versions found`);
+
+    // Build map: product_id → poNumber of the earliest PO that contains it
+    // If same product appears in v1 and v3, it gets v1's PO number
+    const productPoMap = new Map(); // product_id → poNumber
+
+    allPoVersions.forEach(po => {
+      (po.products || []).forEach(poProduct => {
+        const pid = poProduct.product_id;
+        if (!pid) return;
+        // Only record the first occurrence (earliest version)
+        if (!productPoMap.has(pid)) {
+          productPoMap.set(pid, po.poNumber || '');
+          console.log(`[InstallBinder] product_id ${pid} → PO# ${po.poNumber} (v${po.version})`);
+        }
+      });
+    });
+
+    // Fallback: if product not found by product_id, try vendor-level latest PO
+    // (handles products without product_id or custom items)
+    const byVendor = new Map();
+    allPoVersions.forEach(po => {
+      const key = po.vendorId?.toString();
+      if (!key) return;
+      // Keep latest (sort was ASC, so each push overwrites → last = latest)
+      byVendor.set(key, po.poNumber || '');
+    });
+
+    const getPoNumber = (p) => {
+      // Primary: look up by product_id
+      if (p.product_id && productPoMap.has(p.product_id)) {
+        return productPoMap.get(p.product_id);
+      }
+      // Fallback: vendor-level latest PO
+      let vid = null;
+      if (p.vendor) {
+        if (typeof p.vendor === 'object' && p.vendor._id) vid = p.vendor._id.toString();
+        else vid = p.vendor.toString();
+      }
+      if (vid && byVendor.has(vid)) return byVendor.get(vid);
+      // Last resort: selectedOptions
+      return p.selectedOptions?.poNumber || '';
+    };
+    // ─────────────────────────────────────────────────────────────────────
+
     const downloadImage = async (url) => {
       try {
         if (!url || url.startsWith('data:')) return null;
@@ -1776,23 +1700,17 @@ const generateInstallBinderExcel = async (req, res) => {
         if (ct.includes('jpeg') || ct.includes('jpg')) ext = 'jpeg';
         else if (ct.includes('gif')) ext = 'gif';
         return { buffer: Buffer.from(response.data), extension: ext };
-      } catch {
-        return null;
-      }
+      } catch { return null; }
     };
- 
-    // ── Helper: get primary image URL ──
+
     const getPrimaryImageUrl = (p) => {
       if (p.selectedOptions?.image) return p.selectedOptions.image;
       if (p.selectedOptions?.images?.length > 0) return p.selectedOptions.images[0];
-      if (p.selectedOptions?.uploadedImages?.length > 0) {
+      if (p.selectedOptions?.uploadedImages?.length > 0)
         return p.selectedOptions.uploadedImages[0].url || null;
-      }
       return null;
     };
- 
-    // ── Pre-download all images ──
-    console.log(`📸 Pre-downloading images for install binder (${products.length} products)...`);
+
     const imageCache = new Map();
     await Promise.all(products.map(async (p, idx) => {
       const url = getPrimaryImageUrl(p);
@@ -1801,51 +1719,43 @@ const generateInstallBinderExcel = async (req, res) => {
         if (imgData) imageCache.set(idx, imgData);
       }
     }));
-    console.log(`✅ Downloaded ${imageCache.size} images`);
- 
+
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Henderson Design Group';
-    const ws = wb.addWorksheet('Install Binder');
- 
-    // ── Column widths ──
-    ws.getColumn('A').width = 13;   // Photo
-    ws.getColumn('B').width = 18;   // Room
-    ws.getColumn('C').width = 20;   // Vendor Name
-    ws.getColumn('D').width = 38;   // Vendor Description
-    ws.getColumn('E').width = 16;   // HDG PO#
-    ws.getColumn('F').width = 10;   // Quantity
-    ws.getColumn('G').width = 20;   // Vendor Order Number
-    ws.getColumn('H').width = 24;   // Tracking Info
-    ws.getColumn('I').width = 26;   // Notes
- 
-    // ── Styles ──
+    const ws  = wb.addWorksheet('Install Binder');
+
+    ws.getColumn('A').width = 13;
+    ws.getColumn('B').width = 18;
+    ws.getColumn('C').width = 20;
+    ws.getColumn('D').width = 38;
+    ws.getColumn('E').width = 16;
+    ws.getColumn('F').width = 10;
+    ws.getColumn('G').width = 20;
+    ws.getColumn('H').width = 24;
+    ws.getColumn('I').width = 26;
+
     const thinBorder = {
-      top:    { style: 'thin' },
-      left:   { style: 'thin' },
-      bottom: { style: 'thin' },
-      right:  { style: 'thin' },
+      top: { style: 'thin' }, left: { style: 'thin' },
+      bottom: { style: 'thin' }, right: { style: 'thin' },
     };
     const headerFont = { name: 'Arial', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
     const dataFont   = { name: 'Arial', size: 9 };
     const wrapTop    = { vertical: 'top', wrapText: true };
- 
-    // ── Row 1: Title ──
+
     ws.mergeCells('A1:I1');
     const titleCell = ws.getCell('A1');
     titleCell.value     = 'Henderson Design Group — Install Binder';
     titleCell.font      = { name: 'Arial', bold: true, size: 13, color: { argb: 'FF005670' } };
     titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(1).height = 28;
- 
-    // ── Row 2: Project info ──
+
     ws.mergeCells('A2:I2');
     const projCell = ws.getCell('A2');
     projCell.value     = projectLabel;
     projCell.font      = { name: 'Arial', bold: true, size: 10 };
     projCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(2).height = 20;
- 
-    // ── Row 3: Date printed ──
+
     ws.mergeCells('A3:I3');
     const dateCell = ws.getCell('A3');
     dateCell.value = `Printed: ${new Date().toLocaleDateString('en-US', {
@@ -1854,13 +1764,9 @@ const generateInstallBinderExcel = async (req, res) => {
     dateCell.font      = { name: 'Arial', size: 9, italic: true, color: { argb: 'FF666666' } };
     dateCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(3).height = 16;
- 
-    // ── Row 4: Table header ──
-    const headers = [
-      'Photo', 'Room', 'Vendor Name', 'Vendor Description',
-      'HDG PO#', 'Qty', 'Vendor Order #', 'Tracking Info', 'Notes'
-    ];
-    headers.forEach((h, i) => {
+
+    ['Photo','Room','Vendor Name','Vendor Description','HDG PO#','Qty',
+     'Vendor Order #','Tracking Info','Notes'].forEach((h, i) => {
       const cell = ws.getCell(4, i + 1);
       cell.value     = h;
       cell.font      = headerFont;
@@ -1869,19 +1775,17 @@ const generateInstallBinderExcel = async (req, res) => {
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     });
     ws.getRow(4).height = 24;
- 
-    // ── Group products by room ──
+
     const grouped = {};
     products.forEach(p => {
       const room = p.selectedOptions?.room || p.category || p.spotName || '— No Room Assigned —';
       if (!grouped[room]) grouped[room] = [];
       grouped[room].push(p);
     });
- 
+
     let rowNum = 5;
- 
+
     Object.entries(grouped).forEach(([room, roomProducts]) => {
-      // Room header row
       ws.mergeCells(`A${rowNum}:I${rowNum}`);
       const roomCell = ws.getCell(`A${rowNum}`);
       roomCell.value     = room;
@@ -1891,36 +1795,29 @@ const generateInstallBinderExcel = async (req, res) => {
       roomCell.alignment = { vertical: 'middle', indent: 1 };
       ws.getRow(rowNum).height = 20;
       rowNum++;
- 
+
       roomProducts.forEach((p) => {
         const originalIdx = products.indexOf(p);
         ws.getRow(rowNum).height = 90;
- 
+
         const vendorName = (p.vendor && typeof p.vendor === 'object' && p.vendor.name)
-          ? p.vendor.name
-          : 'HDG Inventory';
- 
-        // Build vendor description
+          ? p.vendor.name : 'HDG Inventory';
+
         const descParts = [];
-        if (p.name)                               descParts.push(p.name);
-        if (p.product_id)                         descParts.push(`SKU: ${p.product_id}`);
-        if (p.selectedOptions?.specifications)    descParts.push(p.selectedOptions.specifications);
-        if (p.selectedOptions?.finish)            descParts.push(`Finish: ${p.selectedOptions.finish}`);
-        if (p.selectedOptions?.fabric)            descParts.push(`Fabric: ${p.selectedOptions.fabric}`);
-        if (p.selectedOptions?.size)              descParts.push(`Size: ${p.selectedOptions.size}`);
-        if (p.selectedOptions?.leadTime)          descParts.push(`Lead Time: ${p.selectedOptions.leadTime}`);
+        if (p.name)                            descParts.push(p.name);
+        if (p.product_id)                      descParts.push(`SKU: ${p.product_id}`);
+        if (p.selectedOptions?.specifications) descParts.push(p.selectedOptions.specifications);
+        if (p.selectedOptions?.finish)         descParts.push(`Finish: ${p.selectedOptions.finish}`);
+        if (p.selectedOptions?.fabric)         descParts.push(`Fabric: ${p.selectedOptions.fabric}`);
+        if (p.selectedOptions?.size)           descParts.push(`Size: ${p.selectedOptions.size}`);
+        if (p.selectedOptions?.leadTime)       descParts.push(`Lead Time: ${p.selectedOptions.leadTime}`);
         const vendorDesc = descParts.join('\n');
- 
-        // A - Photo
-        const cellA = ws.getCell(rowNum, 1);
-        cellA.border = thinBorder;
+
+        ws.getCell(rowNum, 1).border = thinBorder;
         if (imageCache.has(originalIdx)) {
           try {
             const imgData = imageCache.get(originalIdx);
-            const imageId = wb.addImage({
-              buffer: imgData.buffer,
-              extension: imgData.extension,
-            });
+            const imageId = wb.addImage({ buffer: imgData.buffer, extension: imgData.extension });
             ws.addImage(imageId, {
               tl: { col: 0.05, row: rowNum - 1 + 0.05 },
               ext: { width: 80, height: 80 },
@@ -1928,44 +1825,36 @@ const generateInstallBinderExcel = async (req, res) => {
             });
           } catch (_) {}
         }
- 
-        // B - Room
+
         const cellB = ws.getCell(rowNum, 2);
         cellB.value = p.selectedOptions?.room || p.category || p.spotName || '';
         cellB.font = dataFont; cellB.border = thinBorder; cellB.alignment = wrapTop;
- 
-        // C - Vendor Name
+
         const cellC = ws.getCell(rowNum, 3);
         cellC.value = vendorName;
         cellC.font = dataFont; cellC.border = thinBorder; cellC.alignment = wrapTop;
- 
-        // D - Vendor Description
+
         const cellD = ws.getCell(rowNum, 4);
         cellD.value = vendorDesc;
         cellD.font = dataFont; cellD.border = thinBorder; cellD.alignment = wrapTop;
- 
-        // E - HDG PO#
+
         const cellE = ws.getCell(rowNum, 5);
-        cellE.value = p.selectedOptions?.poNumber || '';
+        cellE.value = getPoNumber(p);
         cellE.font = dataFont; cellE.border = thinBorder; cellE.alignment = wrapTop;
- 
-        // F - Quantity
+
         const cellF = ws.getCell(rowNum, 6);
         cellF.value = p.quantity || 1;
         cellF.font = dataFont; cellF.border = thinBorder;
         cellF.alignment = { ...wrapTop, horizontal: 'center' };
- 
-        // G - Vendor Order Number
+
         const cellG = ws.getCell(rowNum, 7);
         cellG.value = p.selectedOptions?.vendorOrderNumber || '';
         cellG.font = dataFont; cellG.border = thinBorder; cellG.alignment = wrapTop;
- 
-        // H - Tracking Info
+
         const cellH = ws.getCell(rowNum, 8);
         cellH.value = p.selectedOptions?.trackingInfo || '';
         cellH.font = dataFont; cellH.border = thinBorder; cellH.alignment = wrapTop;
- 
-        // I - Notes (gabung delivery status + notes + installer notes)
+
         const cellI = ws.getCell(rowNum, 9);
         const notesParts = [
           p.selectedOptions?.deliveryStatus,
@@ -1974,11 +1863,11 @@ const generateInstallBinderExcel = async (req, res) => {
         ].filter(Boolean);
         cellI.value = notesParts.join('\n') || '';
         cellI.font = dataFont; cellI.border = thinBorder; cellI.alignment = wrapTop;
- 
+
         rowNum++;
       });
     });
- 
+
     if (products.length === 0) {
       ws.mergeCells(`A${rowNum}:I${rowNum}`);
       ws.getCell(`A${rowNum}`).value     = 'No products in this order';
@@ -1986,23 +1875,22 @@ const generateInstallBinderExcel = async (req, res) => {
       ws.getCell(`A${rowNum}`).alignment = { horizontal: 'center' };
       rowNum++;
     }
- 
-    // ── Footer ──
+
     ws.mergeCells(`A${rowNum}:I${rowNum}`);
     const footerCell = ws.getCell(`A${rowNum}`);
     footerCell.value = 'Henderson Design Group  |  4343 Royal Place, Honolulu, HI 96816  |  (808) 315-8782';
     footerCell.font  = { name: 'Arial', size: 8, color: { argb: 'FF999999' }, italic: true };
     footerCell.alignment = { horizontal: 'center' };
- 
-    // ── Send response ──
-    const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
-    const filename = `InstallBinder_${safeName}.xlsx`;
- 
+
+    // Filename: "ClientName - Install Binder.xlsx"
+    const safeClient = clientName.replace(/[^a-zA-Z0-9 ]/g, '').trim();
+    const filename   = `${safeClient} - Install Binder.xlsx`;
+
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     await wb.xlsx.write(res);
     res.end();
- 
+
   } catch (error) {
     console.error('❌ Error generating install binder Excel:', error);
     res.status(500).json({ message: 'Error generating install binder Excel', error: error.message });
@@ -2494,7 +2382,7 @@ const generateStatusReport = async (req, res) => {
         // Q - Vendor Order Number
         const cQ = ws2.getCell(ir, 17);
         cQ.value = p.selectedOptions?.vendorOrderNumber || '';
-        cQ.font = dataFont; cQ.border = thinBorder; cQ.alignment = wrapT
+        cQ.font = dataFont; cQ.border = thinBorder; cQ.alignment = wrapTop;
 
         ir++;
       });
@@ -2511,7 +2399,8 @@ const generateStatusReport = async (req, res) => {
     const buffer = await wb.xlsx.writeBuffer();
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=status-report-${order._id}.xlsx`);
+    const _srClientName = (order.clientInfo?.name || 'Client').replace(/[^a-zA-Z0-9 ]/g, '').trim();
+    res.setHeader('Content-Disposition', `attachment; filename="${_srClientName}.xlsx"`);
     res.setHeader('Content-Length', buffer.length);
     res.send(Buffer.from(buffer));
 
@@ -2816,6 +2705,191 @@ const saveCurrentVersion = async (req, res) => {
   }
 };
 
+const generateAllProductsReport = async (req, res) => {
+  try {
+    const ExcelJS = require('exceljs');
+ 
+    // Fetch all orders with vendor populated
+    const orders = await Order.find({})
+      .populate('selectedProducts.vendor', 'name')
+      .lean();
+ 
+    // Fetch latest PO per vendor per order for PO# lookup
+    const allPOVersions = await POVersion.find({})
+      .sort({ version: 1 }) // ASC — earliest first for per-product lookup
+      .lean();
+ 
+    // Build product_id → poNumber map (earliest PO that contains this product)
+    const productPoMap = new Map();
+    allPOVersions.forEach(po => {
+      (po.products || []).forEach(poProduct => {
+        const pid = poProduct.product_id;
+        if (pid && !productPoMap.has(pid)) {
+          productPoMap.set(pid, po.poNumber || '');
+        }
+      });
+    });
+ 
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Henderson Design Group';
+    const ws = wb.addWorksheet('All Products');
+ 
+    // Column widths
+    ws.getColumn('A').width = 22; // Client
+    ws.getColumn('B').width = 10; // Unit
+    ws.getColumn('C').width = 18; // Vendor
+    ws.getColumn('D').width = 30; // Product Name
+    ws.getColumn('E').width = 20; // SKU
+    ws.getColumn('F').width = 18; // Room
+    ws.getColumn('G').width = 8;  // Qty
+    ws.getColumn('H').width = 14; // Net Cost (unit)
+    ws.getColumn('I').width = 14; // Net Cost (total)
+    ws.getColumn('J').width = 14; // Sell Price (unit)
+    ws.getColumn('K').width = 14; // Sell Price (total)
+    ws.getColumn('L').width = 14; // Sales Tax
+    ws.getColumn('M').width = 14; // Grand Total
+    ws.getColumn('N').width = 18; // PO#
+    ws.getColumn('O').width = 16; // Finish
+    ws.getColumn('P').width = 16; // Fabric
+    ws.getColumn('Q').width = 12; // Size
+    ws.getColumn('R').width = 14; // Lead Time
+    ws.getColumn('S').width = 14; // Order Status
+ 
+    const thinBorder = {
+      top: { style: 'thin' }, left: { style: 'thin' },
+      bottom: { style: 'thin' }, right: { style: 'thin' },
+    };
+    const wrapTop = { vertical: 'top', wrapText: true };
+    const dataFont = { name: 'Arial', size: 9 };
+ 
+    // Row 1 — Title
+    ws.mergeCells('A1:S1');
+    ws.getCell('A1').value = `Henderson Design Group — All Products Report — ${new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })}`;
+    ws.getCell('A1').font = { name: 'Arial', bold: true, size: 13, color: { argb: 'FF005670' } };
+    ws.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center' };
+    ws.getRow(1).height = 28;
+ 
+    // Row 2 — Headers
+    const headers = [
+      'Client', 'Unit', 'Vendor', 'Product Name', 'SKU', 'Room', 'Qty',
+      'Net Cost (Unit)', 'Net Cost (Total)', 'Sell Price (Unit)', 'Sell Price (Total)',
+      'Sales Tax', 'Grand Total', 'PO #', 'Finish', 'Fabric', 'Size', 'Lead Time', 'Order Status'
+    ];
+    headers.forEach((h, i) => {
+      const cell = ws.getCell(2, i + 1);
+      cell.value = h;
+      cell.font = { name: 'Arial', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF005670' } };
+      cell.border = thinBorder;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    });
+    ws.getRow(2).height = 22;
+ 
+    let rowNum = 3;
+    let grandTotalNetCost = 0;
+    let grandTotalSell = 0;
+    let grandTotalTax = 0;
+ 
+    orders.forEach(order => {
+      const clientName = order.clientInfo?.name || 'Unknown';
+      const unitNumber = order.clientInfo?.unitNumber || '';
+      const orderStatus = order.status || '';
+ 
+      (order.selectedProducts || []).forEach(p => {
+        const opts = p.selectedOptions || {};
+        const qty = parseFloat(p.quantity) || 1;
+        const vendorName = (p.vendor && typeof p.vendor === 'object') ? p.vendor.name : 'HDG Inventory';
+ 
+        // Net cost (purchase price)
+        const netUnit = (opts.netCostOverride != null && opts.netCostOverride !== '')
+          ? parseFloat(opts.netCostOverride)
+          : parseFloat(opts.msrp || 0) * (1 - (parseFloat(opts.discountPercent) || 0) / 100);
+        const netTotal = netUnit * qty;
+ 
+        // Sell price
+        const msrp = parseFloat(opts.msrp) || 0;
+        const markup = parseFloat(opts.markupPercent) || 0;
+        const sellUnit = msrp * (1 + markup / 100);
+        const sellTotal = sellUnit * qty;
+ 
+        // Sales tax
+        const taxRate = parseFloat(opts.salesTaxRate) || 0;
+        const tax = taxRate > 0 ? sellTotal * (taxRate / 100) : 0;
+        const grandTotal = sellTotal + tax;
+ 
+        grandTotalNetCost += netTotal;
+        grandTotalSell += sellTotal;
+        grandTotalTax += tax;
+ 
+        // PO# lookup
+        const poNumber = (p.product_id && productPoMap.has(p.product_id))
+          ? productPoMap.get(p.product_id)
+          : (opts.poNumber || '');
+ 
+        const money = (n) => ({ type: 'number', value: n, numFmt: '"$"#,##0.00' });
+ 
+        const rowData = [
+          clientName, unitNumber, vendorName, p.name || '', p.product_id || '',
+          opts.room || p.category || '', qty,
+          money(netUnit), money(netTotal),
+          money(sellUnit), money(sellTotal),
+          money(tax), money(grandTotal),
+          poNumber,
+          opts.finish || '', opts.fabric || '', opts.size || '',
+          opts.leadTime || '', orderStatus,
+        ];
+ 
+        rowData.forEach((val, i) => {
+          const cell = ws.getCell(rowNum, i + 1);
+          if (val && typeof val === 'object' && 'numFmt' in val) {
+            cell.value = val.value;
+            cell.numFmt = val.numFmt;
+          } else {
+            cell.value = val;
+          }
+          cell.font = dataFont;
+          cell.border = thinBorder;
+          cell.alignment = wrapTop;
+        });
+ 
+        ws.getRow(rowNum).height = 18;
+        rowNum++;
+      });
+    });
+ 
+    // Totals row
+    ws.mergeCells(`A${rowNum}:G${rowNum}`);
+    ws.getCell(`A${rowNum}`).value = 'TOTAL';
+    ws.getCell(`A${rowNum}`).font = { name: 'Arial', bold: true, size: 10 };
+    ws.getCell(`A${rowNum}`).alignment = { horizontal: 'right', vertical: 'middle' };
+ 
+    [
+      { col: 9, val: grandTotalNetCost },
+      { col: 11, val: grandTotalSell },
+      { col: 12, val: grandTotalTax },
+      { col: 13, val: grandTotalSell + grandTotalTax },
+    ].forEach(({ col, val }) => {
+      const cell = ws.getCell(rowNum, col);
+      cell.value = val;
+      cell.numFmt = '"$"#,##0.00';
+      cell.font = { name: 'Arial', bold: true, size: 10 };
+      cell.border = { top: { style: 'double' } };
+    });
+ 
+    ws.getRow(rowNum).height = 22;
+ 
+    const filename = `HDG - All Products Report - ${new Date().toISOString().slice(0,10)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    await wb.xlsx.write(res);
+    res.end();
+ 
+  } catch (error) {
+    console.error('❌ generateAllProductsReport error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   createOrder,
   getOrders,
@@ -2837,5 +2911,6 @@ module.exports = {
   getUploadPresignedUrl,
   generateCogExcel,
   getLatestConfirmedPOs,
-  saveCurrentVersion
+  saveCurrentVersion,
+  generateAllProductsReport
 };

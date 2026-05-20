@@ -8,7 +8,8 @@ const {
   createPOVersion,
   getAllPOVersions,
   getAllPOsForOrder,
-  updatePOStatus
+  updatePOStatus,
+  getAvailableProducts
 } = require('../controllers/poController');
 
 // Protect all routes
@@ -33,5 +34,10 @@ router.put('/:orderId/po/:vendorId/status', updatePOStatus);
 
 // Update existing PO version
 router.put('/:orderId/po/:vendorId', updatePurchaseOrder);
+
+router.get(
+  '/:orderId/po/:vendorId/:version/available-products',
+  getAvailableProducts
+);
 
 module.exports = router;

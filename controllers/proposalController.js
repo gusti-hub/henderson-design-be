@@ -1,31 +1,56 @@
 // controllers/proposalController.js
-// ✅ FIXED: Proposal number now uses sequential counter format: Hen-[ClientCode]-[000001]
-//   - ClientCode = 3 huruf dari last name client
-//   - Counter = nomor urut 6 digit dari total proposals yang sudah ada
-//   - Contoh: Hen-LAN-000001, Hen-FAR-000002
-//   - Idempotent: jika sudah ada, tidak dibuat ulang
+// ✅ SMART FILTERING:
+//    - getProposalData: attach `excludedProducts` = products NOT in prev version
+//      so frontend knows which items to hide by default
+//    - saveAsNewVersion: new version starts with items NOT yet in any PO,
+//      excluding items from the previous proposal version by default
 
 const Order = require('../models/Order');
 const ProposalVersion = require('../models/ProposalVersion');
 
-// ─── Single canonical proposal number generator ───────────────────────────────
-// Tambah di ensureProposalNumber — generate unique number per version
-const ensureProposalNumberForVersion = async (order, versionNumber) => {
-  const clientName = order.clientInfo?.name || 'CLT';
-  const nameParts  = clientName.trim().split(/[\s\-\/,]+/);
-  const lastWord   = [...nameParts].reverse().find(p => /[a-zA-Z]/.test(p)) || 'CLT';
-  const clientCode = lastWord.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+// ─── Helper: Instance-aware "already proposed" classifier ────────────────────
+// Mirrors buildPrevPoClassifier in poController.
+// For each product_id: find max count in any single proposal version = quota.
+// Walk order products consuming quota slots → remainder are "new" (not yet proposed).
+const buildPrevProposalClassifier = (allVersions) => {
+  const sorted = [...allVersions].sort((a, b) => a.version - b.version);
+  const slotsByKey = {}; // { key: { count, proposalNumber } }
+  sorted.forEach(v => {
+    const countInV = {};
+    (v.selectedProducts || []).forEach(p => {
+      const key = (p.product_id && p.product_id !== '')
+        ? p.product_id
+        : ('oid::' + (p._id?.toString() || ''));
+      countInV[key] = (countInV[key] || 0) + 1;
+    });
+    Object.entries(countInV).forEach(([key, cnt]) => {
+      if (!slotsByKey[key] || cnt > slotsByKey[key].count) {
+        slotsByKey[key] = { count: cnt, proposalNumber: v.proposalNumber || ('v' + v.version) };
+      }
+    });
+  });
 
-  const Counter = require('../models/Counter');
-  const counterDoc = await Counter.findOneAndUpdate(
-    { _id: `proposalNumber_${clientCode}` },
-    { $inc: { seq: 1 } },
-    { new: true, upsert: true }
-  );
-  const counter = String(counterDoc.seq).padStart(6, '0');
-  return `Hen-${clientCode}-${counter}-v${versionNumber}`;
+  return function classifyProducts(orderProducts) {
+    const remaining = {};
+    Object.entries(slotsByKey).forEach(([key, val]) => { remaining[key] = val.count; });
+    const included = []; // new — never proposed
+    const excluded = []; // previously proposed
+    orderProducts.forEach(p => {
+      const key = (p.product_id && p.product_id !== '')
+        ? p.product_id
+        : ('oid::' + (p._id?.toString() || ''));
+      if (remaining[key] && remaining[key] > 0) {
+        remaining[key]--;
+        excluded.push({ ...p, _prevProposalNumber: slotsByKey[key].proposalNumber });
+      } else {
+        included.push(p);
+      }
+    });
+    return { included, excluded };
+  };
 };
 
+// ─── Single canonical proposal number generator ───────────────────────────────
 const ensureProposalNumber = async (order) => {
   if (order.proposalNumber) return order.proposalNumber;
 
@@ -61,25 +86,67 @@ const getProposalData = async (req, res) => {
     if (version && version !== 'latest') {
       const [proposalVersion, order] = await Promise.all([
         ProposalVersion.findOne({ orderId, version: parseInt(version) }),
-        Order.findById(orderId).select('proposalNumber clientInfo').lean(),
+        Order.findById(orderId)
+          .populate('selectedProducts.vendor')
+          .select('proposalNumber clientInfo selectedProducts')
+          .lean(),
       ]);
 
       if (!proposalVersion) {
         return res.status(404).json({ message: 'Proposal version not found' });
       }
 
-      // ✅ PV dulu, fallback Order
       const proposalNumber = proposalVersion.proposalNumber || order?.proposalNumber || null;
+
+      // ── Compute excluded products using instance-aware classifier ──
+      const allVersions = await ProposalVersion.find({ orderId }).lean();
+      const classify = buildPrevProposalClassifier(allVersions);
+      const orderProducts = order?.selectedProducts || [];
+      const { included: newOnes, excluded: prevOnes } = classify(orderProducts);
+
+      // Products in this specific version
+      const pvProductIds = new Set(
+        (proposalVersion.selectedProducts || [])
+          .map(p => (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString())
+          .filter(Boolean)
+      );
+      // excludedProducts = everything not currently in this version
+      const excludedProducts = [
+        ...prevOnes.filter(p => !pvProductIds.has(
+          (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString()
+        )),
+        ...newOnes.filter(p => !pvProductIds.has(
+          (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString()
+        )),
+      ];
+
+      // Auto-populate: if this version has no products but there are new items, fill them in
+      let finalSelectedProducts = proposalVersion.selectedProducts || [];
+      if (finalSelectedProducts.length === 0 && newOnes.length > 0) {
+        finalSelectedProducts = newOnes;
+        try {
+          await ProposalVersion.findByIdAndUpdate(proposalVersion._id, {
+            selectedProducts: newOnes,
+            updatedAt: new Date(),
+          });
+        } catch (_) {}
+      }
 
       return res.json({
         success: true,
-        data: { ...proposalVersion.toObject(), proposalNumber }
+        data: {
+          ...proposalVersion.toObject(),
+          selectedProducts: finalSelectedProducts,
+          proposalNumber,
+          excludedProducts,
+        }
       });
     }
 
     // Latest version
     const order = await Order.findById(orderId)
       .populate('user', 'name email address unitNumber phoneNumber')
+      .populate('selectedProducts.vendor')
       .lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
@@ -89,11 +156,48 @@ const getProposalData = async (req, res) => {
       { sort: { version: -1 } }
     ).lean();
 
-    // ✅ PV dulu, fallback Order, fallback generate baru
     let proposalNumber = latestVersion?.proposalNumber || order.proposalNumber;
     if (!proposalNumber) {
       const fullOrder = await Order.findById(orderId);
       proposalNumber = await ensureProposalNumber(fullOrder);
+    }
+
+    // ── Compute excluded using instance-aware classifier ──
+    const allVersions = await ProposalVersion.find({ orderId }).lean();
+    let finalSelectedProducts = latestVersion?.selectedProducts || order.selectedProducts || [];
+    let excludedProducts = [];
+
+    if (latestVersion) {
+      const classify = buildPrevProposalClassifier(allVersions);
+      const { included: newOnes, excluded: prevOnes } = classify(order.selectedProducts || []);
+
+      const lvProductIds = new Set(
+        (latestVersion.selectedProducts || [])
+          .map(p => (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString())
+          .filter(Boolean)
+      );
+
+      // Auto-populate: if latest version is empty but there are new products, fill them in
+      if ((latestVersion.selectedProducts || []).length === 0 && newOnes.length > 0) {
+        finalSelectedProducts = newOnes;
+        try {
+          await ProposalVersion.findByIdAndUpdate(latestVersion._id, {
+            selectedProducts: newOnes,
+            updatedAt: new Date(),
+          });
+        } catch (_) {}
+        excludedProducts = prevOnes;
+      } else {
+        // excludedProducts = everything not in the current version
+        excludedProducts = [
+          ...prevOnes.filter(p => !lvProductIds.has(
+            (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString()
+          )),
+          ...newOnes.filter(p => !lvProductIds.has(
+            (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString()
+          )),
+        ];
+      }
     }
 
     res.json({
@@ -106,7 +210,8 @@ const getProposalData = async (req, res) => {
         clientInfo:       order.clientInfo,
         user:             order.user,
         selectedPlan:     order.selectedPlan,
-        selectedProducts: latestVersion?.selectedProducts || order.selectedProducts || [],
+        selectedProducts: finalSelectedProducts,
+        excludedProducts,
         createdAt:        order.createdAt,
         updatedAt:        order.updatedAt
       }
@@ -170,6 +275,11 @@ const saveProposal = async (req, res) => {
 };
 
 // ─── SAVE AS NEW VERSION ──────────────────────────────────────────────────────
+// NEW BEHAVIOUR:
+//   - New version starts ONLY with products NOT present in the previous version
+//   - Products that WERE in the previous version are returned as `excludedProducts`
+//     so the frontend can offer them in an "Add back" panel
+//   - If `products` is explicitly provided in the body, use those directly
 const saveAsNewVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -177,23 +287,24 @@ const saveAsNewVersion = async (req, res) => {
 
     if (!notes?.trim()) return res.status(400).json({ message: 'Version notes are required' });
 
-    const order = await Order.findById(orderId);
+    const order = await Order.findById(orderId)
+      .populate('selectedProducts.vendor')
+      .lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
     const latestVersion = await ProposalVersion.findOne(
       { orderId },
-      { version: 1 },
+      {},
       { sort: { version: -1 } }
-    );
+    ).lean();
     const nextVersion = (latestVersion?.version || 0) + 1;
 
-    // ✅ v1: pakai proposal number yang sudah ada di Order (atau generate baru)
-    // v2+: selalu generate nomor baru dari counter — format sama Hen-XXX-000002
+    // ── Proposal number logic ──
     let versionProposalNumber;
     if (nextVersion === 1) {
-      versionProposalNumber = await ensureProposalNumber(order);
+      const fullOrder = await Order.findById(orderId);
+      versionProposalNumber = await ensureProposalNumber(fullOrder);
     } else {
-      // Generate nomor baru — TIDAK pakai ensureProposalNumber karena itu idempotent
       const clientName = order.clientInfo?.name || 'CLT';
       const nameParts  = clientName.trim().split(/[\s\-\/,]+/);
       const lastWord   = [...nameParts].reverse().find(p => /[a-zA-Z]/.test(p)) || 'CLT';
@@ -210,21 +321,42 @@ const saveAsNewVersion = async (req, res) => {
       console.log(`[proposal] Generated new proposalNumber for v${nextVersion}: ${versionProposalNumber}`);
     }
 
+    // ── Smart product filtering (instance-aware, all versions) ──
+    // products === null → auto-compute: only include products never proposed before
+    // products explicitly provided → use as-is
+    let finalProducts = [];
+    let excludedProducts = [];
+    const autoCompute = products == null;
+
+    if (autoCompute) {
+      const allVersions = await ProposalVersion.find({ orderId }).lean();
+      const classify = buildPrevProposalClassifier(allVersions);
+      const { included, excluded } = classify(order.selectedProducts || []);
+      finalProducts = included;
+      excludedProducts = excluded;
+      console.log(`[proposal] New v${nextVersion}: ${finalProducts.length} new, ${excludedProducts.length} excluded`);
+    } else {
+      finalProducts = products;
+    }
+
     const newVersion = await ProposalVersion.create({
       orderId,
       version:          nextVersion,
-      selectedProducts: products,
-      clientInfo,
+      selectedProducts: finalProducts,
+      clientInfo:       clientInfo || order.clientInfo,
       notes,
       status:           'draft',
       proposalNumber:   versionProposalNumber,
       createdBy:        req.user.id
     });
 
+    const responseData = newVersion.toObject();
+    responseData.excludedProducts = excludedProducts;
+
     res.json({
       success:        true,
       message:        `Version ${nextVersion} created`,
-      data:           newVersion,
+      data:           responseData,
       proposalNumber: versionProposalNumber,
     });
 
@@ -248,7 +380,6 @@ const getAllVersions = async (req, res) => {
       Order.findById(orderId).select('proposalNumber').lean(),
     ]);
 
-    // ✅ Pastikan tiap version punya proposalNumber — fallback ke Order jika belum ada
     const versionsWithNumber = versions.map(v => ({
       ...v,
       proposalNumber: v.proposalNumber || order?.proposalNumber || null,
@@ -275,39 +406,26 @@ const ensureProposalNumberEndpoint = async (req, res) => {
   }
 };
 
-
-// ─── ONE-TIME MIGRATION: Reset old hex-format proposal numbers ───────────────
-// @route POST /api/proposals/migrate-numbers
-// Run once to reset all old "Hen-XXX-8FC2CA" format numbers so they get
-// regenerated as sequential "Hen-LAN-000001" format on next proposal open.
-// Safe to call multiple times — only touches old hex-format numbers.
+// ─── MIGRATE old proposal numbers ────────────────────────────────────────────
 const migrateProposalNumbers = async (req, res) => {
   try {
-    // Match old format: Hen-[3 letters]-[6 hex chars]  e.g. Hen-LAN-8FC2CA
     const oldFormatRegex = /^Hen-[A-Z]{3}-[0-9A-F]{6}$/;
-
-    // Find all orders with old-format proposal numbers
     const orders = await Order.find({
       proposalNumber: { $exists: true, $ne: null, $ne: '' }
     }).select('proposalNumber').lean();
 
     const toReset = orders.filter(o => oldFormatRegex.test(o.proposalNumber));
-
     if (toReset.length === 0) {
       return res.json({ success: true, message: 'No old-format numbers found. Nothing to migrate.', reset: 0 });
     }
 
-    // Unset proposalNumber on all old-format orders
     const ids = toReset.map(o => o._id);
-    await Order.updateMany(
-      { _id: { $in: ids } },
-      { $unset: { proposalNumber: '' } }
-    );
-
+    await Order.updateMany({ _id: { $in: ids } }, { $unset: { proposalNumber: '' } });
     console.log(`[migration] Reset ${toReset.length} old proposal numbers`);
+
     res.json({
       success: true,
-      message: `Reset ${toReset.length} old proposal numbers. New sequential numbers will be generated when each proposal is next opened.`,
+      message: `Reset ${toReset.length} old proposal numbers.`,
       reset: toReset.length,
       examples: toReset.slice(0, 5).map(o => o.proposalNumber),
     });
@@ -317,6 +435,7 @@ const migrateProposalNumbers = async (req, res) => {
   }
 };
 
+// ─── UPDATE STATUS ────────────────────────────────────────────────────────────
 const updateProposalStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -327,17 +446,14 @@ const updateProposalStatus = async (req, res) => {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
-    // Find the latest version for this order
     const latestVersion = await ProposalVersion.findOne(
       { orderId },
       {},
       { sort: { version: -1 } }
     );
-
     if (!latestVersion) {
       return res.status(404).json({ message: 'No proposal version found' });
     }
-
     if (latestVersion.status === 'approved') {
       return res.status(400).json({ message: 'Approved proposals cannot be changed' });
     }
@@ -354,6 +470,7 @@ const updateProposalStatus = async (req, res) => {
   }
 };
 
+// ─── SAVE CURRENT VERSION (upsert, no version bump) ──────────────────────────
 const saveCurrentVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -375,9 +492,7 @@ const saveCurrentVersion = async (req, res) => {
       latestVersion.updatedBy = req.user.id;
       await latestVersion.save();
 
-      // ✅ Pakai proposalNumber dari PV, fallback ke Order
       const proposalNumber = latestVersion.proposalNumber || order.proposalNumber;
-
       return res.json({
         success: true,
         message: `Version ${latestVersion.version} updated`,
@@ -386,7 +501,6 @@ const saveCurrentVersion = async (req, res) => {
       });
     }
 
-    // No version yet — create version 1
     const baseProposalNumber = await ensureProposalNumber(order);
     const newVersion = await ProposalVersion.create({
       orderId,
@@ -395,7 +509,7 @@ const saveCurrentVersion = async (req, res) => {
       clientInfo:       clientInfo || order.clientInfo,
       notes:            'Initial version',
       status:           'draft',
-      proposalNumber:   baseProposalNumber, // ✅ simpan ke PV
+      proposalNumber:   baseProposalNumber,
       createdBy:        req.user.id,
     });
 
@@ -412,6 +526,40 @@ const saveCurrentVersion = async (req, res) => {
   }
 };
 
+// ─── NEW: Get available (excluded) products for a proposal version ─────────────
+// @route GET /api/proposals/:orderId/:version/available-products
+// Returns order products NOT included in the specified proposal version
+const getAvailableProducts = async (req, res) => {
+  try {
+    const { orderId, version } = req.params;
+
+    const [order, proposalVersion] = await Promise.all([
+      Order.findById(orderId).lean(),
+      version && version !== 'latest'
+        ? ProposalVersion.findOne({ orderId, version: parseInt(version) }).lean()
+        : ProposalVersion.findOne({ orderId }, {}, { sort: { version: -1 } }).lean(),
+    ]);
+
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    const pvProductIds = new Set(
+      (proposalVersion?.selectedProducts || [])
+        .map(p => p.product_id || p._id?.toString())
+        .filter(Boolean)
+    );
+
+    const available = (order.selectedProducts || []).filter(p => {
+      const pid = p.product_id || p._id?.toString();
+      return pid && !pvProductIds.has(pid);
+    });
+
+    res.json({ success: true, data: available });
+  } catch (error) {
+    console.error('getAvailableProducts error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getProposalData,
   saveProposal,
@@ -420,5 +568,6 @@ module.exports = {
   ensureProposalNumberEndpoint,
   migrateProposalNumbers,
   updateProposalStatus,
-  saveCurrentVersion
+  saveCurrentVersion,
+  getAvailableProducts,
 };

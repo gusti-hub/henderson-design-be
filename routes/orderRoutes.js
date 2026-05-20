@@ -21,7 +21,8 @@ const {
   generateStatusReport,
   getUploadPresignedUrl,
   generateCogExcel,
-  getLatestConfirmedPOs
+  getLatestConfirmedPOs,
+  generateAllProductsReport
 } = require('../controllers/orderController');
 const { 
   handlePaymentProofUpload,
@@ -40,6 +41,8 @@ router.use(protect);
 // ===================================
 // ✅ IMAGE & FILE UPLOADS (BEFORE /:id routes)
 // ===================================
+
+router.get('/all-products-report', generateAllProductsReport);
 
 router.get('/:id/cog-report', generateCogExcel);
 
