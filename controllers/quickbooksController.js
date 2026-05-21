@@ -314,9 +314,6 @@ const syncExpenseToQuickBooks = async (req, res) => {
       const subtotal = round2(parseFloat(line.amount || 0));
       if (subtotal <= 0) continue;
 
-      const tax   = round2(subtotal * taxRate);
-      const total = round2(subtotal + tax);
-
       const parts = [];
       if (line.date)        parts.push(new Date(line.date + 'T12:00:00').toLocaleDateString('en-US'));
       if (line.serviceType) parts.push(line.serviceType);
@@ -325,9 +322,9 @@ const syncExpenseToQuickBooks = async (req, res) => {
 
       lines.push({
         description: parts.filter(Boolean).join(' — '),
-        amount:      total,
+        amount:      subtotal,   // ✅ subtotal saja tanpa tax
         qty:         1,
-        unitPrice:   total,
+        unitPrice:   subtotal,
         classRef:    lineClassRefs[i] || null,
       });
     }
