@@ -256,6 +256,7 @@ const updateOrder = async (req, res) => {
     // ✅ Update order using direct assignment instead of findByIdAndUpdate
     // This avoids casting issues with temporary IDs
     Object.assign(existingOrder, updateData);
+    existingOrder.updatedBy = req.user.id;
     const updatedOrder = await existingOrder.save();
 
     console.log(`✅ Order updated successfully`);
@@ -330,6 +331,7 @@ const getOrders = async (req, res) => {
           path: 'selectedProducts.vendor',
           select: 'name'          // ✅ FIX: populate vendor name
         })
+        .populate({ path: 'updatedBy', select: 'name' }) 
         .select('-__v')
         .skip(skip)
         .limit(limit)

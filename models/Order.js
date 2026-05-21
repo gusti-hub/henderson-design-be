@@ -265,7 +265,12 @@ const orderSchema = new mongoose.Schema({
   }],
 
   createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
+  updatedAt: { type: Date, default: Date.now },
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  }
 });
 
 orderSchema.pre('save', function(next) {
