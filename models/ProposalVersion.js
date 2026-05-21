@@ -78,6 +78,11 @@ const proposalVersionSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+
+  depositPercent: {
+    type: Number,
+    default: 90,
+  },
   
   status: {
     type: String,

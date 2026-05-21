@@ -139,6 +139,7 @@ const getProposalData = async (req, res) => {
           selectedProducts: finalSelectedProducts,
           proposalNumber,
           excludedProducts,
+          depositPercent: proposalVersion.depositPercent ?? 90,
         }
       });
     }
@@ -213,7 +214,8 @@ const getProposalData = async (req, res) => {
         selectedProducts: finalSelectedProducts,
         excludedProducts,
         createdAt:        order.createdAt,
-        updatedAt:        order.updatedAt
+        updatedAt:        order.updatedAt,
+        depositPercent:   latestVersion?.depositPercent ?? 90,
       }
     });
 
@@ -283,7 +285,7 @@ const saveProposal = async (req, res) => {
 const saveAsNewVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { products, clientInfo, notes } = req.body;
+    const { products, clientInfo, notes, depositPercent } = req.body;
 
     if (!notes?.trim()) return res.status(400).json({ message: 'Version notes are required' });
 
@@ -347,6 +349,7 @@ const saveAsNewVersion = async (req, res) => {
       notes,
       status:           'draft',
       proposalNumber:   versionProposalNumber,
+      depositPercent:   depositPercent ?? 90,
       createdBy:        req.user.id
     });
 
@@ -474,7 +477,7 @@ const updateProposalStatus = async (req, res) => {
 const saveCurrentVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { products, clientInfo } = req.body;
+    const { products, clientInfo, depositPercent } = req.body;
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
@@ -488,6 +491,7 @@ const saveCurrentVersion = async (req, res) => {
     if (latestVersion) {
       if (products !== undefined) latestVersion.selectedProducts = products;
       if (clientInfo) latestVersion.clientInfo = clientInfo;
+      if (depositPercent !== undefined) latestVersion.depositPercent = depositPercent;
       latestVersion.updatedAt = new Date();
       latestVersion.updatedBy = req.user.id;
       await latestVersion.save();
@@ -510,6 +514,7 @@ const saveCurrentVersion = async (req, res) => {
       notes:            'Initial version',
       status:           'draft',
       proposalNumber:   baseProposalNumber,
+      depositPercent:   depositPercent ?? 90,
       createdBy:        req.user.id,
     });
 
