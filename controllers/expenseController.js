@@ -57,6 +57,7 @@ const createExpense = async (req, res) => {
       notes:        notes        || '',
       status:       status       || 'draft',
       employeeName: employeeName || '',  // ✅ ini yang hilang
+      subtitle: req.body.subtitle || '',
       createdBy:    req.user?.id,
     });
 
@@ -83,6 +84,7 @@ const updateExpense = async (req, res) => {
     if (notes         !== undefined) expense.notes         = notes;
     if (employeeName  !== undefined) expense.employeeName  = employeeName;
     if (status        !== undefined) expense.status        = status;
+    if (req.body.subtitle !== undefined) expense.subtitle = req.body.subtitle;
     if (lines         !== undefined) {
       expense.lines = lines.map(l => ({
         date:        l.date        || '',

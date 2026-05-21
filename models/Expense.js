@@ -30,6 +30,11 @@ const expenseSchema = new mongoose.Schema({
   lines:   { type: [lineItemSchema], default: [] },
   taxRate: { type: Number, default: 4.5 },
   notes:   { type: String, default: '' },
+  subtitle: {
+    type: String,
+    default: '',
+  },
+
   status:  {
     type: String,
     enum: ['draft', 'review', 'confirmed', 'paid'],
