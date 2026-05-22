@@ -246,6 +246,26 @@ class QuickBooksClient {
     return response.data.Invoice;
   }
 
+  async invoiceExists(invoiceId) {
+  try {
+    await this.getInvoice(invoiceId);
+    return true;
+  } catch (err) {
+    // QB return 400/404 jika tidak ada
+    return false;
+  }
+}
+
+// ─── Check if bill still exists in QB ────────────────────────────────────────
+async billExists(billId) {
+  try {
+    await this.getBill(billId);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
   // ─── Invoice — UPDATE ─────────────────────────────────────────────────────────
   async updateInvoice(invoiceId, invoiceData, itemId = '3') {
     if (this.isTokenExpired()) await this.refreshAccessToken();
@@ -254,15 +274,19 @@ class QuickBooksClient {
     let lines;
     if (invoiceData.lines && invoiceData.lines.length > 0) {
       lines = invoiceData.lines.map(line => {
-        const qty       = round2(line.qty || 1);
-        const unitPrice = round2(line.unitPrice || 0);
-        const amount    = round2(unitPrice * qty);
+        const qty        = round2(line.qty || 1);
+        const unitPrice  = round2(line.unitPrice || 0);
+        const amount     = round2(unitPrice * qty);
+        // ✅ Pakai lineItemId dari line jika ada, fallback ke itemId parameter
+        const resolvedId = line.lineItemId || itemId;
+        const lineName   = line.lineName   || 'Product';
+
         return {
           DetailType:          'SalesItemLineDetail',
           Amount:              amount,
           Description:         (line.description || '').substring(0, 4000),
           SalesItemLineDetail: {
-            ItemRef:   { value: itemId, name: 'Product' },
+            ItemRef:   { value: resolvedId, name: lineName }, // ✅ per line
             Qty:       qty,
             UnitPrice: unitPrice,
             ...(line.classRef ? { ClassRef: { value: line.classRef } } : {}),

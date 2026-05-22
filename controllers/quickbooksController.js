@@ -11,6 +11,22 @@ const crypto  = require('crypto');
 
 const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
+const SERVICE_TYPE_ITEM_MAP = {
+  'decommission':    '5',   // Other
+  'procurement':     '3',   // Product
+  'design_pm':       '7',   // Design Fees
+  'engagement_fee':  '11',  // Project Management Fees
+  'admin':           '7',   // Design Fees
+  'business_dev':    '7',   // Design Fees
+  'design_services': '7',   // Design Fees
+  'finance':         '7',   // Design Fees
+  'holiday':         '2',   // Hours
+  'installation':    '4',   // FDI
+  'travel':          '6',   // Reimbursable
+  'products':        '3', 
+  'default':         '3',   // Product
+};
+
 const oauthStates = new Map();
 
 // ─── Product Item ID cache ────────────────────────────────────────────────────
@@ -315,10 +331,7 @@ const syncExpenseToQuickBooks = async (req, res) => {
       if (subtotal <= 0) continue;
 
       const parts = [];
-      if (line.date)        parts.push(new Date(line.date + 'T12:00:00').toLocaleDateString('en-US'));
-      if (line.serviceType) parts.push(line.serviceType);
       if (line.description) parts.push(line.description);
-      if (employeeName)     parts.push(`(${employeeName})`);
 
       lines.push({
         description: parts.filter(Boolean).join(' — '),
@@ -326,6 +339,9 @@ const syncExpenseToQuickBooks = async (req, res) => {
         qty:         1,
         unitPrice:   subtotal,
         classRef:    lineClassRefs[i] || null,
+        lineType:    line.serviceType || 'design_pm',
+        lineItemId,           // ✅ per line QB item ID
+        lineName, 
       });
     }
 
@@ -348,8 +364,17 @@ const syncExpenseToQuickBooks = async (req, res) => {
 
     let qbInvoice;
     if (isResync && expense.quickbooksId) {
-      qbInvoice = await quickbooksClient.updateInvoice(expense.quickbooksId, invoicePayload, itemId);
-      console.log(`✅ Expense ${expense.expenseNumber} → QB Invoice UPDATED ${qbInvoice.Id}`);
+      // ✅ Cek apakah invoice masih ada di QB sebelum update
+      const exists = await quickbooksClient.invoiceExists(expense.quickbooksId);
+      if (exists) {
+        qbInvoice = await quickbooksClient.updateInvoice(expense.quickbooksId, invoicePayload, itemId);
+        console.log(`✅ Expense ${expense.expenseNumber} → QB Invoice UPDATED ${qbInvoice.Id}`);
+      } else {
+        // Invoice sudah dihapus di QB — buat baru
+        console.log(`⚠️ Invoice ${expense.quickbooksId} not found in QB, creating new...`);
+        qbInvoice = await quickbooksClient.createInvoice(invoicePayload, itemId);
+        console.log(`✅ Expense ${expense.expenseNumber} → QB Invoice RECREATED ${qbInvoice.Id}`);
+      }
     } else {
       qbInvoice = await quickbooksClient.createInvoice(invoicePayload, itemId);
       console.log(`✅ Expense ${expense.expenseNumber} → QB Invoice CREATED ${qbInvoice.Id}`);
@@ -461,11 +486,18 @@ const syncPOToQuickBooks = async (req, res) => {
 
     let qbBill;
     if (isResync) {
-      // ✅ UPDATE bill existing — bukan create baru, PO number tetap sama
-      qbBill = await quickbooksClient.updateBill(po.quickbooksId, billPayload);
-      console.log(`✅ PO ${po.poNumber} → QB Bill ${qbBill.Id} (updated)`);
+      // ✅ Cek apakah bill masih ada di QB sebelum update
+      const exists = await quickbooksClient.billExists(po.quickbooksId);
+      if (exists) {
+        qbBill = await quickbooksClient.updateBill(po.quickbooksId, billPayload);
+        console.log(`✅ PO ${po.poNumber} → QB Bill ${qbBill.Id} (updated)`);
+      } else {
+        // Bill sudah dihapus di QB — buat baru
+        console.log(`⚠️ Bill ${po.quickbooksId} not found in QB, creating new...`);
+        qbBill = await quickbooksClient.createBill(billPayload);
+        console.log(`✅ PO ${po.poNumber} → QB Bill ${qbBill.Id} (recreated)`);
+      }
     } else {
-      // ✅ CREATE bill baru
       qbBill = await quickbooksClient.createBill(billPayload);
       console.log(`✅ PO ${po.poNumber} → QB Bill ${qbBill.Id} (created)`);
     }
@@ -566,8 +598,17 @@ const syncProposalToQuickBooks = async (req, res) => {
 
     let qbInvoice;
     if (isResync && pv.quickbooksId) {
-      qbInvoice = await quickbooksClient.updateInvoice(pv.quickbooksId, invoicePayload, itemId);
-      console.log(`✅ Proposal ${invoiceNumber} v${pv.version} → QB Invoice UPDATED ${qbInvoice.Id}`);
+      // ✅ Cek apakah invoice masih ada di QB sebelum update
+      const exists = await quickbooksClient.invoiceExists(pv.quickbooksId);
+      if (exists) {
+        qbInvoice = await quickbooksClient.updateInvoice(pv.quickbooksId, invoicePayload, itemId);
+        console.log(`✅ Proposal ${invoiceNumber} v${pv.version} → QB Invoice UPDATED ${qbInvoice.Id}`);
+      } else {
+        // Invoice sudah dihapus di QB — buat baru
+        console.log(`⚠️ Invoice ${pv.quickbooksId} not found in QB, creating new...`);
+        qbInvoice = await quickbooksClient.createInvoice(invoicePayload, itemId);
+        console.log(`✅ Proposal ${invoiceNumber} v${pv.version} → QB Invoice RECREATED ${qbInvoice.Id}`);
+      }
     } else {
       qbInvoice = await quickbooksClient.createInvoice(invoicePayload, itemId);
       console.log(`✅ Proposal ${invoiceNumber} v${pv.version} → QB Invoice CREATED ${qbInvoice.Id}`);

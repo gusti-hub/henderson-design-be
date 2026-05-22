@@ -14,8 +14,8 @@ const {
   getOrdersByClient,
   saveFurniturePlacements,
   getCurrentUserOrder,
-  uploadCustomProductImages,  // ✅ ADD
-  uploadOrderFloorPlan,         // ✅ ADD
+  uploadCustomProductImages,
+  uploadOrderFloorPlan,
   generateInstallBinder,
   generateInstallBinderExcel,
   generateStatusReport,
@@ -24,13 +24,21 @@ const {
   getLatestConfirmedPOs,
   generateAllProductsReport
 } = require('../controllers/orderController');
-const { 
+const {
   handlePaymentProofUpload,
-  handleProductImagesUpload,   // ✅ ADD
-  handleFloorPlanUpload         // ✅ ADD
+  handleProductImagesUpload,
+  handleFloorPlanUpload
 } = require('../config/s3');
 const proposalVersionController = require('../controllers/proposalVersionController');
 const { ensureProposalNumber } = require('../controllers/proposalController');
+
+// ✅ Audit log controller
+const {
+  getAuditLog,
+  getProductAuditLog,
+  rollbackAuditEntry,
+  getAuditStats,
+} = require('../controllers/auditLogController');
 
 
 router.post('/presigned-url', getUploadPresignedUrl);
@@ -39,31 +47,28 @@ router.post('/presigned-url', getUploadPresignedUrl);
 router.use(protect);
 
 // ===================================
-// ✅ IMAGE & FILE UPLOADS (BEFORE /:id routes)
+// IMAGE & FILE UPLOADS (BEFORE /:id routes)
 // ===================================
 
 router.get('/all-products-report', generateAllProductsReport);
 
 router.get('/:id/cog-report', generateCogExcel);
 
-// Upload custom product images
 router.post(
-  '/:orderId/custom-product-images', 
-  handleProductImagesUpload, 
+  '/:orderId/custom-product-images',
+  handleProductImagesUpload,
   uploadCustomProductImages
 );
 
-// ✅ Upload floor plan - THIS WAS MISSING!
 router.post(
-  '/:orderId/floor-plan', 
-  handleFloorPlanUpload, 
+  '/:orderId/floor-plan',
+  handleFloorPlanUpload,
   uploadOrderFloorPlan
 );
 
-// Upload payment proof
 router.post(
-  '/:id/payment-proof', 
-  handlePaymentProofUpload, 
+  '/:id/payment-proof',
+  handlePaymentProofUpload,
   uploadPaymentProof
 );
 
@@ -88,14 +93,23 @@ router.get('/:id/pdf', generateOrderPDF);
 // ===================================
 
 router.get(
-  '/:orderId/proposal-versions', 
+  '/:orderId/proposal-versions',
   proposalVersionController.getProposalVersions
 );
 
 router.get(
-  '/:id/generate-version-pdf/:version', 
+  '/:id/generate-version-pdf/:version',
   proposalVersionController.generateVersionPdf
 );
+
+// ===================================
+// ✅ AUDIT LOG — harus SEBELUM router.route('/:id')
+// ===================================
+
+router.get( '/:orderId/audit-log',                    getAuditLog);
+router.get( '/:orderId/audit-log/stats',              getAuditStats);
+router.get( '/:orderId/audit-log/product/:productId', getProductAuditLog);
+router.post('/:orderId/audit-log/:logId/rollback',    rollbackAuditEntry);
 
 // ===================================
 // ORDER CRUD
@@ -121,10 +135,9 @@ router.put('/:id/payment-status', updatePaymentStatus);
 
 router.put('/:orderId/furniture-placements', saveFurniturePlacements);
 
-router.get('/:id/install-binder', generateInstallBinder);
+router.get('/:id/install-binder',       generateInstallBinder);
 router.get('/:id/install-binder-excel', generateInstallBinderExcel);
-
-router.get('/:id/status-report', generateStatusReport); 
+router.get('/:id/status-report',        generateStatusReport);
 
 router.get('/:orderId/po/latest-confirmed', getLatestConfirmedPOs);
 

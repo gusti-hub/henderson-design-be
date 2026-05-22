@@ -18,6 +18,7 @@ const puppeteer = require('puppeteer');
 const html_to_pdf = require('html-pdf-node');
 const { generatePDF } = require('../config/pdfConfig');
 const nodemailer = require('nodemailer');
+const { logOrderChanges } = require('../utils/auditLogger');
 const { generatePresignedUploadUrl } = require('../config/s3');
 
 
@@ -62,19 +63,18 @@ const updateOrder = async (req, res) => {
   try {
     console.log('📝 updateOrder called for ID:', req.params.id);
     console.log('📦 Request body keys:', Object.keys(req.body));
-
+ 
     const existingOrder = await Order.findById(req.params.id);
     if (!existingOrder) {
       return res.status(404).json({ message: 'Order not found' });
     }
-
-    // ✅ FIX: Declare updateData here
+ 
+    // ✅ AUDIT STEP 1: snapshot SEBELUM mutasi apapun
+    const beforeSnapshot = existingOrder.toObject();
+ 
     const updateData = {};
-
-    // ✅ PATCH: Accept proposalNumber at order level
-    // CustomProductManager generates this on mount and persists via PUT
+ 
     if (req.body.proposalNumber !== undefined) {
-      // Only set if not already set (idempotent — first write wins)
       if (!existingOrder.proposalNumber) {
         updateData.proposalNumber = req.body.proposalNumber;
         console.log('📋 Setting proposalNumber:', req.body.proposalNumber);
@@ -82,22 +82,20 @@ const updateOrder = async (req, res) => {
         console.log('📋 proposalNumber already set:', existingOrder.proposalNumber, '— skipping');
       }
     }
-
-    // ✅ Handle selectedProducts with temporary ID cleanup
+ 
     if (req.body.selectedProducts && Array.isArray(req.body.selectedProducts)) {
       console.log(`📦 Processing ${req.body.selectedProducts.length} products`);
-      
+ 
       updateData.selectedProducts = req.body.selectedProducts.map(product => {
-        // ✅ Remove _id if it's a temporary ID
         const cleanProduct = { ...product };
-        
+ 
         if (product._id && typeof product._id === 'string' && product._id.startsWith('temp_')) {
-          delete cleanProduct._id; // Let MongoDB generate new _id
+          delete cleanProduct._id;
           console.log(`🔄 Removed temporary ID for product: ${product.name}`);
         }
-        
+ 
         return {
-          ...(cleanProduct._id && { _id: cleanProduct._id }), // Only include if valid
+          ...(cleanProduct._id && { _id: cleanProduct._id }),
           product_id: product.product_id,
           name: product.name,
           category: product.category,
@@ -109,15 +107,12 @@ const updateOrder = async (req, res) => {
           sourceType: product.sourceType || 'manual',
           isEditable: product.isEditable !== undefined ? product.isEditable : true,
           selectedOptions: {
-            // ── General Info ──
             sidemark:           product.selectedOptions?.sidemark           || '',
             group:              product.selectedOptions?.group              || '',
             tags:               product.selectedOptions?.tags               || [],
             itemClass:          product.selectedOptions?.itemClass          || '',
             cfaSampleApproval:  product.selectedOptions?.cfaSampleApproval  || '',
             vendorDescription:  product.selectedOptions?.vendorDescription  || '',
-          
-            // ── Product spec fields ──
             finish:             product.selectedOptions?.finish             || '',
             fabric:             product.selectedOptions?.fabric             || '',
             size:               product.selectedOptions?.size               || '',
@@ -127,8 +122,6 @@ const updateOrder = async (req, res) => {
             links:              product.selectedOptions?.links              || [],
             specifications:     product.selectedOptions?.specifications     || '',
             notes:              product.selectedOptions?.notes              || '',
-          
-            // ── Shipping ──                           ← ✅ shipToVendorId ADDED
             shipToVendorId:     product.selectedOptions?.shipToVendorId     || null,
             shipToName:         product.selectedOptions?.shipToName         || '',
             shippingStreet:     product.selectedOptions?.shippingStreet     || '',
@@ -137,16 +130,12 @@ const updateOrder = async (req, res) => {
             shippingPostalCode: product.selectedOptions?.shippingPostalCode || '',
             shippingCountry:    product.selectedOptions?.shippingCountry    || '',
             shipToPhone:        product.selectedOptions?.shipToPhone        || '',
-          
-            // ── Install Binder ──
             poNumber:           product.selectedOptions?.poNumber           || '',
             vendorOrderNumber:  product.selectedOptions?.vendorOrderNumber  || '',
             trackingInfo:       product.selectedOptions?.trackingInfo       || '',
             deliveryStatus:     product.selectedOptions?.deliveryStatus     || '',
             installerNotes:     product.selectedOptions?.installerNotes     || '',
             leadTime:           product.selectedOptions?.leadTime           || '',
-          
-            // ── Status Report ──
             room:                     product.selectedOptions?.room                     || '',
             statusCategory:           product.selectedOptions?.statusCategory           || '',
             proposalNumber:           product.selectedOptions?.proposalNumber           || '',
@@ -162,33 +151,26 @@ const updateOrder = async (req, res) => {
             nextStep:                 product.selectedOptions?.nextStep                 || '',
             nextStepDate:             product.selectedOptions?.nextStepDate             || '',
             warehouseReceivingNumber: product.selectedOptions?.warehouseReceivingNumber || '',
-          
-            // ── Pricing - Purchase ──
             units:              product.selectedOptions?.units              || 'Each',
             msrp:               product.selectedOptions?.msrp               || 0,
             discountPercent:    product.selectedOptions?.discountPercent    || 0,
-            netCostOverride:    product.selectedOptions?.netCostOverride    ?? null,   // ✅ ADDED
+            netCostOverride:    product.selectedOptions?.netCostOverride    ?? null,
             noNetPurchaseCost:  product.selectedOptions?.noNetPurchaseCost  || false,
             discountTaken:      product.selectedOptions?.discountTaken      || '',
             shippingCost:       product.selectedOptions?.shippingCost       || 0,
             otherCost:          product.selectedOptions?.otherCost          || 0,
-          
-            // ── Pricing - Selling ──
             markupPercent:          product.selectedOptions?.markupPercent          || 0,
             shippingMarkupPercent:  product.selectedOptions?.shippingMarkupPercent  || 0,
             otherMarkupPercent:     product.selectedOptions?.otherMarkupPercent     || 0,
             depositPercent:         product.selectedOptions?.depositPercent         || 0,
             vendorDepositPercent:   product.selectedOptions?.vendorDepositPercent   || 0,
             salesTaxRate:           product.selectedOptions?.salesTaxRate           || 0,
-          
-            // ── Pricing - Taxable ──
             taxableCost:             product.selectedOptions?.taxableCost             !== false,
             taxableMarkup:           product.selectedOptions?.taxableMarkup           !== false,
             taxableShippingCost:     product.selectedOptions?.taxableShippingCost     !== false,
             taxableShippingMarkup:   product.selectedOptions?.taxableShippingMarkup   !== false,
             taxableOtherCost:        product.selectedOptions?.taxableOtherCost        !== false,
             taxableOtherMarkup:      product.selectedOptions?.taxableOtherMarkup      !== false,
-          
             uploadedImages: (product.selectedOptions?.uploadedImages || []).map(img => ({
               filename:    img.filename    || '',
               contentType: img.contentType || '',
@@ -203,66 +185,54 @@ const updateOrder = async (req, res) => {
         };
       });
     }
-
-    // ✅ Handle customFloorPlan
+ 
     if (req.body.customFloorPlan) {
       updateData.customFloorPlan = req.body.customFloorPlan;
       console.log('📐 Floor plan included in update');
     }
-
-    // Handle occupiedSpots
-    if (req.body.occupiedSpots !== undefined) {
-      updateData.occupiedSpots = req.body.occupiedSpots;
-    }
-
-    // Handle selectedPlan
-    if (req.body.selectedPlan) {
-      updateData.selectedPlan = req.body.selectedPlan;
-    }
-
-    // Handle status
-    if (req.body.status) {
-      updateData.status = req.body.status;
-    }
-
-    // Handle step
-    if (req.body.step !== undefined) {
-      updateData.step = req.body.step;
-    }
-
-    if (req.body.installationDate !== undefined) {
-      updateData.installationDate = req.body.installationDate;
-    }
-    if (req.body.installationNotes !== undefined) {
-      updateData.installationNotes = req.body.installationNotes;
-    }
-
-    // Handle Package
-    if (req.body.Package) {
-      updateData.Package = req.body.Package;
-    }
-
-    // If floor plan changed, reset products (only for non-custom packages)
-    if (req.body.selectedPlan && 
+    if (req.body.occupiedSpots !== undefined)  updateData.occupiedSpots   = req.body.occupiedSpots;
+    if (req.body.selectedPlan)                 updateData.selectedPlan    = req.body.selectedPlan;
+    if (req.body.status)                       updateData.status          = req.body.status;
+    if (req.body.step !== undefined)           updateData.step            = req.body.step;
+    if (req.body.installationDate !== undefined) updateData.installationDate  = req.body.installationDate;
+    if (req.body.installationNotes !== undefined) updateData.installationNotes = req.body.installationNotes;
+    if (req.body.Package)                      updateData.Package         = req.body.Package;
+ 
+    if (req.body.selectedPlan &&
         existingOrder.packageType !== 'custom' &&
         existingOrder.selectedPlan?.id !== req.body.selectedPlan?.id) {
       console.log('⚠️ Floor plan changed - resetting products');
       updateData.selectedProducts = [];
       updateData.occupiedSpots = {};
     }
-
+ 
     console.log('📦 Final update data keys:', Object.keys(updateData));
-
-    // ✅ Update order using direct assignment instead of findByIdAndUpdate
-    // This avoids casting issues with temporary IDs
+ 
     Object.assign(existingOrder, updateData);
     existingOrder.updatedBy = req.user.id;
     const updatedOrder = await existingOrder.save();
-
+ 
     console.log(`✅ Order updated successfully`);
     console.log(`📦 Final selectedProducts count: ${updatedOrder.selectedProducts?.length || 0}`);
-
-    // Check if status changed to confirmed
+ 
+    // ✅ AUDIT STEP 2: populate vendor dulu sebelum snapshot after
+    await updatedOrder.populate({ path: 'selectedProducts.vendor', select: 'name' });
+ 
+    // ✅ AUDIT STEP 3: snapshot SETELAH save + log changes async
+    const afterSnapshot = updatedOrder.toObject();
+    const performer = {
+      _id:  req.user.id  || req.user._id,
+      name: req.user.name || req.user.email || 'Unknown',
+    };
+ 
+    console.log(`[audit] queuing diff for order ${updatedOrder._id}, performer: ${performer.name}`);
+ 
+    setImmediate(() => {
+      logOrderChanges({ before: beforeSnapshot, after: afterSnapshot, performer })
+        .catch(err => console.error('[audit] background log failed:', err.message));
+    });
+ 
+    // Email logic (unchanged)
     if (updateData.status === 'confirmed' && existingOrder.status !== 'confirmed') {
       try {
         const user = await User.findById(existingOrder.user);
@@ -273,15 +243,12 @@ const updateOrder = async (req, res) => {
         console.error('⚠️ Failed to send confirmation email:', emailError);
       }
     }
-
+ 
     res.json(updatedOrder);
-
+ 
   } catch (error) {
     console.error('❌ Error updating order:', error);
-    res.status(500).json({ 
-      success: false,
-      message: error.message 
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
