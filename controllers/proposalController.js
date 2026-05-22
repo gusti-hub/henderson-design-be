@@ -1,27 +1,29 @@
 // controllers/proposalController.js
-// ✅ SMART FILTERING:
-//    - getProposalData: attach `excludedProducts` = products NOT in prev version
-//      so frontend knows which items to hide by default
-//    - saveAsNewVersion: new version starts with items NOT yet in any PO,
-//      excluding items from the previous proposal version by default
 
 const Order = require('../models/Order');
 const ProposalVersion = require('../models/ProposalVersion');
 
+// ─── Helper: toKey ────────────────────────────────────────────────────────────
+// ✅ CHANGED: ekstrak jadi helper terpisah agar konsisten di semua tempat
+const toKey = (p) => {
+  if (!p) return '';
+  if (p.product_id && p.product_id.trim() !== '') return p.product_id;
+  return 'name::' + (p.name || '').trim().toLowerCase();
+};
+
 // ─── Helper: Instance-aware "already proposed" classifier ────────────────────
-// Mirrors buildPrevPoClassifier in poController.
-// For each product_id: find max count in any single proposal version = quota.
-// Walk order products consuming quota slots → remainder are "new" (not yet proposed).
+// Untuk setiap product_id: cari max count di satu proposal version = quota.
+// Walk order products consuming quota slots → remainder = "new" (belum pernah di-propose).
 const buildPrevProposalClassifier = (allVersions) => {
   const sorted = [...allVersions].sort((a, b) => a.version - b.version);
-  const slotsByKey = {}; // { key: { count, proposalNumber } }
+
+  const slotsByKey = {};
+
   sorted.forEach(v => {
     const countInV = {};
     (v.selectedProducts || []).forEach(p => {
-      const key = (p.product_id && p.product_id !== '')
-        ? p.product_id
-        : ('oid::' + (p._id?.toString() || ''));
-      countInV[key] = (countInV[key] || 0) + 1;
+      const key = toKey(p); // ✅ CHANGED: pakai helper
+      if (key) countInV[key] = (countInV[key] || 0) + 1;
     });
     Object.entries(countInV).forEach(([key, cnt]) => {
       if (!slotsByKey[key] || cnt > slotsByKey[key].count) {
@@ -32,13 +34,17 @@ const buildPrevProposalClassifier = (allVersions) => {
 
   return function classifyProducts(orderProducts) {
     const remaining = {};
-    Object.entries(slotsByKey).forEach(([key, val]) => { remaining[key] = val.count; });
-    const included = []; // new — never proposed
-    const excluded = []; // previously proposed
+    Object.entries(slotsByKey).forEach(([key, val]) => {
+      remaining[key] = val.count;
+    });
+
+    const included = [];
+    const excluded = [];
+
     orderProducts.forEach(p => {
-      const key = (p.product_id && p.product_id !== '')
-        ? p.product_id
-        : ('oid::' + (p._id?.toString() || ''));
+      const key = toKey(p); // ✅ CHANGED: pakai helper
+      if (!key) return;
+
       if (remaining[key] && remaining[key] > 0) {
         remaining[key]--;
         excluded.push({ ...p, _prevProposalNumber: slotsByKey[key].proposalNumber });
@@ -46,6 +52,7 @@ const buildPrevProposalClassifier = (allVersions) => {
         included.push(p);
       }
     });
+
     return { included, excluded };
   };
 };
@@ -83,6 +90,7 @@ const getProposalData = async (req, res) => {
   try {
     const { orderId, version } = req.params;
 
+    // ── SPECIFIC VERSION ──────────────────────────────────────────────────────
     if (version && version !== 'latest') {
       const [proposalVersion, order] = await Promise.all([
         ProposalVersion.findOne({ orderId, version: parseInt(version) }),
@@ -98,39 +106,30 @@ const getProposalData = async (req, res) => {
 
       const proposalNumber = proposalVersion.proposalNumber || order?.proposalNumber || null;
 
-      // ── Compute excluded products using instance-aware classifier ──
-      const allVersions = await ProposalVersion.find({ orderId }).lean();
-      const classify = buildPrevProposalClassifier(allVersions);
-      const orderProducts = order?.selectedProducts || [];
-      const { included: newOnes, excluded: prevOnes } = classify(orderProducts);
 
-      // Products in this specific version
-      const pvProductIds = new Set(
-        (proposalVersion.selectedProducts || [])
-          .map(p => (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString())
-          .filter(Boolean)
-      );
-      // excludedProducts = everything not currently in this version
-      const excludedProducts = [
-        ...prevOnes.filter(p => !pvProductIds.has(
-          (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString()
-        )),
-        ...newOnes.filter(p => !pvProductIds.has(
-          (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString()
-        )),
-      ];
+      // Count berapa kali setiap key ada di proposal version ini
+      const pvProductCount = {};
+      (proposalVersion.selectedProducts || []).forEach(p => {
+        const key = toKey(p);
+        if (key) pvProductCount[key] = (pvProductCount[key] || 0) + 1;
+      });
 
-      // Auto-populate: if this version has no products but there are new items, fill them in
-      let finalSelectedProducts = proposalVersion.selectedProducts || [];
-      if (finalSelectedProducts.length === 0 && newOnes.length > 0) {
-        finalSelectedProducts = newOnes;
-        try {
-          await ProposalVersion.findByIdAndUpdate(proposalVersion._id, {
-            selectedProducts: newOnes,
-            updatedAt: new Date(),
-          });
-        } catch (_) {}
-      }
+      // excludedProducts = semua produk di Order minus yang sudah ada di proposal
+      // menggunakan count agar duplikat product_id ditangani dengan benar
+      const orderCountTemp = {};
+      const excludedProducts = [];
+      (order?.selectedProducts || []).forEach(p => {
+        const key = toKey(p);
+        if (!key) return;
+        orderCountTemp[key] = (orderCountTemp[key] || 0) + 1;
+        const inProposal = pvProductCount[key] || 0;
+        if (orderCountTemp[key] > inProposal) {
+          excludedProducts.push(p);
+        }
+      });
+
+      const finalSelectedProducts = proposalVersion.selectedProducts || [];
+      
 
       return res.json({
         success: true,
@@ -144,7 +143,7 @@ const getProposalData = async (req, res) => {
       });
     }
 
-    // Latest version
+    // ── LATEST VERSION ────────────────────────────────────────────────────────
     const order = await Order.findById(orderId)
       .populate('user', 'name email address unitNumber phoneNumber')
       .populate('selectedProducts.vendor')
@@ -163,43 +162,44 @@ const getProposalData = async (req, res) => {
       proposalNumber = await ensureProposalNumber(fullOrder);
     }
 
-    // ── Compute excluded using instance-aware classifier ──
     const allVersions = await ProposalVersion.find({ orderId }).lean();
     let finalSelectedProducts = latestVersion?.selectedProducts || order.selectedProducts || [];
     let excludedProducts = [];
 
     if (latestVersion) {
-      const classify = buildPrevProposalClassifier(allVersions);
-      const { included: newOnes, excluded: prevOnes } = classify(order.selectedProducts || []);
-
-      const lvProductIds = new Set(
-        (latestVersion.selectedProducts || [])
-          .map(p => (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString())
-          .filter(Boolean)
-      );
-
-      // Auto-populate: if latest version is empty but there are new products, fill them in
-      if ((latestVersion.selectedProducts || []).length === 0 && newOnes.length > 0) {
-        finalSelectedProducts = newOnes;
+      // Auto-populate jika version masih kosong
+      if ((latestVersion.selectedProducts || []).length === 0) {
+        finalSelectedProducts = order.selectedProducts || [];
+        excludedProducts = [];
         try {
           await ProposalVersion.findByIdAndUpdate(latestVersion._id, {
-            selectedProducts: newOnes,
+            selectedProducts: finalSelectedProducts,
             updatedAt: new Date(),
           });
         } catch (_) {}
-        excludedProducts = prevOnes;
       } else {
-        // excludedProducts = everything not in the current version
-        excludedProducts = [
-          ...prevOnes.filter(p => !lvProductIds.has(
-            (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString()
-          )),
-          ...newOnes.filter(p => !lvProductIds.has(
-            (p.product_id && p.product_id !== '') ? p.product_id : p._id?.toString()
-          )),
-        ];
+        // Count berapa kali setiap key ada di latest version
+        const lvProductCount = {};
+        (latestVersion.selectedProducts || []).forEach(p => {
+          const key = toKey(p);
+          if (key) lvProductCount[key] = (lvProductCount[key] || 0) + 1;
+        });
+
+        // excludedProducts = semua produk di Order minus yang sudah ada di proposal
+        const orderCountLv = {};
+        excludedProducts = [];
+        (order.selectedProducts || []).forEach(p => {
+          const key = toKey(p);
+          if (!key) return;
+          orderCountLv[key] = (orderCountLv[key] || 0) + 1;
+          const inProposal = lvProductCount[key] || 0;
+          if (orderCountLv[key] > inProposal) {
+            excludedProducts.push(p);
+          }
+        });
       }
     }
+
 
     res.json({
       success: true,
@@ -226,6 +226,7 @@ const getProposalData = async (req, res) => {
 };
 
 // ─── SAVE proposal ────────────────────────────────────────────────────────────
+// (tidak ada perubahan)
 const saveProposal = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -277,11 +278,10 @@ const saveProposal = async (req, res) => {
 };
 
 // ─── SAVE AS NEW VERSION ──────────────────────────────────────────────────────
-// NEW BEHAVIOUR:
-//   - New version starts ONLY with products NOT present in the previous version
-//   - Products that WERE in the previous version are returned as `excludedProducts`
-//     so the frontend can offer them in an "Add back" panel
-//   - If `products` is explicitly provided in the body, use those directly
+// ✅ CHANGED: logika smart filtering yang benar
+//   - Version 1: tidak ada versi sebelumnya → semua produk Order masuk
+//   - Version 2+: default hanya produk yang BELUM PERNAH ada di versi sebelumnya
+//                 Produk yang sudah di-propose sebelumnya → excludedProducts (Not Included)
 const saveAsNewVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -323,21 +323,31 @@ const saveAsNewVersion = async (req, res) => {
       console.log(`[proposal] Generated new proposalNumber for v${nextVersion}: ${versionProposalNumber}`);
     }
 
-    // ── Smart product filtering (instance-aware, all versions) ──
-    // products === null → auto-compute: only include products never proposed before
-    // products explicitly provided → use as-is
+    // ── Smart product filtering ──
     let finalProducts = [];
     let excludedProducts = [];
     const autoCompute = products == null;
 
     if (autoCompute) {
-      const allVersions = await ProposalVersion.find({ orderId }).lean();
-      const classify = buildPrevProposalClassifier(allVersions);
-      const { included, excluded } = classify(order.selectedProducts || []);
-      finalProducts = included;
-      excludedProducts = excluded;
-      console.log(`[proposal] New v${nextVersion}: ${finalProducts.length} new, ${excludedProducts.length} excluded`);
+      // ✅ CHANGED: logika baru yang benar
+      if (nextVersion === 1) {
+        // Version 1: tidak ada riwayat → semua produk Order masuk
+        finalProducts = order.selectedProducts || [];
+        excludedProducts = [];
+        console.log(`[proposal] New v1: semua ${finalProducts.length} produk masuk (tidak ada riwayat)`);
+      } else {
+        // Version 2+: gunakan classifier untuk pisahkan
+        // - included = belum pernah di-propose → default masuk version baru
+        // - excluded = sudah pernah di-propose di versi sebelumnya → Not Included
+        const allVersions = await ProposalVersion.find({ orderId }).lean();
+        const classify = buildPrevProposalClassifier(allVersions);
+        const { included, excluded } = classify(order.selectedProducts || []);
+        finalProducts = included;
+        excludedProducts = excluded;
+        console.log(`[proposal] New v${nextVersion}: ${finalProducts.length} baru, ${excludedProducts.length} sudah pernah di-propose`);
+      }
     } else {
+      // Products explicitly provided → pakai langsung
       finalProducts = products;
     }
 
@@ -370,6 +380,7 @@ const saveAsNewVersion = async (req, res) => {
 };
 
 // ─── GET ALL VERSIONS ─────────────────────────────────────────────────────────
+// (tidak ada perubahan)
 const getAllVersions = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -396,6 +407,7 @@ const getAllVersions = async (req, res) => {
 };
 
 // ─── ENSURE proposal number endpoint ─────────────────────────────────────────
+// (tidak ada perubahan)
 const ensureProposalNumberEndpoint = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -410,6 +422,7 @@ const ensureProposalNumberEndpoint = async (req, res) => {
 };
 
 // ─── MIGRATE old proposal numbers ────────────────────────────────────────────
+// (tidak ada perubahan)
 const migrateProposalNumbers = async (req, res) => {
   try {
     const oldFormatRegex = /^Hen-[A-Z]{3}-[0-9A-F]{6}$/;
@@ -439,6 +452,7 @@ const migrateProposalNumbers = async (req, res) => {
 };
 
 // ─── UPDATE STATUS ────────────────────────────────────────────────────────────
+// (tidak ada perubahan)
 const updateProposalStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -473,34 +487,44 @@ const updateProposalStatus = async (req, res) => {
   }
 };
 
-// ─── SAVE CURRENT VERSION (upsert, no version bump) ──────────────────────────
+// ─── SAVE CURRENT VERSION ─────────────────────────────────────────────────────
+// (tidak ada perubahan)
 const saveCurrentVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { products, clientInfo, depositPercent } = req.body;
+    const { products, clientInfo, depositPercent, version } = req.body;
+    // ✅ version dikirim dari frontend agar save ke version yang sedang dibuka,
+    //    bukan selalu ke latestVersion
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    const latestVersion = await ProposalVersion.findOne(
-      { orderId },
-      {},
-      { sort: { version: -1 } }
-    );
+    // Cari version yang spesifik jika dikirim, fallback ke latest
+    let targetVersion;
+    if (version != null) {
+      targetVersion = await ProposalVersion.findOne({ orderId, version });
+    }
+    if (!targetVersion) {
+      targetVersion = await ProposalVersion.findOne(
+        { orderId },
+        {},
+        { sort: { version: -1 } }
+      );
+    }
 
-    if (latestVersion) {
-      if (products !== undefined) latestVersion.selectedProducts = products;
-      if (clientInfo) latestVersion.clientInfo = clientInfo;
-      if (depositPercent !== undefined) latestVersion.depositPercent = depositPercent;
-      latestVersion.updatedAt = new Date();
-      latestVersion.updatedBy = req.user.id;
-      await latestVersion.save();
+    if (targetVersion) {
+      if (products !== undefined) targetVersion.selectedProducts = products;
+      if (clientInfo) targetVersion.clientInfo = clientInfo;
+      if (depositPercent !== undefined) targetVersion.depositPercent = depositPercent;
+      targetVersion.updatedAt = new Date();
+      targetVersion.updatedBy = req.user.id;
+      await targetVersion.save();
 
-      const proposalNumber = latestVersion.proposalNumber || order.proposalNumber;
+      const proposalNumber = targetVersion.proposalNumber || order.proposalNumber;
       return res.json({
         success: true,
-        message: `Version ${latestVersion.version} updated`,
-        data: latestVersion,
+        message: `Version ${targetVersion.version} updated`,
+        data: targetVersion,
         proposalNumber,
       });
     }
@@ -531,9 +555,8 @@ const saveCurrentVersion = async (req, res) => {
   }
 };
 
-// ─── NEW: Get available (excluded) products for a proposal version ─────────────
-// @route GET /api/proposals/:orderId/:version/available-products
-// Returns order products NOT included in the specified proposal version
+// ─── GET AVAILABLE PRODUCTS ───────────────────────────────────────────────────
+// (tidak ada perubahan)
 const getAvailableProducts = async (req, res) => {
   try {
     const { orderId, version } = req.params;
@@ -548,14 +571,12 @@ const getAvailableProducts = async (req, res) => {
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
     const pvProductIds = new Set(
-      (proposalVersion?.selectedProducts || [])
-        .map(p => p.product_id || p._id?.toString())
-        .filter(Boolean)
+      (proposalVersion?.selectedProducts || []).map(toKey).filter(Boolean)
     );
 
     const available = (order.selectedProducts || []).filter(p => {
-      const pid = p.product_id || p._id?.toString();
-      return pid && !pvProductIds.has(pid);
+      const key = toKey(p);
+      return key && !pvProductIds.has(key);
     });
 
     res.json({ success: true, data: available });

@@ -435,6 +435,8 @@ const syncPOToQuickBooks = async (req, res) => {
 
         const desc = [
           p.name,
+          p.description                ? p.description                            : null,
+          p.selectedOptions?.vendorDescription ? p.selectedOptions.vendorDescription : null,
           p.selectedOptions?.finish   ? `Finish: ${p.selectedOptions.finish}`     : null,
           p.selectedOptions?.fabric   ? `Fabric: ${p.selectedOptions.fabric}`     : null,
           p.selectedOptions?.size     ? `Size: ${p.selectedOptions.size}`         : null,
@@ -466,7 +468,28 @@ const syncPOToQuickBooks = async (req, res) => {
       })
       .filter(Boolean);
 
-    const allLines = [...productLines, ...additionalLines];
+    const shippingAmount = round2(parseFloat(po.shipping || 0));
+    const othersAmount   = round2(parseFloat(po.others   || 0));
+
+    const poNum = po.poNumber || po._id.toString().slice(-8).toUpperCase();
+
+    const shippingLine = shippingAmount > 0 ? [{
+      description: `Shipping - ${poNum}`,   // ✅ FDI → Shipping - PO Number
+      amount:      shippingAmount,
+      qty:         1,
+      unitPrice:   shippingAmount,
+      lineType:    'FDI',
+    }] : [];
+
+    const othersLine = othersAmount > 0 ? [{
+      description: `Tax - ${poNum}`,        // ✅ Others → Tax - PO Number
+      amount:      othersAmount,
+      qty:         1,
+      unitPrice:   othersAmount,
+      lineType:    'Other',
+    }] : [];
+
+    const allLines = [...productLines, ...additionalLines, ...shippingLine, ...othersLine];
 
     if (allLines.length === 0) {
       return res.status(400).json({ message: 'PO has no billable line items' });

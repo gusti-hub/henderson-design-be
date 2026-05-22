@@ -132,18 +132,15 @@ const computeNetCost = (product) => {
 // Returns a function: classifyOrderProducts(orderProducts)
 //   → { included: [...], excluded: [...] }  where excluded items have ._prevPoNumber
 const buildPrevPoClassifier = (allVersions) => {
-  // Count total slots used per product_id across ALL versions
-  // Use the maximum count seen in ANY single version as the "per-batch" quota.
-  // Rationale: if v1 had 2x Chair and v3 had 1x Chair, the "quota" is 2 (max).
-  // This way, an order with 3x Chair → 2 go to excluded, 1 is new.
   const sorted = [...allVersions].sort((a, b) => a.version - b.version);
-
-  // slotsByKey[key] = { count: N, poNumber: '...' } — max slots in any single version
   const slotsByKey = {};
+ 
   sorted.forEach(v => {
     const countInV = {};
     (v.products || []).forEach(p => {
-      const key = (p.product_id && p.product_id !== '') ? p.product_id : ('oid::' + p._id?.toString());
+      const key = (p.product_id && p.product_id.trim() !== '')
+        ? p.product_id
+        : ('name::' + (p.name || '').trim().toLowerCase());
       countInV[key] = (countInV[key] || 0) + 1;
     });
     Object.entries(countInV).forEach(([key, cnt]) => {
@@ -152,25 +149,29 @@ const buildPrevPoClassifier = (allVersions) => {
       }
     });
   });
-
-  return function classifyOrderProducts(orderProducts) {
-    // For each product_id, consume up to slotsByKey[key].count slots as "previously ordered"
+ 
+  return function classifyProducts(orderProducts) {
     const remaining = {};
-    Object.entries(slotsByKey).forEach(([key, val]) => { remaining[key] = val.count; });
-
+    Object.entries(slotsByKey).forEach(([key, val]) => {
+      remaining[key] = val.count;
+    });
+ 
     const included = [];
     const excluded = [];
+ 
     orderProducts.forEach(p => {
-      const key = (p.product_id && p.product_id !== '') ? p.product_id : ('oid::' + p._id?.toString());
+      const key = (p.product_id && p.product_id.trim() !== '')
+        ? p.product_id
+        : ('name::' + (p.name || '').trim().toLowerCase());
+ 
       if (remaining[key] && remaining[key] > 0) {
         remaining[key]--;
-        const built = buildPoProductFromOrder(p);
-        built._prevPoNumber = slotsByKey[key].poNumber;
-        excluded.push(built);
+        excluded.push({ ...p, _prevPoNumber: slotsByKey[key].poNumber });
       } else {
-        included.push(buildPoProductFromOrder(p));
+        included.push(p);
       }
     });
+ 
     return { included, excluded };
   };
 };
@@ -807,12 +808,25 @@ const getAvailableProducts = async (req, res) => {
     const allVersions = await POVersion.find({ orderId, vendorId }).lean();
     const classify = buildPrevPoClassifier(allVersions);
     const { included: newOnes, excluded: prevOnes } = classify(vendorProducts);
-    const currentPoProductIds = new Set(
-      (poVersion?.products || []).map(p => p.product_id).filter(Boolean)
-    );
+const currentPoCount = new Map();
+    (poVersion?.products || []).forEach(p => {
+      const key = (p.product_id && p.product_id.trim() !== '')
+        ? p.product_id
+        : ('name::' + (p.name || '').trim().toLowerCase());
+      currentPoCount.set(key, (currentPoCount.get(key) || 0) + 1);
+    });
+    const currentPoRemaining = new Map(currentPoCount);
+    const isInCurrentPo = (p) => {
+      const key = (p.product_id && p.product_id.trim() !== '')
+        ? p.product_id
+        : ('name::' + (p.name || '').trim().toLowerCase());
+      const rem = currentPoRemaining.get(key) || 0;
+      if (rem > 0) { currentPoRemaining.set(key, rem - 1); return true; }
+      return false;
+    };
     const available = [
       ...prevOnes,
-      ...newOnes.filter(p => !currentPoProductIds.has(p.product_id)),
+      ...newOnes.filter(p => !isInCurrentPo(p)),
     ];
 
     res.json({ success: true, data: available });
