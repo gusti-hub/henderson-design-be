@@ -425,6 +425,15 @@ const syncPOToQuickBooks = async (req, res) => {
     const vendorName = po.vendorInfo?.name || 'Unknown Vendor';
     const vendor     = await quickbooksClient.getOrCreateVendor(vendorName);
 
+    // ✅ Tambahkan ini setelah getOrCreateVendor
+    const clientName = po.clientInfo?.name || 'Unknown Client';
+    const customer   = await quickbooksClient.getOrCreateCustomer({
+      name:       clientName,
+      email:      po.clientInfo?.email      || '',
+      unitNumber: po.clientInfo?.unitNumber || '',
+      clientCode: po.poNumber               || '',
+    });
+
     // Build product lines
     const productLines = (po.products || [])
       .map(p => {
@@ -500,11 +509,12 @@ const syncPOToQuickBooks = async (req, res) => {
       : new Date().toISOString().split('T')[0];
 
     const billPayload = {
-      vendorId:  vendor.Id,
-      docNumber: po.poNumber || po._id.toString().slice(-8).toUpperCase(),
-      date:      billDate,
-      dueDate:   billDate,
-      lines:     allLines,
+      vendorId:   vendor.Id,
+      customerId: customer.Id,   // ✅ tambahkan ini
+      docNumber:  po.poNumber || po._id.toString().slice(-8).toUpperCase(),
+      date:       billDate,
+      dueDate:    billDate,
+      lines:      allLines,
     };
 
     let qbBill;

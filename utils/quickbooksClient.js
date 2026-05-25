@@ -171,12 +171,36 @@ class QuickBooksClient {
     } catch { return null; }
   }
 
-  async getOrCreateCustomer(customerData) {
-    let customer = customerData.email ? await this.findCustomerByEmail(customerData.email) : null;
-    if (!customer) customer = await this.findCustomerByName(customerData.name);
-    if (!customer) customer = await this.createCustomer(customerData);
-    return customer;
+async getOrCreateCustomer(customerData) {
+  // 1. Cari by email dulu
+  let customer = customerData.email ? await this.findCustomerByEmail(customerData.email) : null;
+  
+  // 2. Cari by exact name
+  if (!customer) customer = await this.findCustomerByName(customerData.name);
+  
+  // 3. ✅ Fallback: cari by name dengan LIKE (partial match) jika exact gagal
+  if (!customer) {
+    try {
+      const safeName = customerData.name.trim().replace(/'/g, "\\'");
+      const response = await axios.get(`${BASE_URL}/v3/company/${this.realmId}/query`, {
+        params: { query: `SELECT * FROM Customer WHERE DisplayName LIKE '%${safeName}%' MAXRESULTS 5` },
+        headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Accept': 'application/json' },
+      });
+      const customers = response.data.QueryResponse?.Customer || [];
+      if (customers.length > 0) {
+        console.log(`QB: Customer found via LIKE search: "${customers[0].DisplayName}"`);
+        customer = customers[0];
+      }
+    } catch (err) {
+      console.warn('QB getOrCreateCustomer LIKE search error:', err.message);
+    }
   }
+
+  // 4. Kalau masih tidak ketemu, buat baru
+  if (!customer) customer = await this.createCustomer(customerData);
+  
+  return customer;
+}
 
   // ─── Invoice — CREATE ──────────────────────────────────────────────────────────
   async createInvoice(invoiceData, itemId = '3') {
@@ -397,7 +421,8 @@ async billExists(billId) {
           Qty:            qty,
           UnitPrice:      unitPrice,
           BillableStatus: 'NotBillable',
-          ...(line.classRef ? { ClassRef: { value: line.classRef } } : {}),
+          ...(billData.customerId ? { CustomerRef: { value: billData.customerId } } : {}), // ✅ tambah ini
+          ...(line.classRef       ? { ClassRef:    { value: line.classRef }       } : {}),
         },
       };
     });
@@ -426,7 +451,6 @@ async billExists(billId) {
   async updateBill(billId, billData) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
 
-    // ✅ Fetch existing untuk dapat SyncToken — QB wajib ini untuk update
     const existing = await this.getBill(billId);
 
     let lines = billData.lines.map(line => {
@@ -445,7 +469,8 @@ async billExists(billId) {
           Qty:            qty,
           UnitPrice:      unitPrice,
           BillableStatus: 'NotBillable',
-          ...(line.classRef ? { ClassRef: { value: line.classRef } } : {}),
+          ...(billData.customerId ? { CustomerRef: { value: billData.customerId } } : {}), // ✅ tambah ini
+          ...(line.classRef       ? { ClassRef:    { value: line.classRef }       } : {}),
         },
       };
     });
@@ -455,7 +480,7 @@ async billExists(billId) {
 
     const bill = {
       Id:        billId,
-      SyncToken: existing.SyncToken, // ✅ wajib untuk update
+      SyncToken: existing.SyncToken,
       sparse:    true,
       Line:      lines,
       VendorRef: { value: billData.vendorId },
