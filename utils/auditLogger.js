@@ -1,5 +1,6 @@
-// utils/auditLogger.js  v4 — with per-field diagnostic logging
+// utils/auditLogger.js  v5 — fixed _id matching + better diagnostics
 
+const mongoose    = require('mongoose');
 const OrderAuditLog = require('../models/OrderAuditLog');
 
 const FIELD_LABELS = {
@@ -101,11 +102,18 @@ const ORDER_LEVEL_FIELDS = [
   'status', 'installationDate', 'installationNotes', 'proposalNumber', 'Package',
 ];
 
+// ── FIX 1: normalize vendor correctly — populated object vs raw ObjectId ──────
+// Before: vendor populated = { _id, name } → normalize returns _id string
+// After save: vendor might be raw ObjectId string, or still populated
+// Both cases now produce the same normalized string
 const normalize = (v) => {
   if (v === undefined || v === null) return '__NULL__';
   if (typeof v === 'number' && isNaN(v)) return '__NULL__';
   if (Array.isArray(v)) return JSON.stringify(v);
   if (v && typeof v === 'object') {
+    // ObjectId instance
+    if (v instanceof mongoose.Types.ObjectId) return v.toString();
+    // Populated vendor object { _id, name }
     if (v._id) return String(v._id);
     return JSON.stringify(v);
   }
@@ -150,19 +158,6 @@ const diffFlatMaps = (before, after, productName = '') => {
   const changes = [];
   const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
 
-  // ── Diagnostic: dump specifications specifically ──────────────────────────
-  const specBefore = before['selectedOptions.specifications'];
-  const specAfter  = after['selectedOptions.specifications'];
-  if (specBefore !== specAfter) {
-    console.log(`[audit-diag] "${productName}" specifications RAW before: ${JSON.stringify(specBefore)}`);
-    console.log(`[audit-diag] "${productName}" specifications RAW after:  ${JSON.stringify(specAfter)}`);
-    console.log(`[audit-diag] "${productName}" specifications NORM before: ${normalizeField('selectedOptions.specifications', specBefore)}`);
-    console.log(`[audit-diag] "${productName}" specifications NORM after:  ${normalizeField('selectedOptions.specifications', specAfter)}`);
-  } else {
-    console.log(`[audit-diag] "${productName}" specifications identical: ${JSON.stringify(specBefore)}`);
-  }
-  // ─────────────────────────────────────────────────────────────────────────
-
   allKeys.forEach(field => {
     if (SKIP_FIELDS.has(field)) return;
     const oldNorm = normalizeField(field, before[field]);
@@ -179,29 +174,53 @@ const diffFlatMaps = (before, after, productName = '') => {
   return changes;
 };
 
+// ── FIX 2: buildProductMap — handle both ObjectId and plain string _id ────────
 const buildProductMap = (products = []) => {
   const map = new Map();
   (products || []).forEach(p => {
-    const key = p._id?.toString();
+    // _id can be: ObjectId instance, string, or undefined
+    const key = p._id
+      ? (p._id instanceof mongoose.Types.ObjectId ? p._id.toString() : String(p._id))
+      : null;
     if (key) map.set(key, p);
   });
   return map;
 };
 
+// ── FIX 3: validate performer before inserting ────────────────────────────────
+const resolvePerformerId = (performer) => {
+  const id = performer?._id || performer?.id;
+  if (!id) return null;
+  // If it's already a valid ObjectId, return as-is
+  if (mongoose.Types.ObjectId.isValid(id)) return id;
+  return null;
+};
+
 const logOrderChanges = async ({ before, after, performer }) => {
   try {
-    if (!before || !after) return;
+    if (!before || !after) {
+      console.warn('[audit] ⚠️  missing before or after snapshot — skipping');
+      return;
+    }
+
+    // ── FIX 3: validate performer _id early so insertMany doesn't fail silently
+    const performerId = resolvePerformerId(performer);
+    if (!performerId) {
+      console.error('[audit] ❌ performer._id is missing or invalid:', performer);
+      return;
+    }
 
     console.log(
       `[audit] order ${after._id} — ` +
       `before: ${before.selectedProducts?.length ?? 0} products, ` +
-      `after: ${after.selectedProducts?.length ?? 0} products`
+      `after: ${after.selectedProducts?.length ?? 0} products, ` +
+      `performer: ${performer.name} (${performerId})`
     );
 
     const logs = [];
     const base = {
       orderId:         after._id,
-      performedBy:     performer._id || performer.id,
+      performedBy:     performerId,
       performedByName: performer.name || 'Unknown',
     };
 
@@ -211,10 +230,15 @@ const logOrderChanges = async ({ before, after, performer }) => {
       const oldN = normalizeField(field, before[field]);
       const newN = normalizeField(field, after[field]);
       if (oldN === newN) return;
-      orderChanges.push({ field, label: FIELD_LABELS[field] || field, oldValue: storeValue(before[field]), newValue: storeValue(after[field]) });
+      orderChanges.push({
+        field,
+        label:    FIELD_LABELS[field] || field,
+        oldValue: storeValue(before[field]),
+        newValue: storeValue(after[field]),
+      });
     });
     if (orderChanges.length > 0) {
-      console.log(`[audit] order-level: ${orderChanges.map(c => c.field).join(', ')}`);
+      console.log(`[audit] order-level changes: ${orderChanges.map(c => c.field).join(', ')}`);
       logs.push({ ...base, action: 'order_field_changed', changes: orderChanges });
     }
 
@@ -222,25 +246,44 @@ const logOrderChanges = async ({ before, after, performer }) => {
     const beforeMap = buildProductMap(before.selectedProducts);
     const afterMap  = buildProductMap(after.selectedProducts);
 
+    console.log(`[audit] beforeMap keys: [${[...beforeMap.keys()].join(', ')}]`);
+    console.log(`[audit] afterMap keys:  [${[...afterMap.keys()].join(', ')}]`);
+
+    // Removed products
     beforeMap.forEach((product, id) => {
       if (!afterMap.has(id)) {
-        console.log(`[audit] removed: ${product.name}`);
+        console.log(`[audit] product removed: "${product.name}" (${id})`);
         logs.push({
-          ...base, action: 'product_removed', productId: id,
+          ...base,
+          action:      'product_removed',
+          productId:   id,
           productName: product.name || 'Unnamed',
-          changes: [{ field: 'product', label: 'Product', oldValue: { name: product.name, product_id: product.product_id }, newValue: null }],
+          changes: [{
+            field:    'product',
+            label:    'Product',
+            oldValue: { name: product.name, product_id: product.product_id },
+            newValue: null,
+          }],
           snapshot: null,
         });
       }
     });
 
+    // Added or edited products
     afterMap.forEach((product, id) => {
       if (!beforeMap.has(id)) {
-        console.log(`[audit] added: ${product.name}`);
+        console.log(`[audit] product added: "${product.name}" (${id})`);
         logs.push({
-          ...base, action: 'product_added', productId: id,
+          ...base,
+          action:      'product_added',
+          productId:   id,
           productName: product.name || 'Unnamed',
-          changes: [{ field: 'product', label: 'Product', oldValue: null, newValue: { name: product.name, product_id: product.product_id } }],
+          changes: [{
+            field:    'product',
+            label:    'Product',
+            oldValue: null,
+            newValue: { name: product.name, product_id: product.product_id },
+          }],
           snapshot: product,
         });
       } else {
@@ -249,24 +292,45 @@ const logOrderChanges = async ({ before, after, performer }) => {
         const changes    = diffFlatMaps(beforeFlat, afterFlat, product.name || id);
 
         if (changes.length > 0) {
-          console.log(`[audit] edited: ${product.name} — ${changes.map(c => c.field).join(', ')}`);
-          logs.push({ ...base, action: 'product_edited', productId: id, productName: product.name || 'Unnamed', changes, snapshot: product });
+          console.log(
+            `[audit] product edited: "${product.name}" — ` +
+            changes.map(c => `${c.field}: ${JSON.stringify(c.oldValue)} → ${JSON.stringify(c.newValue)}`).join(' | ')
+          );
+          logs.push({
+            ...base,
+            action:      'product_edited',
+            productId:   id,
+            productName: product.name || 'Unnamed',
+            changes,
+            snapshot:    product,
+          });
         } else {
-          console.log(`[audit] ${product.name || id} — no diff`);
+          console.log(`[audit] product "${product.name || id}" — no diff`);
         }
       }
     });
 
     // ── 3. Insert ────────────────────────────────────────────────────────────
     if (logs.length > 0) {
-      await OrderAuditLog.insertMany(logs, { ordered: false });
-      console.log(`[audit] ✅ ${logs.length} log entry(s) saved`);
+      const result = await OrderAuditLog.insertMany(logs, { ordered: false });
+      console.log(`[audit] ✅ ${result.length} log entry(s) saved`);
     } else {
       console.log(`[audit] nothing to log`);
     }
 
   } catch (err) {
+    // Show full error — including validation failures
     console.error('[audit] ❌ write failed:', err.message);
+    if (err.writeErrors) {
+      err.writeErrors.forEach((we, i) => {
+        console.error(`[audit]   writeError[${i}]:`, we.err?.errmsg || we.err?.message);
+      });
+    }
+    if (err.errors) {
+      Object.entries(err.errors).forEach(([k, v]) => {
+        console.error(`[audit]   validation[${k}]:`, v.message);
+      });
+    }
   }
 };
 

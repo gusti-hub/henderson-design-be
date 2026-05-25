@@ -85,20 +85,52 @@ const updateOrder = async (req, res) => {
  
     if (req.body.selectedProducts && Array.isArray(req.body.selectedProducts)) {
       console.log(`📦 Processing ${req.body.selectedProducts.length} products`);
- 
-      updateData.selectedProducts = req.body.selectedProducts.map(product => {
-        const cleanProduct = { ...product };
- 
-        if (product._id && typeof product._id === 'string' && product._id.startsWith('temp_')) {
-          delete cleanProduct._id;
-          console.log(`🔄 Removed temporary ID for product: ${product.name}`);
+
+      // ── Build map dari existing products di DB: index → _id ──────────────
+      // Dipakai untuk restore _id yang tidak dikirim dari frontend
+      const existingIdByIndex = new Map();
+      const existingIdByProductId = new Map();
+      (existingOrder.selectedProducts || []).forEach((p, idx) => {
+        if (p._id) {
+          existingIdByIndex.set(idx, p._id);
+          if (p.product_id) existingIdByProductId.set(p.product_id, p._id);
         }
- 
+      });
+
+      const mongoose = require('mongoose');
+
+      updateData.selectedProducts = req.body.selectedProducts.map((product, idx) => {
+        // ── Resolve _id ──────────────────────────────────────────────────────
+        // Priority:
+        // 1. _id dari frontend yang valid (bukan temp_)
+        // 2. _id dari DB di posisi index yang sama
+        // 3. _id dari DB yang match product_id
+        // 4. Generate ObjectId baru (produk benar-benar baru)
+        let resolvedId;
+
+        const isTemp = product._id && String(product._id).startsWith('temp_');
+        const hasValidId = product._id && !isTemp && mongoose.Types.ObjectId.isValid(product._id);
+
+        if (hasValidId) {
+          resolvedId = product._id;
+          console.log(`📦 [${idx}] "${product.name}" — keep existing _id`);
+        } else if (existingIdByIndex.has(idx)) {
+          resolvedId = existingIdByIndex.get(idx);
+          console.log(`📦 [${idx}] "${product.name}" — restore _id from index`);
+        } else if (product.product_id && existingIdByProductId.has(product.product_id)) {
+          resolvedId = existingIdByProductId.get(product.product_id);
+          console.log(`📦 [${idx}] "${product.name}" — restore _id from product_id`);
+        } else {
+          resolvedId = new mongoose.Types.ObjectId();
+          console.log(`📦 [${idx}] "${product.name}" — new product, generated _id`);
+        }
+
         return {
-          ...(cleanProduct._id && { _id: cleanProduct._id }),
+          _id: resolvedId,  // ← selalu ada sekarang
           product_id: product.product_id,
           name: product.name,
           category: product.category,
+          package: product.package || '',
           spotName: product.spotName,
           quantity: product.quantity || 1,
           unitPrice: product.unitPrice || 0,
@@ -106,6 +138,7 @@ const updateOrder = async (req, res) => {
           vendor: product.vendor || null,
           sourceType: product.sourceType || 'manual',
           isEditable: product.isEditable !== undefined ? product.isEditable : true,
+          libraryProductId: product.libraryProductId || null,
           selectedOptions: {
             sidemark:           product.selectedOptions?.sidemark           || '',
             group:              product.selectedOptions?.group              || '',
@@ -165,12 +198,12 @@ const updateOrder = async (req, res) => {
             depositPercent:         product.selectedOptions?.depositPercent         || 0,
             vendorDepositPercent:   product.selectedOptions?.vendorDepositPercent   || 0,
             salesTaxRate:           product.selectedOptions?.salesTaxRate           || 0,
-            taxableCost:             product.selectedOptions?.taxableCost             !== false,
-            taxableMarkup:           product.selectedOptions?.taxableMarkup           !== false,
-            taxableShippingCost:     product.selectedOptions?.taxableShippingCost     !== false,
-            taxableShippingMarkup:   product.selectedOptions?.taxableShippingMarkup   !== false,
-            taxableOtherCost:        product.selectedOptions?.taxableOtherCost        !== false,
-            taxableOtherMarkup:      product.selectedOptions?.taxableOtherMarkup      !== false,
+            taxableCost:            product.selectedOptions?.taxableCost            !== false,
+            taxableMarkup:          product.selectedOptions?.taxableMarkup          !== false,
+            taxableShippingCost:    product.selectedOptions?.taxableShippingCost    !== false,
+            taxableShippingMarkup:  product.selectedOptions?.taxableShippingMarkup  !== false,
+            taxableOtherCost:       product.selectedOptions?.taxableOtherCost       !== false,
+            taxableOtherMarkup:     product.selectedOptions?.taxableOtherMarkup     !== false,
             uploadedImages: (product.selectedOptions?.uploadedImages || []).map(img => ({
               filename:    img.filename    || '',
               contentType: img.contentType || '',
@@ -215,21 +248,23 @@ const updateOrder = async (req, res) => {
     console.log(`✅ Order updated successfully`);
     console.log(`📦 Final selectedProducts count: ${updatedOrder.selectedProducts?.length || 0}`);
  
-    // ✅ AUDIT STEP 2: populate vendor dulu sebelum snapshot after
-    await updatedOrder.populate({ path: 'selectedProducts.vendor', select: 'name' });
- 
-    // ✅ AUDIT STEP 3: snapshot SETELAH save + log changes async
-    const afterSnapshot = updatedOrder.toObject();
+    // ── AUDIT ────────────────────────────────────────────────────────────────
     const performer = {
-      _id:  req.user.id  || req.user._id,
-      name: req.user.name || req.user.email || 'Unknown',
+      _id:  req.user?._id || req.user?.id,
+      name: req.user?.name || req.user?.email || 'Unknown',
     };
- 
-    console.log(`[audit] queuing diff for order ${updatedOrder._id}, performer: ${performer.name}`);
- 
+
+    // Fetch fresh dari DB — _id subdokumen pasti ada dan benar
+    const freshForAudit = await Order.findById(updatedOrder._id)
+      .populate({ path: 'selectedProducts.vendor', select: 'name' })
+      .lean();
+
+    console.log(`[audit] queuing for order ${updatedOrder._id}, performer: ${performer.name}`);
+
     setImmediate(() => {
-      logOrderChanges({ before: beforeSnapshot, after: afterSnapshot, performer })
-        .catch(err => console.error('[audit] background log failed:', err.message));
+      logOrderChanges({ before: beforeSnapshot, after: freshForAudit, performer })
+        .then(() => console.log('[audit] ✅ done'))
+        .catch(err => console.error('[audit] ❌ failed:', err.message));
     });
  
     // Email logic (unchanged)
