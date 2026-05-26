@@ -484,5 +484,38 @@ userSchema.methods.getInvoicesByStep = function(stepNumber) {
   return this.invoices.filter(inv => inv.stepNumber === stepNumber);
 };
 
+// ── Project Summary (admin-configurable estimated remaining costs) ──
+userSchema.add({
+  projectSummary: {
+    statementDate: { type: Date, default: null },
+    proposalLabel: { type: String, default: '' },
+    estimatedRemainingCosts: {
+      accentsAllowance:        { type: Number, default: 0 },
+      closetSystemsAllowance:  { type: Number, default: 0 },
+      windowCoveringsAllowance:{ type: Number, default: 0 },
+      fdiAllowance:            { type: Number, default: 0 },
+      otherEstimatedItems:     { type: Number, default: 0 }
+    },
+    notes: { type: String, default: '' }
+  }
+});
+
+userSchema.methods.getPaymentSummary = function () {
+  const totalAmount            = this.paymentInfo?.totalAmount || 0;
+  const downPaymentPercentage  = this.paymentInfo?.downPaymentPercentage || 30;
+  const amountPaid             = this.paymentInfo?.amountPaid || 0;
+  const requiredDownPayment    = totalAmount * (downPaymentPercentage / 100);
+
+  return {
+    totalAmount,
+    downPaymentPercentage,
+    requiredDownPayment,
+    paidDownPayment:       amountPaid,
+    remainingDownPayment:  Math.max(0, requiredDownPayment - amountPaid),
+    remainingBalance:      Math.max(0, totalAmount - amountPaid),
+    status:                this.paymentInfo?.downPaymentStatus || 'not-paid'
+  };
+};
+
 userSchema.set('autoIndex', false);
 module.exports = mongoose.model('User', userSchema);

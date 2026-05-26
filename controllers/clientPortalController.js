@@ -1,6 +1,8 @@
 const User = require('../models/User');
 const MeetingSchedule = require('../models/MeetingSchedule');
 const Questionnaire = require('../models/ClientQuestionnaire');
+const Order = require('../models/Order');
+const ProposalVersion = require('../models/ProposalVersion');
 const sendEmail = require('../utils/sendEmail');
 const { 
   meetingRequestTemplate, 
@@ -439,10 +441,140 @@ const getMeeting = async (req, res) => {
   }
 };
 
+// Public: GET /api/clients-portal/project-summary?email=x&unitNumber=y
+const getProjectSummary = async (req, res) => {
+  try {
+    const { email, unitNumber } = req.query;
+
+    if (!email || !unitNumber) {
+      return res.status(400).json({ message: 'Email and unit number are required' });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase(), unitNumber });
+    if (!user) {
+      return res.status(404).json({ message: 'No account found with this email and unit number' });
+    }
+
+    if (user.status !== 'approved') {
+      return res.status(403).json({ message: 'Account not yet approved' });
+    }
+
+    // ── Payment / Collection figures (Section 1) ──────────────────
+    const totalAmount           = user.paymentInfo?.totalAmount || 0;
+    const depositPct            = user.paymentInfo?.downPaymentPercentage || 30;
+    const depositReceived       = user.paymentInfo?.amountPaid || 0;
+    const remainingOrigBalance  = Math.max(0, totalAmount - depositReceived);
+
+    // ── Approved proposal (Section 2) ────────────────────────────
+    const order = await Order.findOne({ user: user._id }).select('_id proposalNumber');
+    let approvedTotalToDate = 0;
+    let proposalLabel = user.projectSummary?.proposalLabel || '';
+
+    if (order) {
+      const latestProposal = await ProposalVersion
+        .findOne({ orderId: order._id, status: { $in: ['sent', 'approved'] } })
+        .sort({ version: -1 })
+        .select('totals version proposalNumber');
+
+      if (latestProposal) {
+        approvedTotalToDate = latestProposal.totals?.total || 0;
+        if (!proposalLabel) {
+          proposalLabel = `Proposal ${latestProposal.version} – Furnishings + Design Fee + Approved Revisions`;
+        }
+      }
+    }
+
+    // ── Payments received against invoices (Section 2) ───────────
+    const paymentsReceived = (user.invoices || [])
+      .filter(inv => inv.paid)
+      .reduce((sum, inv) => sum + (inv.paidAmount || inv.amount || 0), 0);
+
+    const outstandingBalance = Math.max(0, approvedTotalToDate - paymentsReceived);
+
+    // ── Estimated remaining costs (Section 3) ────────────────────
+    const est = user.projectSummary?.estimatedRemainingCosts || {};
+    const accentsAllowance         = est.accentsAllowance         || 0;
+    const closetSystemsAllowance   = est.closetSystemsAllowance   || 0;
+    const windowCoveringsAllowance = est.windowCoveringsAllowance || 0;
+    const fdiAllowance             = est.fdiAllowance             || 0;
+    const otherEstimatedItems      = est.otherEstimatedItems      || 0;
+    const totalEstimatedRemaining  =
+      accentsAllowance + closetSystemsAllowance + windowCoveringsAllowance +
+      fdiAllowance + otherEstimatedItems;
+
+    // ── Section 4 totals ─────────────────────────────────────────
+    const estimatedFinalInvestment = approvedTotalToDate + totalEstimatedRemaining;
+
+    // ── Project advisor ───────────────────────────────────────────
+    const ta = user.teamAssignment || {};
+    const projectAdvisor =
+      ta.designer || ta.projectManager || 'Henderson Design Group';
+
+    // ── Collection label ──────────────────────────────────────────
+    const bedroomLabel = user.bedroomCount
+      ? `${user.bedroomCount} Bedroom`
+      : '';
+    const collectionLabel = [user.collection, bedroomLabel].filter(Boolean).join(' – ');
+
+    res.json({
+      success: true,
+      summary: {
+        statementDate: user.projectSummary?.statementDate || new Date(),
+        notes: user.projectSummary?.notes || '',
+        client: {
+          name: user.name,
+          unitNumber: user.unitNumber,
+          collection: collectionLabel || user.collection || '',
+          floorPlan: user.floorPlan || '',
+          projectAdvisor: 'Henderson Design Group',
+          designerName: projectAdvisor
+        },
+        section1: {
+          originalCollectionInvestment: totalAmount,
+          depositPercentage: depositPct,
+          depositReceived,
+          remainingOriginalBalance: remainingOrigBalance
+        },
+        section2: {
+          proposalLabel,
+          approvedTotalToDate,
+          paymentsReceived,
+          outstandingBalance
+        },
+        section3: {
+          accentsAllowance,
+          closetSystemsAllowance,
+          windowCoveringsAllowance,
+          fdiAllowance,
+          otherEstimatedItems,
+          totalEstimatedRemaining
+        },
+        section4: {
+          approvedCostsToDate: approvedTotalToDate,
+          estimatedRemainingCosts: totalEstimatedRemaining,
+          estimatedFinalProjectInvestment: estimatedFinalInvestment
+        },
+        outlook: {
+          originalPackageInvestment: totalAmount,
+          approvedCostsToDate: approvedTotalToDate,
+          estimatedRemainingCosts: totalEstimatedRemaining,
+          estimatedFinalProjectInvestment: estimatedFinalInvestment,
+          depositHeldOnAccount: depositReceived
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('getProjectSummary error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load project summary' });
+  }
+};
+
 module.exports = {
   verifyDownPayment,
   scheduleMeeting,
   updateMeeting,
   cancelMeeting,
-  getMeeting
+  getMeeting,
+  getProjectSummary
 };

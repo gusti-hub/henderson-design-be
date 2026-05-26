@@ -1547,6 +1547,51 @@ const exportClientsToExcel = async (req, res) => {
   }
 };
 
+// @desc    Update project summary estimated costs (admin only)
+// @route   PUT /api/clients/:id/project-summary
+// @access  Private (Admin)
+const updateProjectSummary = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      statementDate,
+      proposalLabel,
+      accentsAllowance,
+      closetSystemsAllowance,
+      windowCoveringsAllowance,
+      fdiAllowance,
+      otherEstimatedItems,
+      notes
+    } = req.body;
+
+    const update = {
+      'projectSummary.statementDate':                             statementDate || new Date(),
+      'projectSummary.proposalLabel':                            proposalLabel || '',
+      'projectSummary.estimatedRemainingCosts.accentsAllowance':        Number(accentsAllowance)         || 0,
+      'projectSummary.estimatedRemainingCosts.closetSystemsAllowance':  Number(closetSystemsAllowance)   || 0,
+      'projectSummary.estimatedRemainingCosts.windowCoveringsAllowance':Number(windowCoveringsAllowance) || 0,
+      'projectSummary.estimatedRemainingCosts.fdiAllowance':            Number(fdiAllowance)             || 0,
+      'projectSummary.estimatedRemainingCosts.otherEstimatedItems':     Number(otherEstimatedItems)      || 0,
+      'projectSummary.notes':                                    notes || ''
+    };
+
+    const client = await User.findByIdAndUpdate(
+      id,
+      { $set: update },
+      { new: true, runValidators: false }
+    ).select('name unitNumber projectSummary');
+
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    res.json({ success: true, message: 'Project summary updated', projectSummary: client.projectSummary });
+  } catch (error) {
+    console.error('updateProjectSummary error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update project summary', error: error.message });
+  }
+};
+
 module.exports = {
   getAllClients,
   getPendingClients,
@@ -1560,5 +1605,6 @@ module.exports = {
   deleteClient,
   getClientStats,
   recordPayment,
-  exportClientsToExcel
+  exportClientsToExcel,
+  updateProjectSummary
 };

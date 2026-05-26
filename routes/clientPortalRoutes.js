@@ -1,11 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { 
-  verifyDownPayment, 
+const {
+  verifyDownPayment,
   scheduleMeeting,
-  updateMeeting,      // ✅ NEW
-  cancelMeeting,      // ✅ NEW  
-  getMeeting          // ✅ NEW
+  updateMeeting,
+  cancelMeeting,
+  getMeeting,
+  getProjectSummary
 } = require('../controllers/clientPortalController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -13,6 +14,7 @@ const { protect, authorize } = require('../middleware/auth');
 router.post('/verify-down-payment', verifyDownPayment);
 router.post('/schedule-meeting', scheduleMeeting);
 router.get('/meeting/:meetingId', getMeeting);
+router.get('/project-summary', getProjectSummary);
 
 // Protected routes (Admin/Designer only)
 router.put('/update-meeting/:meetingId', protect, authorize('admin', 'designer'), updateMeeting);

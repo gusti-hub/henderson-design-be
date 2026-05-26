@@ -13,7 +13,8 @@ const {
   deleteClient,
   getClientStats,
   recordPayment,
-  exportClientsToExcel
+  exportClientsToExcel,
+  updateProjectSummary
 } = require('../controllers/clientController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -29,6 +30,7 @@ router.get('/',  protect, authorize('admin'), getAllClients);
 router.post('/', protect, authorize('admin'), createClient);
 
 router.post('/:id/record-payment', protect, authorize('admin'), recordPayment);
+router.put('/:id/project-summary', protect, authorize('admin'), updateProjectSummary);
 
 // Parameterized routes PALING BAWAH
 router.route('/:id')
