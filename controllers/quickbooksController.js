@@ -12,19 +12,32 @@ const crypto  = require('crypto');
 const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
 const SERVICE_TYPE_ITEM_MAP = {
-  'decommission':    '5',   // Other
-  'procurement':     '3',   // Product
-  'design_pm':       '7',   // Design Fees
-  'engagement_fee':  '11',  // Project Management Fees
-  'admin':           '7',   // Design Fees
-  'business_dev':    '7',   // Design Fees
-  'design_services': '7',   // Design Fees
-  'finance':         '7',   // Design Fees
-  'holiday':         '2',   // Hours
-  'installation':    '4',   // FDI
-  'travel':          '6',   // Reimbursable
-  'products':        '3', 
-  'default':         '3',   // Product
+  // ✅ Key pakai label/desc yang sama dengan yang diinput di FE
+  'Decommission':                    '5',
+  'Procurement':                     '3',
+  'Design & Project Management Fees':'7',
+  'Engagement Fee':                  '11',
+  'Admin':                           '7',
+  'Business Development':            '7',
+  'Design Services':                 '7',
+  'Finance':                         '7',
+  'Holiday':                         '2',
+  'Installation':                    '4',
+  'Travel & Expenses':               '6',
+  'Products':                        '3',
+  // QB item names langsung
+  'Design Fees':                     '7',
+  'Hours':                           '2',
+  'FDI':                             '4',
+  'FDI-Vendor':                      '12',
+  'Other':                           '5',
+  'Reimbursable':                    '6',
+  'Project Management Fees':         '11',
+  'Sales':                           '1',
+  'Indonesia':                       '10',
+  'Bad Debts':                       '13',
+  'Product':                         '3',
+  'default':                         '3',
 };
 
 const oauthStates = new Map();
@@ -332,6 +345,10 @@ const syncExpenseToQuickBooks = async (req, res) => {
 
       const parts = [];
       if (line.description) parts.push(line.description);
+
+      const svcType    = line.serviceType || 'default';
+      const lineItemId = SERVICE_TYPE_ITEM_MAP[svcType] || SERVICE_TYPE_ITEM_MAP['default'];
+      const lineName   = svcType;
 
       lines.push({
         description: parts.filter(Boolean).join(' — '),

@@ -302,7 +302,7 @@ async billExists(billId) {
         const unitPrice  = round2(line.unitPrice || 0);
         const amount     = round2(unitPrice * qty);
         // ✅ Pakai lineItemId dari line jika ada, fallback ke itemId parameter
-        const resolvedId = line.lineItemId || itemId;
+        const resolvedId = line.lineItemId || itemId || '3';
         const lineName   = line.lineName   || 'Product';
 
         return {
