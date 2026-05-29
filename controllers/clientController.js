@@ -1560,19 +1560,21 @@ const updateProjectSummary = async (req, res) => {
       closetSystemsAllowance,
       windowCoveringsAllowance,
       fdiAllowance,
-      otherEstimatedItems,
+      avCost,
+      additionalServices,
       notes
     } = req.body;
 
     const update = {
-      'projectSummary.statementDate':                             statementDate || new Date(),
-      'projectSummary.proposalLabel':                            proposalLabel || '',
-      'projectSummary.estimatedRemainingCosts.accentsAllowance':        Number(accentsAllowance)         || 0,
-      'projectSummary.estimatedRemainingCosts.closetSystemsAllowance':  Number(closetSystemsAllowance)   || 0,
-      'projectSummary.estimatedRemainingCosts.windowCoveringsAllowance':Number(windowCoveringsAllowance) || 0,
-      'projectSummary.estimatedRemainingCosts.fdiAllowance':            Number(fdiAllowance)             || 0,
-      'projectSummary.estimatedRemainingCosts.otherEstimatedItems':     Number(otherEstimatedItems)      || 0,
-      'projectSummary.notes':                                    notes || ''
+      'projectSummary.statementDate':                                    statementDate || new Date(),
+      'projectSummary.proposalLabel':                                    proposalLabel || '',
+      'projectSummary.estimatedRemainingCosts.accentsAllowance':         Number(accentsAllowance)         || 0,
+      'projectSummary.estimatedRemainingCosts.closetSystemsAllowance':   Number(closetSystemsAllowance)   || 0,
+      'projectSummary.estimatedRemainingCosts.windowCoveringsAllowance': Number(windowCoveringsAllowance) || 0,
+      'projectSummary.estimatedRemainingCosts.fdiAllowance':             Number(fdiAllowance)             || 0,
+      'projectSummary.estimatedRemainingCosts.avCost':                   Number(avCost)                   || 0,
+      'projectSummary.estimatedRemainingCosts.additionalServices':       Number(additionalServices)        || 0,
+      'projectSummary.notes':                                            notes || ''
     };
 
     const client = await User.findByIdAndUpdate(

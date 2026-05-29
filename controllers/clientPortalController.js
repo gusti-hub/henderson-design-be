@@ -497,10 +497,11 @@ const getProjectSummary = async (req, res) => {
     const closetSystemsAllowance   = est.closetSystemsAllowance   || 0;
     const windowCoveringsAllowance = est.windowCoveringsAllowance || 0;
     const fdiAllowance             = est.fdiAllowance             || 0;
-    const otherEstimatedItems      = est.otherEstimatedItems      || 0;
+    const avCost                   = est.avCost                   || 0;
+    const additionalServices       = est.additionalServices       || 0;
     const totalEstimatedRemaining  =
       accentsAllowance + closetSystemsAllowance + windowCoveringsAllowance +
-      fdiAllowance + otherEstimatedItems;
+      fdiAllowance + avCost + additionalServices;
 
     // ── Section 4 totals ─────────────────────────────────────────
     const estimatedFinalInvestment = approvedTotalToDate + totalEstimatedRemaining;
@@ -546,7 +547,8 @@ const getProjectSummary = async (req, res) => {
           closetSystemsAllowance,
           windowCoveringsAllowance,
           fdiAllowance,
-          otherEstimatedItems,
+          avCost,
+          additionalServices,
           totalEstimatedRemaining
         },
         section4: {

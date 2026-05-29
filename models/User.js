@@ -494,7 +494,8 @@ userSchema.add({
       closetSystemsAllowance:  { type: Number, default: 0 },
       windowCoveringsAllowance:{ type: Number, default: 0 },
       fdiAllowance:            { type: Number, default: 0 },
-      otherEstimatedItems:     { type: Number, default: 0 }
+      avCost:                  { type: Number, default: 0 },
+      additionalServices:      { type: Number, default: 0 },
     },
     notes: { type: String, default: '' }
   }

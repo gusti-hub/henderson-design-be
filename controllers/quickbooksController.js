@@ -685,33 +685,29 @@ const syncProposalToQuickBooks = async (req, res) => {
 const getLatestConfirmedPOs = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const confirmed = await POVersion.aggregate([
-      { $match: { orderId: require('mongoose').Types.ObjectId.createFromHexString(orderId), status: 'confirmed' } },
-      { $sort: { vendorId: 1, version: -1 } },
-      { $group: {
-          _id:                '$vendorId',
-          poVersionId:        { $first: '$_id' },
-          poNumber:           { $first: '$poNumber' },
-          vendorName:         { $first: '$vendorInfo.name' },
-          quickbooksId:       { $first: '$quickbooksId' },
-          quickbooksSyncedAt: { $first: '$quickbooksSyncedAt' },
-          quickbooksStatus:   { $first: '$quickbooksStatus' },
-      }},
-    ]);
+    const mongoose = require('mongoose');
+    const oid = mongoose.Types.ObjectId.createFromHexString(orderId);
+
+    const confirmed = await POVersion.find(
+      { orderId: oid, status: 'confirmed' },
+      { _id: 1, poNumber: 1, version: 1, vendorId: 1, 'vendorInfo.name': 1,
+        quickbooksId: 1, quickbooksSyncedAt: 1, quickbooksStatus: 1 }
+    ).sort({ 'vendorInfo.name': 1, version: -1 }).lean();
 
     if (!confirmed.length) return res.status(404).json({ message: 'No confirmed POs found for this order' });
 
     res.json({
       success:      true,
-      poVersionIds: confirmed.map(c => c.poVersionId.toString()),
+      poVersionIds: confirmed.map(c => c._id.toString()),
       details:      confirmed.map(c => ({
-        poVersionId:        c.poVersionId,
+        poVersionId:        c._id,
         poNumber:           c.poNumber,
-        vendorId:           c._id,
-        vendorName:         c.vendorName,
-        quickbooksId:       c.quickbooksId       || null,
-        quickbooksSyncedAt: c.quickbooksSyncedAt || null,
-        quickbooksStatus:   c.quickbooksStatus   || null,
+        version:            c.version,
+        vendorId:           c.vendorId,
+        vendorName:         c.vendorInfo?.name    || 'Unknown Vendor',
+        quickbooksId:       c.quickbooksId        || null,
+        quickbooksSyncedAt: c.quickbooksSyncedAt  || null,
+        quickbooksStatus:   c.quickbooksStatus    || null,
       })),
     });
   } catch (error) {
@@ -774,21 +770,11 @@ const getProjectFinanceSummary = async (req, res) => {
       { sort: { version: -1 } }
     ).lean();
 
-    const poVendors = await POVersion.aggregate([
-      { $match: { orderId: oid } },
-      { $sort: { vendorId: 1, version: -1 } },
-      { $group: {
-          _id:                '$vendorId',
-          poVersionId:        { $first: '$_id' },
-          poNumber:           { $first: '$poNumber' },
-          vendorName:         { $first: '$vendorInfo.name' },
-          status:             { $first: '$status' },
-          quickbooksId:       { $first: '$quickbooksId' },
-          quickbooksSyncedAt: { $first: '$quickbooksSyncedAt' },
-          quickbooksStatus:   { $first: '$quickbooksStatus' },
-      }},
-      { $sort: { vendorName: 1 } },
-    ]);
+    const allVersionsFlat = await POVersion.find(
+      { orderId: oid },
+      { _id: 1, poNumber: 1, version: 1, vendorId: 1, 'vendorInfo.name': 1,
+        status: 1, quickbooksId: 1, quickbooksSyncedAt: 1, quickbooksStatus: 1 }
+    ).sort({ 'vendorInfo.name': 1, version: -1 }).lean();
 
     res.json({
       success: true,
@@ -797,11 +783,23 @@ const getProjectFinanceSummary = async (req, res) => {
         status:    latestProposal.status,
         createdAt: latestProposal.createdAt,
       } : null,
-      poVendors: poVendors.map(v => ({
-        poVersionId:        v.poVersionId,
+      poVendors:       allVersionsFlat.map(v => ({
+        poVersionId:        v._id,
         poNumber:           v.poNumber           || '',
-        vendorId:           v._id,
-        vendorName:         v.vendorName         || 'Unknown Vendor',
+        version:            v.version,
+        vendorId:           v.vendorId,
+        vendorName:         v.vendorInfo?.name   || 'Unknown Vendor',
+        status:             v.status             || 'draft',
+        quickbooksId:       v.quickbooksId       || null,
+        quickbooksSyncedAt: v.quickbooksSyncedAt || null,
+        quickbooksStatus:   v.quickbooksStatus   || null,
+      })),
+      allVersionsFlat: allVersionsFlat.map(v => ({
+        poVersionId:        v._id,
+        poNumber:           v.poNumber           || '',
+        version:            v.version,
+        vendorId:           v.vendorId,
+        vendorName:         v.vendorInfo?.name   || 'Unknown Vendor',
         status:             v.status             || 'draft',
         quickbooksId:       v.quickbooksId       || null,
         quickbooksSyncedAt: v.quickbooksSyncedAt || null,
