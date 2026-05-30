@@ -459,37 +459,19 @@ const getProjectSummary = async (req, res) => {
       return res.status(403).json({ message: 'Account not yet approved' });
     }
 
-    // ── Payment / Collection figures (Section 1) ──────────────────
-    const totalAmount           = user.paymentInfo?.totalAmount || 0;
+    // ── Original Collection figures (Section 1) — manual input ────
+    const oc                    = user.projectSummary?.originalCollection || {};
+    const totalAmount           = oc.originalCollectionInvestment || 0;
     const depositPct            = user.paymentInfo?.downPaymentPercentage || 30;
-    const depositReceived       = user.paymentInfo?.amountPaid || 0;
+    const depositReceived       = oc.depositReceived || 0;
     const remainingOrigBalance  = Math.max(0, totalAmount - depositReceived);
 
-    // ── Approved proposal (Section 2) ────────────────────────────
-    const order = await Order.findOne({ user: user._id }).select('_id proposalNumber');
-    let approvedTotalToDate = 0;
-    let proposalLabel = user.projectSummary?.proposalLabel || '';
-
-    if (order) {
-      const latestProposal = await ProposalVersion
-        .findOne({ orderId: order._id, status: { $in: ['sent', 'approved'] } })
-        .sort({ version: -1 })
-        .select('totals version proposalNumber');
-
-      if (latestProposal) {
-        approvedTotalToDate = latestProposal.totals?.total || 0;
-        if (!proposalLabel) {
-          proposalLabel = `Proposal ${latestProposal.version} – Furnishings + Design Fee + Approved Revisions`;
-        }
-      }
-    }
-
-    // ── Payments received against invoices (Section 2) ───────────
-    const paymentsReceived = (user.invoices || [])
-      .filter(inv => inv.paid)
-      .reduce((sum, inv) => sum + (inv.paidAmount || inv.amount || 0), 0);
-
-    const outstandingBalance = Math.max(0, approvedTotalToDate - paymentsReceived);
+    // ── Current Project Status (Section 2) — manual input ─────────
+    const cstat              = user.projectSummary?.currentStatus || {};
+    const approvedTotalToDate = cstat.approvedTotalToDate || 0;
+    const paymentsReceived    = cstat.paymentsReceived    || 0;
+    const proposalLabel       = user.projectSummary?.proposalLabel || '';
+    const outstandingBalance  = Math.max(0, approvedTotalToDate - paymentsReceived);
 
     // ── Estimated remaining costs (Section 3) ────────────────────
     const est = user.projectSummary?.estimatedRemainingCosts || {};

@@ -489,6 +489,14 @@ userSchema.add({
   projectSummary: {
     statementDate: { type: Date, default: null },
     proposalLabel: { type: String, default: '' },
+    originalCollection: {
+      originalCollectionInvestment: { type: Number, default: 0 },
+      depositReceived:              { type: Number, default: 0 },
+    },
+    currentStatus: {
+      approvedTotalToDate: { type: Number, default: 0 },
+      paymentsReceived:    { type: Number, default: 0 },
+    },
     estimatedRemainingCosts: {
       accentsAllowance:        { type: Number, default: 0 },
       closetSystemsAllowance:  { type: Number, default: 0 },

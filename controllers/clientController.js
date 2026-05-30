@@ -1556,6 +1556,10 @@ const updateProjectSummary = async (req, res) => {
     const {
       statementDate,
       proposalLabel,
+      originalCollectionInvestment,
+      depositReceived,
+      approvedTotalToDate,
+      paymentsReceived,
       accentsAllowance,
       closetSystemsAllowance,
       windowCoveringsAllowance,
@@ -1568,6 +1572,10 @@ const updateProjectSummary = async (req, res) => {
     const update = {
       'projectSummary.statementDate':                                    statementDate || new Date(),
       'projectSummary.proposalLabel':                                    proposalLabel || '',
+      'projectSummary.originalCollection.originalCollectionInvestment':  Number(originalCollectionInvestment) || 0,
+      'projectSummary.originalCollection.depositReceived':              Number(depositReceived)              || 0,
+      'projectSummary.currentStatus.approvedTotalToDate':               Number(approvedTotalToDate)          || 0,
+      'projectSummary.currentStatus.paymentsReceived':                  Number(paymentsReceived)             || 0,
       'projectSummary.estimatedRemainingCosts.accentsAllowance':         Number(accentsAllowance)         || 0,
       'projectSummary.estimatedRemainingCosts.closetSystemsAllowance':   Number(closetSystemsAllowance)   || 0,
       'projectSummary.estimatedRemainingCosts.windowCoveringsAllowance': Number(windowCoveringsAllowance) || 0,
