@@ -502,6 +502,7 @@ const getProjectSummary = async (req, res) => {
     res.json({
       success: true,
       summary: {
+        published: user.projectSummary?.published === true,
         statementDate: user.projectSummary?.statementDate || new Date(),
         notes: user.projectSummary?.notes || '',
         client: {

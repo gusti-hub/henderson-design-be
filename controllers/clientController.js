@@ -1554,6 +1554,7 @@ const updateProjectSummary = async (req, res) => {
   try {
     const { id } = req.params;
     const {
+      published,
       statementDate,
       proposalLabel,
       originalCollectionInvestment,
@@ -1570,6 +1571,7 @@ const updateProjectSummary = async (req, res) => {
     } = req.body;
 
     const update = {
+      'projectSummary.published':                                        published === true,
       'projectSummary.statementDate':                                    statementDate || new Date(),
       'projectSummary.proposalLabel':                                    proposalLabel || '',
       'projectSummary.originalCollection.originalCollectionInvestment':  Number(originalCollectionInvestment) || 0,

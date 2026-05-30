@@ -487,6 +487,7 @@ userSchema.methods.getInvoicesByStep = function(stepNumber) {
 // ── Project Summary (admin-configurable estimated remaining costs) ──
 userSchema.add({
   projectSummary: {
+    published: { type: Boolean, default: false },
     statementDate: { type: Date, default: null },
     proposalLabel: { type: String, default: '' },
     originalCollection: {
