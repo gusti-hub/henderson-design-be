@@ -99,31 +99,40 @@ const updateOrder = async (req, res) => {
 
       const mongoose = require('mongoose');
 
+      // Cegah _id ganda dalam satu order. Duplikasi produk yang SAMA tetap diperbolehkan —
+      // tiap baris hanya dijamin punya _id yang UNIK. Inilah yang menutup bug field-ketukar
+      // & duplikat-saat-edit (yang berakar dari dua baris berbagi _id yang sama).
+      const usedIds = new Set();
+      const isFree = (id) => id && !usedIds.has(String(id));
+
       updateData.selectedProducts = req.body.selectedProducts.map((product, idx) => {
         // ── Resolve _id ──────────────────────────────────────────────────────
-        // Priority:
+        // Priority (selalu lewati _id yang sudah terpakai di order ini → unik):
         // 1. _id dari frontend yang valid (bukan temp_)
         // 2. _id dari DB di posisi index yang sama
         // 3. _id dari DB yang match product_id
-        // 4. Generate ObjectId baru (produk benar-benar baru)
+        // 4. Generate ObjectId baru (produk baru ATAU duplikat dari produk yang sama)
         let resolvedId;
 
         const isTemp = product._id && String(product._id).startsWith('temp_');
         const hasValidId = product._id && !isTemp && mongoose.Types.ObjectId.isValid(product._id);
+        const candidateFromIndex = existingIdByIndex.get(idx);
+        const candidateFromPid    = product.product_id ? existingIdByProductId.get(product.product_id) : null;
 
-        if (hasValidId) {
+        if (hasValidId && isFree(product._id)) {
           resolvedId = product._id;
           console.log(`📦 [${idx}] "${product.name}" — keep existing _id`);
-        } else if (existingIdByIndex.has(idx)) {
-          resolvedId = existingIdByIndex.get(idx);
+        } else if (isFree(candidateFromIndex)) {
+          resolvedId = candidateFromIndex;
           console.log(`📦 [${idx}] "${product.name}" — restore _id from index`);
-        } else if (product.product_id && existingIdByProductId.has(product.product_id)) {
-          resolvedId = existingIdByProductId.get(product.product_id);
+        } else if (isFree(candidateFromPid)) {
+          resolvedId = candidateFromPid;
           console.log(`📦 [${idx}] "${product.name}" — restore _id from product_id`);
         } else {
           resolvedId = new mongoose.Types.ObjectId();
-          console.log(`📦 [${idx}] "${product.name}" — new product, generated _id`);
+          console.log(`📦 [${idx}] "${product.name}" — new/duplicate product, generated unique _id`);
         }
+        usedIds.add(String(resolvedId));
 
         return {
           _id: resolvedId,  // ← selalu ada sekarang
@@ -155,6 +164,7 @@ const updateOrder = async (req, res) => {
             links:              product.selectedOptions?.links              || [],
             specifications:     product.selectedOptions?.specifications     || '',
             notes:              product.selectedOptions?.notes              || '',
+            itemNotes:          product.selectedOptions?.itemNotes          || '',
             shipToVendorId:     product.selectedOptions?.shipToVendorId     || null,
             shipToName:         product.selectedOptions?.shipToName         || '',
             shippingStreet:     product.selectedOptions?.shippingStreet     || '',

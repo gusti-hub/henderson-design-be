@@ -124,7 +124,8 @@ const orderSchema = new mongoose.Schema({
 
       // ── Descriptions ──
       specifications:    String,
-      notes:             String,
+      notes:             String,       // Status tab notes
+      itemNotes:         String,       // Item Details tab notes (kept separate from status notes)
 
       // ── Shipping ──
       shipToVendorId: {
