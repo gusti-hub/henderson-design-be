@@ -494,10 +494,7 @@ const getProjectSummary = async (req, res) => {
       ta.designer || ta.projectManager || 'Henderson Design Group';
 
     // ── Collection label ──────────────────────────────────────────
-    const bedroomLabel = user.bedroomCount
-      ? `${user.bedroomCount} Bedroom`
-      : '';
-    const collectionLabel = [user.collection, bedroomLabel].filter(Boolean).join(' – ');
+    const collectionLabel = user.collection || '';
 
     res.json({
       success: true,

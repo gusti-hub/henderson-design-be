@@ -57,14 +57,21 @@ const buildPrevProposalClassifier = (allVersions) => {
   };
 };
 
+// ─── Extract 3-char client code from name (format: "Last, First") ─────────────
+// Take everything before the first comma as the Last Name; fall back to the
+// full name if no comma is present (handles legacy "First Last" names too).
+const clientCodeFromName = (name) => {
+  const raw = (name || 'CLT').trim();
+  const lastName = raw.includes(',') ? raw.split(',')[0].trim() : raw.split(/\s+/).pop() || raw;
+  return lastName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+};
+
 // ─── Single canonical proposal number generator ───────────────────────────────
 const ensureProposalNumber = async (order) => {
   if (order.proposalNumber) return order.proposalNumber;
 
   const clientName = order.clientInfo?.name || 'CLT';
-  const nameParts  = clientName.trim().split(/[\s\-\/,]+/);
-  const lastWord   = [...nameParts].reverse().find(p => /[a-zA-Z]/.test(p)) || 'CLT';
-  const clientCode = lastWord.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+  const clientCode = clientCodeFromName(clientName);
 
   const Counter = require('../models/Counter');
   const counterDoc = await Counter.findOneAndUpdate(
@@ -107,25 +114,32 @@ const getProposalData = async (req, res) => {
       const proposalNumber = proposalVersion.proposalNumber || order?.proposalNumber || null;
 
 
-      // Count berapa kali setiap key ada di proposal version ini
-      const pvProductCount = {};
+      // Match by _id primary, toKey fallback (same logic as latest-version path)
+      const pvById  = new Map();
+      const pvKeyCount = {};
       (proposalVersion.selectedProducts || []).forEach(p => {
-        const key = toKey(p);
-        if (key) pvProductCount[key] = (pvProductCount[key] || 0) + 1;
+        const id = p._id?.toString();
+        if (id) pvById.set(id, p.product_id || '');
+        else {
+          const key = toKey(p);
+          if (key) pvKeyCount[key] = (pvKeyCount[key] || 0) + 1;
+        }
       });
 
-      // excludedProducts = semua produk di Order minus yang sudah ada di proposal
-      // menggunakan count agar duplikat product_id ditangani dengan benar
-      const orderCountTemp = {};
+      const pvUsedIds  = new Set();
+      const pvKeyUsed  = {};
       const excludedProducts = [];
       (order?.selectedProducts || []).forEach(p => {
-        const key = toKey(p);
-        if (!key) return;
-        orderCountTemp[key] = (orderCountTemp[key] || 0) + 1;
-        const inProposal = pvProductCount[key] || 0;
-        if (orderCountTemp[key] > inProposal) {
-          excludedProducts.push(p);
+        const id  = p._id?.toString();
+        const pid = p.product_id || '';
+        if (id && pvById.has(id) && !pvUsedIds.has(id) && pvById.get(id) === pid) {
+          pvUsedIds.add(id);
+          return;
         }
+        const key = toKey(p);
+        if (!key) { excludedProducts.push(p); return; }
+        pvKeyUsed[key] = (pvKeyUsed[key] || 0) + 1;
+        if (pvKeyUsed[key] > (pvKeyCount[key] || 0)) excludedProducts.push(p);
       });
 
       const finalSelectedProducts = proposalVersion.selectedProducts || [];
@@ -178,22 +192,44 @@ const getProposalData = async (req, res) => {
           });
         } catch (_) {}
       } else {
-        // Count berapa kali setiap key ada di latest version
-        const lvProductCount = {};
+        // ── Match order products against proposal using _id as primary key ──────
+        // Fallback to toKey only for products without a valid _id.
+        // This handles the case where two order products share the same product_id
+        // (toKey collision) — _id is unique per row so it won't false-match.
+        // An _id match is only valid if the product_id also matches (detects corrupt
+        // slots where the bug overwrote a product's data but kept its _id).
+        const proposalById  = new Map(); // _id → product_id (for corruption check)
+        const proposalKeyCount = {};     // toKey → count (for _id-less fallback)
         (latestVersion.selectedProducts || []).forEach(p => {
-          const key = toKey(p);
-          if (key) lvProductCount[key] = (lvProductCount[key] || 0) + 1;
+          const id = p._id?.toString();
+          if (id) {
+            proposalById.set(id, p.product_id || '');
+          } else {
+            const key = toKey(p);
+            if (key) proposalKeyCount[key] = (proposalKeyCount[key] || 0) + 1;
+          }
         });
 
-        // excludedProducts = semua produk di Order minus yang sudah ada di proposal
-        const orderCountLv = {};
+        const usedIds  = new Set();
+        const keyCount = {};
         excludedProducts = [];
         (order.selectedProducts || []).forEach(p => {
+          const id = p._id?.toString();
+          const pid = p.product_id || '';
+          if (id && proposalById.has(id) && !usedIds.has(id) &&
+              proposalById.get(id) === pid) {
+            // Valid _id + product_id match → already in proposal, not excluded
+            usedIds.add(id);
+            return;
+          }
+          // No valid _id match → fall back to toKey count
           const key = toKey(p);
-          if (!key) return;
-          orderCountLv[key] = (orderCountLv[key] || 0) + 1;
-          const inProposal = lvProductCount[key] || 0;
-          if (orderCountLv[key] > inProposal) {
+          if (!key) {
+            excludedProducts.push(p);
+            return;
+          }
+          keyCount[key] = (keyCount[key] || 0) + 1;
+          if (keyCount[key] > (proposalKeyCount[key] || 0)) {
             excludedProducts.push(p);
           }
         });
@@ -308,9 +344,7 @@ const saveAsNewVersion = async (req, res) => {
       versionProposalNumber = await ensureProposalNumber(fullOrder);
     } else {
       const clientName = order.clientInfo?.name || 'CLT';
-      const nameParts  = clientName.trim().split(/[\s\-\/,]+/);
-      const lastWord   = [...nameParts].reverse().find(p => /[a-zA-Z]/.test(p)) || 'CLT';
-      const clientCode = lastWord.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
+      const clientCode = clientCodeFromName(clientName);
 
       const Counter = require('../models/Counter');
       const counterDoc = await Counter.findOneAndUpdate(
@@ -570,13 +604,32 @@ const getAvailableProducts = async (req, res) => {
 
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    const pvProductIds = new Set(
-      (proposalVersion?.selectedProducts || []).map(toKey).filter(Boolean)
-    );
+    // Match by _id + product_id (primary), toKey count (fallback) — same as excludedProducts logic
+    const pvById     = new Map();
+    const pvKeyCount = {};
+    (proposalVersion?.selectedProducts || []).forEach(p => {
+      const id = p._id?.toString();
+      if (id) pvById.set(id, p.product_id || '');
+      else {
+        const key = toKey(p);
+        if (key) pvKeyCount[key] = (pvKeyCount[key] || 0) + 1;
+      }
+    });
 
-    const available = (order.selectedProducts || []).filter(p => {
+    const usedIds  = new Set();
+    const keyUsed  = {};
+    const available = [];
+    (order.selectedProducts || []).forEach(p => {
+      const id  = p._id?.toString();
+      const pid = p.product_id || '';
+      if (id && pvById.has(id) && !usedIds.has(id) && pvById.get(id) === pid) {
+        usedIds.add(id);
+        return; // already in proposal
+      }
       const key = toKey(p);
-      return key && !pvProductIds.has(key);
+      if (!key) { available.push(p); return; }
+      keyUsed[key] = (keyUsed[key] || 0) + 1;
+      if (keyUsed[key] > (pvKeyCount[key] || 0)) available.push(p);
     });
 
     res.json({ success: true, data: available });
