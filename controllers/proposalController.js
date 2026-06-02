@@ -152,7 +152,7 @@ const getProposalData = async (req, res) => {
           selectedProducts: finalSelectedProducts,
           proposalNumber,
           excludedProducts,
-          depositPercent: proposalVersion.depositPercent ?? 90,
+          depositPercent: proposalVersion.depositPercent ?? 100,
         }
       });
     }
@@ -251,7 +251,7 @@ const getProposalData = async (req, res) => {
         excludedProducts,
         createdAt:        order.createdAt,
         updatedAt:        order.updatedAt,
-        depositPercent:   latestVersion?.depositPercent ?? 90,
+        depositPercent:   latestVersion?.depositPercent ?? 100,
       }
     });
 
@@ -393,7 +393,7 @@ const saveAsNewVersion = async (req, res) => {
       notes,
       status:           'draft',
       proposalNumber:   versionProposalNumber,
-      depositPercent:   depositPercent ?? 90,
+      depositPercent:   depositPercent ?? 100,
       createdBy:        req.user.id
     });
 
@@ -572,7 +572,7 @@ const saveCurrentVersion = async (req, res) => {
       notes:            'Initial version',
       status:           'draft',
       proposalNumber:   baseProposalNumber,
-      depositPercent:   depositPercent ?? 90,
+      depositPercent:   depositPercent ?? 100,
       createdBy:        req.user.id,
     });
 
