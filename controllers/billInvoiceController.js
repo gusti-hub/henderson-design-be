@@ -35,16 +35,22 @@ const getOrCreateBillInvoice = async (req, res) => {
 
     if (!poVersionId) return res.status(400).json({ message: 'poVersionId query param required' });
 
-    // Return existing if found
+    // Return existing if found; auto-fix legacy BI- prefix if present
     const existing = await BillInvoice.findOne({ poVersionId });
-    if (existing) return res.json({ success: true, data: existing });
+    if (existing) {
+      if (existing.billNumber && existing.billNumber.startsWith('BI-')) {
+        existing.billNumber = existing.billNumber.replace(/^BI-/, '');
+        await existing.save();
+      }
+      return res.json({ success: true, data: existing });
+    }
 
     // Create from PO
     const po = await POVersion.findById(poVersionId).lean();
     if (!po) return res.status(404).json({ message: 'PO version not found' });
 
     const poNum    = po.poNumber || po._id.toString().slice(-8).toUpperCase();
-    const billNum  = `BI-${poNum}`;
+    const billNum  = poNum; // same format as PO (no BI- prefix)
 
     const bill = await BillInvoice.create({
       orderId,
@@ -160,13 +166,13 @@ const syncBillInvoiceToQuickBooks = async (req, res) => {
       clientCode: bill.billNumber             || bill.poNumber || '',
     });
 
-    // Product lines
+    // Product lines — allow negative amounts (credit/discount lines)
     const productLines = (bill.products || [])
       .map(p => {
         const qty       = parseFloat(p.quantity)  || 1;
         const unitPrice = parseFloat(p.unitPrice) || 0;
         const total     = round2(unitPrice * qty);
-        if (total <= 0) return null;
+        if (total === 0) return null; // skip zero-value lines only
 
         const desc = [
           p.name,
@@ -182,11 +188,11 @@ const syncBillInvoiceToQuickBooks = async (req, res) => {
       })
       .filter(Boolean);
 
-    // Additional lines
+    // Additional lines — allow negative amounts (credit/discount lines)
     const additionalLines = (bill.additionalLines || [])
       .map(al => {
         const total = round2(parseFloat(al.amount || 0));
-        if (total <= 0) return null;
+        if (total === 0) return null; // skip zero-value lines only
         return { description: al.description || al.lineType || 'Additional', amount: total, qty: 1, unitPrice: total, lineType: al.lineType || 'Other' };
       })
       .filter(Boolean);
