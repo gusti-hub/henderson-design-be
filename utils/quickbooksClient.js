@@ -238,7 +238,7 @@ async getOrCreateCustomer(customerData) {
       }];
     }
 
-    lines = lines.filter(l => l.Amount > 0);
+    lines = lines.filter(l => l.Amount !== 0);
     if (lines.length === 0) throw new Error('No valid line items to create invoice');
 
     const invoice = {
@@ -331,7 +331,7 @@ async billExists(billId) {
       }];
     }
 
-    lines = lines.filter(l => l.Amount > 0);
+    lines = lines.filter(l => l.Amount !== 0);
     if (lines.length === 0) throw new Error('No valid line items to update invoice');
 
     const invoice = {
@@ -427,7 +427,7 @@ async billExists(billId) {
       };
     });
 
-    lines = lines.filter(l => l.Amount > 0);
+    lines = lines.filter(l => l.Amount !== 0);
     if (lines.length === 0) throw new Error('No valid line items to create bill');
 
     const bill = {
@@ -475,7 +475,7 @@ async billExists(billId) {
       };
     });
 
-    lines = lines.filter(l => l.Amount > 0);
+    lines = lines.filter(l => l.Amount !== 0);
     if (lines.length === 0) throw new Error('No valid line items to update bill');
 
     const bill = {

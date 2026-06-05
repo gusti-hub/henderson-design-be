@@ -341,7 +341,7 @@ const syncExpenseToQuickBooks = async (req, res) => {
     for (let i = 0; i < (expense.lines || []).length; i++) {
       const line     = expense.lines[i];
       const subtotal = round2(parseFloat(line.amount || 0));
-      if (subtotal <= 0) continue;
+      if (subtotal === 0) continue;
 
       const parts = [];
       if (line.description) parts.push(line.description);
@@ -457,7 +457,7 @@ const syncPOToQuickBooks = async (req, res) => {
         const qty       = parseFloat(p.quantity)  || 1;
         const unitPrice = parseFloat(p.unitPrice) || 0;
         const total     = round2(unitPrice * qty);
-        if (total <= 0) return null;
+        if (total === 0) return null;
 
         const desc = [
           p.name,
@@ -483,7 +483,7 @@ const syncPOToQuickBooks = async (req, res) => {
     const additionalLines = (po.additionalLines || [])
       .map(al => {
         const total = round2(parseFloat(al.amount || 0));
-        if (total <= 0) return null;
+        if (total === 0) return null;
         return {
           description: al.description || al.lineType || 'Additional',
           amount:      total,
@@ -499,7 +499,7 @@ const syncPOToQuickBooks = async (req, res) => {
 
     const poNum = po.poNumber || po._id.toString().slice(-8).toUpperCase();
 
-    const shippingLine = shippingAmount > 0 ? [{
+    const shippingLine = shippingAmount !== 0 ? [{
       description: `Shipping - ${poNum}`,   // ✅ FDI → Shipping - PO Number
       amount:      shippingAmount,
       qty:         1,
@@ -507,7 +507,7 @@ const syncPOToQuickBooks = async (req, res) => {
       lineType:    'FDI',
     }] : [];
 
-    const othersLine = othersAmount > 0 ? [{
+    const othersLine = othersAmount !== 0 ? [{
       description: `Tax - ${poNum}`,        // ✅ Others → Tax - PO Number
       amount:      othersAmount,
       qty:         1,
@@ -608,7 +608,7 @@ const syncProposalToQuickBooks = async (req, res) => {
       const taxRate   = parseFloat(opts.salesTaxRate) || 0;
       const tax       = round2(subtotal * (taxRate / 100));
       const total     = round2(subtotal + tax);
-      if (total <= 0) continue;
+      if (total === 0) continue;
 
       const descParts = [];
       if (opts.room)           descParts.push(`Room: ${opts.room}`);

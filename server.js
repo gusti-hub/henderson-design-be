@@ -40,6 +40,12 @@ setTimeout(() => {
   initializeQuickBooks();
 }, 1000); // Wait 1 second for DB connection
 
+// CORS — harus sebelum semua middleware lain
+app.use(cors({
+  origin: true,
+  credentials: true,
+}));
+
 // Configure timeouts and limits for PDF generation
 app.use((req, res, next) => {
   // Set timeout to 5 minutes
@@ -50,13 +56,10 @@ app.use((req, res, next) => {
 
 // Increase payload limits
 app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ 
-  limit: '50mb', 
-  extended: true 
+app.use(express.urlencoded({
+  limit: '50mb',
+  extended: true
 }));
-
-// Middleware
-app.use(cors());
 
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
@@ -101,7 +104,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: 'Something went wrong!' });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 // Create server with proper timeouts
 const server = app.listen(PORT, () => {
