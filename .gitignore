@@ -1,6 +1,7 @@
 # .gitignore for backend
 node_modules/
 .env
+.env.test
 npm-debug.log
 yarn-debug.log
 yarn-error.log
