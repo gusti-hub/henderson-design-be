@@ -2,7 +2,7 @@ name: Deploy Backend to Digital Ocean
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, refactor/order-source-of-truth ]
 
 env:
   REGISTRY: "registry.digitalocean.com/hale-project"
@@ -15,29 +15,49 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Set deploy target
+        id: vars
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "container=hale-be-container" >> $GITHUB_OUTPUT
+            echo "port=5000:5000" >> $GITHUB_OUTPUT
+            echo "envfile=/app/production.env" >> $GITHUB_OUTPUT
+          else
+            echo "tag=decora" >> $GITHUB_OUTPUT
+            echo "container=hale-be-decora" >> $GITHUB_OUTPUT
+            echo "port=5002:5000" >> $GITHUB_OUTPUT
+            echo "envfile=/app/decora.env" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build container image
-        run: docker build -t $IMAGE_NAME:latest .
-      
+        run: docker build -t $IMAGE_NAME:${{ steps.vars.outputs.tag }} .
+
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-      
+
       - name: Log in to DO Container Registry
         run: doctl registry login --expiry-seconds 600
-      
+
       - name: Push image to DO Container Registry
         run: |
-          docker tag $IMAGE_NAME:latest $REGISTRY/$IMAGE_NAME:latest
-          docker push $REGISTRY/$IMAGE_NAME:latest
-      
-      - name: Execute deployment commands
+          docker tag $IMAGE_NAME:${{ steps.vars.outputs.tag }} $REGISTRY/$IMAGE_NAME:${{ steps.vars.outputs.tag }}
+          docker push $REGISTRY/$IMAGE_NAME:${{ steps.vars.outputs.tag }}
+
+      - name: Deploy to server
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.DROPLET_HOST }}
           username: ${{ secrets.DROPLET_USERNAME }}
           password: ${{ secrets.DROPLET_PASSWORD }}
           script: |
-            cd /app
-            docker-compose pull
-            docker-compose up -d
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}
+            docker stop ${{ steps.vars.outputs.container }} || true
+            docker rm ${{ steps.vars.outputs.container }} || true
+            docker run -d \
+              --name ${{ steps.vars.outputs.container }} \
+              --env-file ${{ steps.vars.outputs.envfile }} \
+              -p ${{ steps.vars.outputs.port }} \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}
