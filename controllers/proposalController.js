@@ -247,6 +247,8 @@ const getProposalData = async (req, res) => {
       success: true,
       data: {
         orderId:          order._id,
+        orderNumber:      order.orderNumber,
+        orderLabel:       order.orderLabel,
         version:          latestVersion ? latestVersion.version : 0,
         status:           latestVersion ? latestVersion.status : 'draft',
         proposalNumber,
@@ -500,16 +502,26 @@ const updateProposalStatus = async (req, res) => {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
-    const latestVersion = await ProposalVersion.findOne(
+    let latestVersion = await ProposalVersion.findOne(
       { orderId },
       {},
       { sort: { version: -1 } }
     );
+
     if (!latestVersion) {
-      return res.status(404).json({ message: 'No proposal version found' });
-    }
-    if (latestVersion.status === 'approved') {
-      return res.status(400).json({ message: 'Approved proposals cannot be changed' });
+      // Auto-create version on first status update
+      const order = await Order.findById(orderId).lean();
+      if (!order) return res.status(404).json({ message: 'Order not found' });
+      latestVersion = await ProposalVersion.create({
+        orderId,
+        version: 1,
+        status,
+        proposalNumber: order.proposalNumber || null,
+        selectedProducts: order.selectedProducts || [],
+        createdBy: req.user.id,
+        updatedBy: req.user.id,
+      });
+      return res.json({ success: true, status });
     }
 
     latestVersion.status = status;

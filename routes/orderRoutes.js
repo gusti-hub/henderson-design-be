@@ -22,6 +22,7 @@ const {
   getUploadPresignedUrl,
   generateCogExcel,
   getLatestConfirmedPOs,
+  getLinkedDocuments,
   generateAllProductsReport,
   createOrderForClient
 } = require('../controllers/orderController');
@@ -142,5 +143,6 @@ router.get('/:id/install-binder-excel', generateInstallBinderExcel);
 router.get('/:id/status-report',        generateStatusReport);
 
 router.get('/:orderId/po/latest-confirmed', getLatestConfirmedPOs);
+router.get('/:orderId/linked-documents',    getLinkedDocuments);
 
 module.exports = router;
