@@ -12,7 +12,18 @@ const orderSchema = new mongoose.Schema({
     required: true
   },
 
-  // ✅ NEW: proposal number at order level — 1 project = 1 number
+  // Auto-generated per-client sequence: "Order #1", "Order #2", etc.
+  orderNumber: {
+    type: Number,
+    default: null
+  },
+  // Optional human-friendly label set by designer
+  orderLabel: {
+    type: String,
+    default: null
+  },
+
+  // Proposal number at order level — 1 order = 1 proposal number
   proposalNumber: {
     type: String,
     default: null

@@ -27,6 +27,7 @@ const {
   generateBulkExport,
   generateBulkPO,
   getAvailablePOVendors,
+  createOrderForClient
 } = require('../controllers/orderController');
 const {
   handlePaymentProofUpload,
@@ -86,6 +87,7 @@ router.post(
 
 router.get('/user-order', getCurrentUserOrder);
 router.get('/client/:clientId', getOrdersByClient);
+router.post('/client/:clientId/new-order', createOrderForClient);
 
 // ===================================
 // DOCUMENTS & EXPORTS

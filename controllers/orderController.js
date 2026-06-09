@@ -1288,17 +1288,18 @@ const getOrdersByClient = async (req, res) => {
     }
 
     let orders = await Order.find({ user: user._id })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: 1 }); // oldest first for consistent orderNumber assignment
 
     if (orders.length === 0 && user.status === 'approved') {
       console.log(`📦 Auto-creating order for approved client: ${user.clientCode}`);
-      
+
       const packageType = user.packageType || 'investor';
       const floorPlanConfigId = getFloorPlanConfigId(user.floorPlan, user.collection, packageType);
       const floorPlanImage = getFloorPlanImagePath(floorPlanConfigId);
-      
+
       const newOrder = await Order.create({
         user: user._id,
+        orderNumber: 1,
         packageType,
         clientInfo: {
           name: user.name,
@@ -1325,19 +1326,84 @@ const getOrdersByClient = async (req, res) => {
 
       orders = [newOrder];
       console.log('✅ Order created with config ID:', floorPlanConfigId, 'Package Type:', packageType);
+    } else {
+      // Lazily assign orderNumber to any orders that don't have one yet
+      const needsNumber = orders.filter(o => o.orderNumber == null);
+      if (needsNumber.length > 0) {
+        for (let i = 0; i < orders.length; i++) {
+          if (orders[i].orderNumber == null) {
+            orders[i].orderNumber = i + 1;
+            await Order.findByIdAndUpdate(orders[i]._id, { orderNumber: i + 1 });
+          }
+        }
+      }
     }
 
     res.json({
       success: true,
-      orders: orders
+      orders: orders.sort((a, b) => (a.orderNumber || 999) - (b.orderNumber || 999)),
     });
 
   } catch (error) {
     console.error('❌ Error getOrdersByClient:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: error.message 
+      message: error.message
     });
+  }
+};
+
+// @desc    Create a new order for an existing client
+// @route   POST /api/orders/client/:clientId/new-order
+// @access  Private (Admin)
+const createOrderForClient = async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { orderLabel } = req.body;
+
+    const user = await User.findById(clientId);
+    if (!user) return res.status(404).json({ success: false, message: 'Client not found' });
+
+    const existingOrders = await Order.find({ user: user._id }).select('orderNumber').lean();
+    const nextNumber = existingOrders.length + 1;
+
+    const packageType = user.packageType || 'custom';
+    const floorPlanConfigId = getFloorPlanConfigId(user.floorPlan, user.collection, packageType);
+    const floorPlanImage = getFloorPlanImagePath(floorPlanConfigId);
+
+    const newOrder = await Order.create({
+      user: user._id,
+      orderNumber: nextNumber,
+      orderLabel: orderLabel?.trim() || null,
+      packageType: 'custom',
+      clientInfo: {
+        name: user.name,
+        unitNumber: user.unitNumber,
+        floorPlan: user.floorPlan,
+      },
+      selectedPlan: {
+        id: floorPlanConfigId || 'custom-a',
+        title: user.floorPlan || 'Residence',
+        description: user.collection ? `${user.collection} - ${user.bedroomCount} Bedroom` : 'Custom',
+        image: floorPlanImage || '',
+        clientInfo: {
+          name: user.name,
+          unitNumber: user.unitNumber,
+          floorPlan: user.floorPlan,
+        },
+      },
+      Package: user.collection ? `${user.collection} - ${user.bedroomCount}BR` : 'Custom',
+      selectedProducts: [],
+      occupiedSpots: {},
+      status: 'ongoing',
+      step: 1,
+      createdBy: req.user.id,
+    });
+
+    res.status(201).json({ success: true, data: newOrder });
+  } catch (error) {
+    console.error('❌ Error createOrderForClient:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -3818,4 +3884,5 @@ module.exports = {
   generateBulkExport,
   generateBulkPO,
   getAvailablePOVendors,
+  createOrderForClient
 };
