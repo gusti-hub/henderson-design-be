@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node --max-old-space-size=8192 server.js",
     "dev": "nodemon --max-old-space-size=8192 server.js",
+    "dev:test": "DOTENV_CONFIG_PATH=.env.test nodemon --max-old-space-size=8192 -r dotenv/config server.js",
     "postinstall": "node -e \"const fs=require('fs'),f='node_modules/buffer-equal-constant-time/index.js',c=fs.readFileSync(f,'utf8').replace('require(\\'buffer\\').SlowBuffer;','require(\\'buffer\\').SlowBuffer||Buffer;');fs.writeFileSync(f,c)\""
   },
   "keywords": [],
