@@ -352,58 +352,47 @@ const getOrders = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || '';
     const status = req.query.status;
+    const groupByClient = req.query.groupByClient !== 'false'; // default true
     const skip = (page - 1) * limit;
 
-    // ✅ Build optimized query
-    let searchQuery = {};
-
-    // Add search conditions
+    let matchStage = {};
     if (search) {
-      searchQuery.$or = [
+      matchStage.$or = [
         { 'clientInfo.name': { $regex: search, $options: 'i' } },
         { 'clientInfo.unitNumber': { $regex: search, $options: 'i' } }
       ];
     }
-
-    // Add status filter
     if (status && status !== 'all') {
-      searchQuery.status = status;
+      matchStage.status = status;
     }
 
-    console.log('📊 Query:', searchQuery);
-    console.time('getOrders');
+    const basePipeline = groupByClient
+      ? [
+          { $match: matchStage },
+          { $sort: { updatedAt: -1, createdAt: -1 } },
+          { $group: { _id: '$user', doc: { $first: '$$ROOT' } } },
+          { $replaceRoot: { newRoot: '$doc' } },
+          { $sort: { updatedAt: -1, createdAt: -1 } },
+        ]
+      : [
+          { $match: matchStage },
+          { $sort: { updatedAt: -1, createdAt: -1 } },
+        ];
 
-    // ✅ CRITICAL: Exclude heavy fields from list view
-    const excludeFields = {
-      // 'selectedProducts.selectedOptions.uploadedImages': 0, // Don't load images in list
-      'customFloorPlan.data': 0, // Don't load floor plan in list
-      'occupiedSpots': 0 // Don't need spot data in list
-    };
-
-    // Execute query with lean() for better performance
-    const [total, orders] = await Promise.all([
-      Order.countDocuments(searchQuery),
-      Order.find(searchQuery, excludeFields)
-        .populate({
-          path: 'user',
-          select: 'name email clientCode unitNumber'
-        })
-        .populate({
-          path: 'selectedProducts.vendor',
-          select: 'name'          // ✅ FIX: populate vendor name
-        })
-        .populate({ path: 'updatedBy', select: 'name' }) 
-        .select('-__v')
-        .skip(skip)
-        .limit(limit)
-        .sort({ createdAt: -1 })
-        .lean()
+    const [countResult, orders] = await Promise.all([
+      Order.aggregate([...basePipeline, { $count: 'total' }]),
+      Order.aggregate([...basePipeline, { $skip: skip }, { $limit: limit }]),
     ]);
 
-    console.timeEnd('getOrders');
-    console.log(`✅ Returned ${orders.length} orders in page ${page}`);
+    // Populate references (works on aggregation results)
+    await Order.populate(orders, [
+      { path: 'user', select: 'name email clientCode unitNumber' },
+      { path: 'selectedProducts.vendor', select: 'name' },
+      { path: 'updatedBy', select: 'name' },
+    ]);
 
-    // Send response
+    const total = countResult[0]?.total || 0;
+
     res.json({
       orders,
       total,
@@ -1374,7 +1363,7 @@ const createOrderForClient = async (req, res) => {
     const newOrder = await Order.create({
       user: user._id,
       orderNumber: nextNumber,
-      orderLabel: orderLabel?.trim() || null,
+      orderLabel: `Order ${nextNumber}`,
       packageType: 'custom',
       clientInfo: {
         name: user.name,
@@ -3126,6 +3115,43 @@ const getLatestConfirmedPOs = async (req, res) => {
   }
 };
 
+const getLinkedDocuments = async (req, res) => {
+  try {
+    const mongoose    = require('mongoose');
+    const POVersion   = require('../models/POVersion');
+    const ProposalVersion = require('../models/ProposalVersion');
+    const { orderId } = req.params;
+
+    const orderObjectId = mongoose.Types.ObjectId.createFromHexString(orderId);
+
+    const [order, poVendors, latestProposal] = await Promise.all([
+      Order.findById(orderId).select('proposalNumber orderNumber orderLabel'),
+      POVersion.aggregate([
+        { $match: { orderId: orderObjectId } },
+        { $sort: { vendorId: 1, version: -1 } },
+        { $group: { _id: '$vendorId', poNumber: { $first: '$poNumber' }, vendorName: { $first: '$vendorInfo.name' } } }
+      ]),
+      ProposalVersion.findOne({ orderId: orderObjectId }, { status: 1, proposalNumber: 1 }, { sort: { version: -1 } }).lean()
+    ]);
+
+    const proposalNumber = latestProposal?.proposalNumber || order?.proposalNumber || null;
+
+    res.json({
+      success: true,
+      data: {
+        hasProposal: !!latestProposal,
+        proposalStatus: latestProposal?.status || null,
+        proposalApproved: latestProposal?.status === 'approved',
+        proposalNumber,
+        hasPO: poVendors.length > 0,
+        poVendors: poVendors.map(p => ({ vendorId: p._id?.toString() || null, vendorName: p.vendorName || 'Unknown Vendor', poNumber: p.poNumber || null })),
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const saveCurrentVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -3879,6 +3905,7 @@ module.exports = {
   generateCogExcel,
   generateCogWithBill,
   getLatestConfirmedPOs,
+  getLinkedDocuments,
   saveCurrentVersion,
   generateAllProductsReport,
   generateBulkExport,
