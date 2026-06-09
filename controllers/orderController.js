@@ -86,8 +86,56 @@ const updateOrder = async (req, res) => {
     if (req.body.selectedProducts && Array.isArray(req.body.selectedProducts)) {
       console.log(`📦 Processing ${req.body.selectedProducts.length} products`);
 
+      // ── Guard: block removal of products used in confirmed POs / approved Proposals ──
+      const existingIds = new Set(
+        (existingOrder.selectedProducts || []).map(p => String(p._id))
+      );
+      const incomingIds = new Set(
+        req.body.selectedProducts
+          .map(p => p._id && !String(p._id).startsWith('temp_') ? String(p._id) : null)
+          .filter(Boolean)
+      );
+      const removedIds = [...existingIds].filter(id => !incomingIds.has(id));
+
+      if (removedIds.length > 0) {
+        const removedProducts = (existingOrder.selectedProducts || []).filter(p =>
+          removedIds.includes(String(p._id))
+        );
+        const removedProductIds = removedProducts.map(p => p.product_id).filter(Boolean);
+
+        const [blockedPOs, blockedProposals] = await Promise.all([
+          POVersion.find({
+            orderId: existingOrder._id,
+            status: 'confirmed',
+            'products.product_id': { $in: removedProductIds },
+          }).select('poNumber vendorInfo.name').lean(),
+
+          ProposalVersion.find({
+            orderId: existingOrder._id,
+            status: { $in: ['sent', 'approved'] },
+            'selectedProducts.product_id': { $in: removedProductIds },
+          }).select('proposalNumber version status').lean(),
+        ]);
+
+        if (blockedPOs.length > 0 || blockedProposals.length > 0) {
+          return res.status(409).json({
+            message: 'Cannot remove product(s) that are already included in confirmed documents.',
+            blockedBy: {
+              pos: blockedPOs.map(po => ({
+                poNumber: po.poNumber,
+                vendor: po.vendorInfo?.name || 'Unknown Vendor',
+              })),
+              proposals: blockedProposals.map(p => ({
+                proposalNumber: p.proposalNumber,
+                version: p.version,
+                status: p.status,
+              })),
+            },
+          });
+        }
+      }
+
       // ── Build map dari existing products di DB: index → _id ──────────────
-      // Dipakai untuk restore _id yang tidak dikirim dari frontend
       const existingIdByIndex = new Map();
       const existingIdByProductId = new Map();
       (existingOrder.selectedProducts || []).forEach((p, idx) => {
