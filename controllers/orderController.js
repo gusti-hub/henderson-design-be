@@ -289,8 +289,8 @@ const updateOrder = async (req, res) => {
       }
     }
  
-    res.json(updatedOrder);
- 
+    res.json(freshForAudit);
+
   } catch (error) {
     console.error('❌ Error updating order:', error);
     res.status(500).json({ success: false, message: error.message });
