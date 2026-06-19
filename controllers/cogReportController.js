@@ -12,6 +12,7 @@
 //   Each distinct PO# = one row in the report.
 
 const Order = require('../models/Order');
+const POVersion = require('../models/POVersion');
 const ExcelJS = require('exceljs');
 
 // ─── Resolve vendor name from product ────────────────────────────────────────
@@ -35,17 +36,18 @@ const getPoNumber = (p, clientCode, index) => {
 // Each unique poNumber → one row. If multiple products share the same PO#
 // (same vendor order), sum their totals.
 const buildPoRows = (products, clientCode) => {
-  const map = new Map(); // poNumber → { poNumber, vendorName, total }
+  const map = new Map(); // poNumber → { poNumber, vendorName, vendorId, total }
 
   products.forEach((p, i) => {
     const poNumber   = getPoNumber(p, clientCode, i);
     const vendorName = getVendorName(p);
+    const vendorId   = p.vendor?._id?.toString() || (typeof p.vendor === 'string' ? p.vendor : null);
     const total      = parseFloat(p.finalPrice) || 0;
 
     if (map.has(poNumber)) {
       map.get(poNumber).total += total;
     } else {
-      map.set(poNumber, { poNumber, vendorName, total });
+      map.set(poNumber, { poNumber, vendorName, vendorId, total });
     }
   });
 
@@ -74,6 +76,17 @@ const generateCogExcel = async (req, res) => {
     const products = order.selectedProducts || [];
     const poRows   = buildPoRows(products, clientCode);
 
+    // ── Fetch latest PO status per vendor/poNumber for this order ──────
+    const poVersions = await POVersion.find({ orderId }).sort({ version: -1 }).lean();
+    const vendorStatusMap = {};  // vendorId → status (latest version wins)
+    const poNumStatusMap  = {};  // poNumber  → status (latest version wins)
+    poVersions.forEach(pov => {
+      const vid = pov.vendorId?.toString();
+      const pno = pov.poNumber?.trim();
+      if (vid && !vendorStatusMap[vid]) vendorStatusMap[vid] = pov.status || 'draft';
+      if (pno && !poNumStatusMap[pno])  poNumStatusMap[pno]  = pov.status || 'draft';
+    });
+
     // ── Build workbook ──────────────────────────────────────────────────
     const wb = new ExcelJS.Workbook();
     wb.creator  = 'Henderson Design Group';
@@ -81,7 +94,7 @@ const generateCogExcel = async (req, res) => {
     const ws = wb.addWorksheet('COG Report');
 
     // Row 1 — project title
-    ws.mergeCells('A1:C1');
+    ws.mergeCells('A1:D1');
     const r1 = ws.getCell('A1');
     r1.value     = projectLabel;
     r1.font      = { name: 'Arial', bold: true, size: 11 };
@@ -89,13 +102,13 @@ const generateCogExcel = async (req, res) => {
     ws.getRow(1).height = 20;
 
     // Row 2 — yellow bar
-    ['A2','B2','C2'].forEach(addr => {
+    ['A2','B2','C2','D2'].forEach(addr => {
       ws.getCell(addr).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
     });
     ws.getRow(2).height = 14;
 
-    // Row 3 — black header
-    ['HDG PO#', 'Vendor', 'HDG PO Total'].forEach((h, i) => {
+    // Row 3 — black header (4 columns)
+    ['HDG PO#', 'Vendor', 'Status PO', 'HDG PO Total'].forEach((h, i) => {
       const cell = ws.getCell(3, i + 1);
       cell.value     = h;
       cell.font      = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
@@ -112,18 +125,26 @@ const generateCogExcel = async (req, res) => {
 
       const poCell     = ws.getCell(r, 1);
       const vendorCell = ws.getCell(r, 2);
-      const totalCell  = ws.getCell(r, 3);
+      const statusCell = ws.getCell(r, 3);
+      const totalCell  = ws.getCell(r, 4);
+
+      const poStatus =
+        poNumStatusMap[row.poNumber] ||
+        (row.vendorId ? vendorStatusMap[row.vendorId] : null) ||
+        '—';
 
       poCell.value     = row.poNumber;
       vendorCell.value = row.vendorName;
+      statusCell.value = poStatus;
       totalCell.value  = row.total;
 
-      [poCell, vendorCell, totalCell].forEach(c => {
+      [poCell, vendorCell, statusCell, totalCell].forEach(c => {
         c.font   = { name: 'Arial', size: 10 };
         c.border = { bottom: { style: 'thin', color: { argb: 'FFEEEEEE' } } };
       });
       poCell.alignment     = { horizontal: 'left',  vertical: 'middle', indent: 1 };
       vendorCell.alignment = { horizontal: 'left',  vertical: 'middle', indent: 1 };
+      statusCell.alignment = { horizontal: 'center', vertical: 'middle' };
       totalCell.alignment  = { horizontal: 'right', vertical: 'middle' };
       totalCell.numFmt     = '"$"#,##0.00';
     });
@@ -133,8 +154,8 @@ const generateCogExcel = async (req, res) => {
     const totalRowN  = poRows.length + 4;
     ws.getRow(totalRowN).height = 22;
 
-    const grandTotal = ws.getCell(totalRowN, 3);
-    grandTotal.value     = { formula: `SUM(C4:C${lastData})` };
+    const grandTotal = ws.getCell(totalRowN, 4);
+    grandTotal.value     = { formula: `SUM(D4:D${lastData})` };
     grandTotal.font      = { name: 'Arial', bold: true, size: 11 };
     grandTotal.alignment = { horizontal: 'right', vertical: 'middle' };
     grandTotal.numFmt    = '"$"#,##0.00';
@@ -143,7 +164,8 @@ const generateCogExcel = async (req, res) => {
     // Column widths
     ws.getColumn(1).width = 18;
     ws.getColumn(2).width = 34;
-    ws.getColumn(3).width = 18;
+    ws.getColumn(3).width = 16;
+    ws.getColumn(4).width = 18;
 
     // Stream response
     const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');

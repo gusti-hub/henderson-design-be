@@ -21,6 +21,7 @@ const {
   generateStatusReport,
   getUploadPresignedUrl,
   generateCogExcel,
+  generateCogWithBill,
   getLatestConfirmedPOs,
   generateAllProductsReport
 } = require('../controllers/orderController');
@@ -52,7 +53,8 @@ router.use(protect);
 
 router.get('/all-products-report', generateAllProductsReport);
 
-router.get('/:id/cog-report', generateCogExcel);
+router.get('/:id/cog-report',           generateCogExcel);
+router.get('/:id/cog-report-with-bill', generateCogWithBill);
 
 router.post(
   '/:orderId/custom-product-images',
