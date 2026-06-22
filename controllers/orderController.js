@@ -1926,6 +1926,43 @@ const generateStatusReport = async (req, res) => {
       return res.status(404).json({ message: 'Order not found' });
     }
 
+    // ── Fetch latest POVersion per vendor & build PO# lookup ──
+    const poVersions = await POVersion.find({ orderId: req.params.id })
+      .sort({ version: -1 })
+      .lean();
+
+    // vendorId → { poNumber, productIds: Set<product_id>, nameKeys: Set<"name::..."> }
+    // Only take the latest version per vendor (sort desc, skip if already seen)
+    const vendorPoMap = new Map();
+    poVersions.forEach(po => {
+      const key = po.vendorId?.toString();
+      if (!key || vendorPoMap.has(key)) return;
+      const productIds = new Set();
+      const nameKeys   = new Set();
+      (po.products || []).forEach(pp => {
+        if (pp.product_id) productIds.add(pp.product_id);
+        if (pp.name)       nameKeys.add('name::' + pp.name.trim().toLowerCase());
+      });
+      vendorPoMap.set(key, { poNumber: po.poNumber || '', productIds, nameKeys });
+    });
+
+    // Returns PO# for a product without mixing up duplicates:
+    // 1. Use selectedOptions.poNumber if already set on the product
+    // 2. Else look up from POVersion, but only if this product_id/name exists in that PO
+    const resolvePoNumber = (p) => {
+      if (p.selectedOptions?.poNumber) return p.selectedOptions.poNumber;
+      const vendorId = p.vendor?._id?.toString() || (typeof p.vendor === 'string' ? p.vendor : null);
+      if (!vendorId) return '';
+      const entry = vendorPoMap.get(vendorId);
+      if (!entry) return '';
+      const pid     = p.product_id;
+      const nameKey = 'name::' + (p.name || '').trim().toLowerCase();
+      if ((pid && entry.productIds.has(pid)) || entry.nameKeys.has(nameKey)) {
+        return entry.poNumber;
+      }
+      return '';
+    };
+
     const wb = new ExcelJS.Workbook();
     const products = order.selectedProducts || [];
     const clientName = order.clientInfo?.name || 'Unknown Client';
@@ -2382,7 +2419,7 @@ const generateStatusReport = async (req, res) => {
 
         // C - External PO#
         const cC = ws2.getCell(ir, 3);
-        cC.value = p.selectedOptions?.poNumber || '';
+        cC.value = resolvePoNumber(p);
         cC.font = dataFont; cC.border = thinBorder; cC.alignment = wrapTop;
 
         // D - Proposal Number
