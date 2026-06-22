@@ -41,6 +41,7 @@ const expenseSchema = new mongoose.Schema({
     default: 'draft',
   },
   employeeName: { type: String, default: '' },
+  hoursLabel:   { type: String, enum: ['Hours', 'QTY'], default: 'Hours' },
 
   // QuickBooks sync tracking
   quickbooksId:       { type: String, default: null },
