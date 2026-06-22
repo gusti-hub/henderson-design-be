@@ -1935,7 +1935,21 @@ const generateStatusReport = async (req, res) => {
     const todayStr = new Date().toLocaleDateString('en-US', {
       month: '2-digit', day: '2-digit', year: 'numeric'
     });
-    const installDate = order.installationDate || '';
+
+    // ── Helper: normalize any date value to MM/DD/YYYY string ──
+    const fmtDate = (val) => {
+      if (!val) return '';
+      const d = new Date(val);
+      if (isNaN(d.getTime())) return String(val);
+      // Treat ISO date-only strings (YYYY-MM-DD) as local date to avoid UTC shift
+      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+        const [y, m, dy] = val.split('-');
+        return `${m}/${dy}/${y}`;
+      }
+      return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+    };
+
+    const installDate = fmtDate(order.installationDate);
 
     // ── Helper: get vendor name ──
     const getVendorName = (product) => {
@@ -2008,15 +2022,57 @@ const generateStatusReport = async (req, res) => {
     );
     console.log(`✅ Downloaded ${imageCache.size} images`);
 
-    // ── Helper: group products by statusCategory ──
+    // ── Room sort order (matches ProposalEditor & CustomProductManager) ──
+    const ROOM_ORDER = [
+      'COURTYARD','EXTERIOR ENTRY','INTERIOR ENTRY','FOYER','LIVING ROOM','DINING ROOM',
+      'KITCHEN','PANTRY','PRIMARY BEDROOM','PRIMARY BEDROOM LANAI','PRIMARY BATHROOM',
+      'PRIMARY CLOSET','BEDROOM 2','BATHROOM 2','BEDROOM 2 CLOSET','BEDROOM 2 LANAI',
+      'BEDROOM 3','BATHROOM 3','BEDROOM 3 CLOSET','BEDROOM 3 LANAI','BEDROOM 4','BATHROOM 4',
+      'BEDROOM 4 CLOSET','BEDROOM 4 LANAI','POWDER ROOM','OFFICE','MEDIA ROOM','DEN','HALLWAY',
+      'LANAI','MAIN LANAI','POOL LANAI','POOL AREA','BREAKFAST NOOK','GREAT ROOM','FAMILY ROOM','WET BAR','BBQ AREA',
+      'POOL BATH','PAVILLION','GYM','WINE ROOM','REC ROOM','GARAGE','SITTING ROOM',
+      'FLEX SPACE','LAUNDRY ROOM','MUD ROOM','TERRACE','BALCONY','OUTDOOR DINING',
+      'OUTDOOR LIVING','GUEST SUITE','DESIGN SERVICES','PROJECT MANAGEMENT SERVICES',
+      'PROCUREMENT SERVICES','FDI SERVICES (FREIGHT, DELIVERY & INSTALLATION)',
+      'WALLPAPER INSTALLATION SERVICES','ELECTRICAL INSTALLATION SERVICES',
+      'ART INSTALLATION SERVICES','WALLPAPER TRADE COORDINATION',
+      'ELECTRICAL TRADE COORDINATION','CLOSET SOLUTIONS',
+      'KITCHEN & HOUSEHOLD ESSENTIALS PACKAGE','WINDOW COVERING SERVICES',
+      'AUDIO VISUAL SERVICES','GREENERY & PLANT STYLING',
+      'CONSTRUCTION DESIGN & PM SERVICES','CUSTOM MILLWORK SERVICES',
+      'CUSTOM FURNITURE SERVICES','LIGHTING PROCUREMENT & COORDINATION',
+      'APPLIANCE COORDINATION','PLUMBING FIXTURE COORDINATION',
+      'DECORATIVE PLUMBING COORDINATION','STONE & SLAB COORDINATION',
+      'TILE & SURFACE COORDINATION','HARDWARE & DECORATIVE HARDWARE COORDINATION',
+      'OUTDOOR FURNISHINGS','LANAI / TERRACE FURNISHINGS','STYLING & ACCESSORIES',
+      'BEDDING PACKAGE','TURNKEY MOVE-IN PACKAGE','OWNER STORAGE & INVENTORY COORDINATION',
+      'CLIENT SUPPLIED ITEMS COORDINATION','WHITE GLOVE RECEIVING & WAREHOUSING',
+      'PUNCH LIST & COMPLETION COORDINATION','SITE VISIT COORDINATION',
+      'EXPEDITING SERVICES','BUILDING COORDINATION SERVICES',
+      'CONTRACTOR COORDINATION SERVICES','INSTALLATION OVERSIGHT',
+      'FINAL STYLING & STAGING','REVEAL PREPARATION',
+    ];
+
+    const sortByRoom = (a, b) => {
+      const ra = (a.selectedOptions?.room || a.category || a.spotName || '').toUpperCase();
+      const rb = (b.selectedOptions?.room || b.category || b.spotName || '').toUpperCase();
+      const ia = ROOM_ORDER.indexOf(ra);
+      const ib = ROOM_ORDER.indexOf(rb);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return ra.localeCompare(rb);
+    };
+
+    // ── Helper: group products by statusCategory, items sorted by room order ──
     const groupByCategory = (items) => {
       const groups = {};
-      // Maintain insertion order
       items.forEach(p => {
         const cat = p.selectedOptions?.statusCategory || 'Uncategorized';
         if (!groups[cat]) groups[cat] = [];
         groups[cat].push(p);
       });
+      Object.values(groups).forEach(arr => arr.sort(sortByRoom));
       return groups;
     };
 
@@ -2199,12 +2255,12 @@ const generateStatusReport = async (req, res) => {
 
         // E - Date Received
         const cellE = ws1.getCell(cr, 5);
-        cellE.value = p.selectedOptions?.dateReceived || '';
+        cellE.value = fmtDate(p.selectedOptions?.dateReceived);
         cellE.font = dataFont; cellE.border = thinBorder; cellE.alignment = wrapTop;
 
         // F - Estimated Delivery Date
         const cellF = ws1.getCell(cr, 6);
-        cellF.value = p.selectedOptions?.estimatedDeliveryDate || '';
+        cellF.value = fmtDate(p.selectedOptions?.estimatedDeliveryDate);
         cellF.font = dataFont; cellF.border = thinBorder; cellF.alignment = wrapTop;
 
         cr++;
@@ -2351,22 +2407,22 @@ const generateStatusReport = async (req, res) => {
 
         // H - Ship To
         const cH = ws2.getCell(ir, 8);
-        cH.value = p.selectedOptions?.shipTo || defaultShipTo;
+        cH.value = p.selectedOptions?.shipToName || p.selectedOptions?.shipTo || defaultShipTo;
         cH.font = dataFont; cH.border = thinBorder; cH.alignment = wrapTop;
 
         // I - Order Date
         const cI = ws2.getCell(ir, 9);
-        cI.value = p.selectedOptions?.orderDate || '';
+        cI.value = fmtDate(p.selectedOptions?.orderDate);
         cI.font = dataFont; cI.border = thinBorder; cI.alignment = wrapTop;
 
         // J - Expected Ship Date
         const cJ = ws2.getCell(ir, 10);
-        cJ.value = p.selectedOptions?.expectedShipDate || '';
+        cJ.value = fmtDate(p.selectedOptions?.expectedShipDate);
         cJ.font = dataFont; cJ.border = thinBorder; cJ.alignment = wrapTop;
 
         // K - Date Received
         const cK = ws2.getCell(ir, 11);
-        cK.value = p.selectedOptions?.dateReceived || '';
+        cK.value = fmtDate(p.selectedOptions?.dateReceived);
         cK.font = dataFont; cK.border = thinBorder; cK.alignment = wrapTop;
 
         // L - Notes
@@ -2389,9 +2445,9 @@ const generateStatusReport = async (req, res) => {
         cO.value = p.selectedOptions?.warehouseReceivingNumber || '';
         cO.font = dataFont; cO.border = thinBorder; cO.alignment = wrapTop;
 
-        // P - Expediting Order Status
+        // P - Expediting Order Status (from Status Category in Custom Products Manager)
         const cP = ws2.getCell(ir, 16);
-        cP.value = p.selectedOptions?.orderStatus || p.selectedOptions?.deliveryStatus || '';
+        cP.value = p.selectedOptions?.statusCategory || '';
         cP.font = dataFont; cP.border = thinBorder; cP.alignment = wrapTop;
 
         // Q - Vendor Order Number
