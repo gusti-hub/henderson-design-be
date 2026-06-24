@@ -2584,58 +2584,83 @@ const generateCogExcel = async (req, res) => {
       .sort({ version: -1 })
       .lean();
 
-    // vendorId → { _id, poNumber, status, total } — latest POVersion per vendor
-    const vendorPOMap = new Map();
-    poVersions.forEach(po => {
-      const key = po.vendorId?.toString();
-      if (key && !vendorPOMap.has(key)) {
-        vendorPOMap.set(key, {
-          _id:      po._id,
-          poNumber: po.poNumber || '',
-          status:   po.status   || 'draft',
-          total:    parseFloat(po.total) || 0,
-        });
-      }
-    });
-
     const getVendorName = (p) => {
       if (p.vendor && typeof p.vendor === 'object' && p.vendor.name) return p.vendor.name;
       return p.selectedOptions?.shipToName || 'HDG Inventory';
     };
 
-    // Group by vendor; calculate product-level fallback total for vendors without a PO
-    const vendorMap = new Map();
+    // ── One row per unique (vendorId + poNumber), using POVersion as source of truth ──
+    // poVersions is sorted desc by version — first hit per key = latest version
+    const rowMap = new Map(); // `${vendorId}::${poNumber}` → row
+    const vendorsWithPO = new Set();
+
+    poVersions.forEach(po => {
+      const vid = po.vendorId?.toString();
+      if (!vid) return;
+      vendorsWithPO.add(vid);
+      const pno = (po.poNumber || '').trim();
+      const key = `${vid}::${pno}`;
+      if (!rowMap.has(key)) {
+        rowMap.set(key, {
+          vendorId:   vid,
+          poNumber:   pno || '(No PO# yet)',
+          vendorName: po.vendorInfo?.name || 'Unknown Vendor',
+          poStatus:   po.status || 'draft',
+          poEntry:    po,
+          calcTotal:  0,
+        });
+      }
+    });
+
+    // Freshen vendor names from populated products; collect no-PO vendors
+    const noPoVendors = new Map(); // vendorId → { vendorName, calcTotal }
 
     products.forEach((p) => {
       const vendorId   = p.vendor?._id?.toString() || p.vendor?.toString() || 'no_vendor';
       const vendorName = getVendorName(p);
-      const poEntry    = vendorId !== 'no_vendor' ? vendorPOMap.get(vendorId) : null;
-      const poNumber   = poEntry?.poNumber?.trim() ||
-                         p.selectedOptions?.poNumber?.trim() ||
-                         '(No PO# yet)';
-      const poStatus   = poEntry ? poEntry.status : null;
 
-      const opts          = p.selectedOptions || {};
-      const qty           = parseFloat(p.quantity) || 1;
-      const msrp          = parseFloat(opts.msrp) || 0;
-      const discount      = parseFloat(opts.discountPercent) || 0;
-      const netCost       = (opts.netCostOverride != null && opts.netCostOverride !== '')
-                              ? parseFloat(opts.netCostOverride)
-                              : msrp * (1 - discount / 100);
-      const calcTotal = netCost * qty;
+      if (vendorsWithPO.has(vendorId)) {
+        // Update vendorName on all rows for this vendor
+        for (const row of rowMap.values()) {
+          if (row.vendorId === vendorId) row.vendorName = vendorName;
+        }
+        return;
+      }
 
-      if (vendorMap.has(vendorId)) {
-        vendorMap.get(vendorId).calcTotal += calcTotal;
+      // Vendor has no PO — accumulate calculated total
+      const opts     = p.selectedOptions || {};
+      const qty      = parseFloat(p.quantity) || 1;
+      const msrp     = parseFloat(opts.msrp) || 0;
+      const discount = parseFloat(opts.discountPercent) || 0;
+      const netCost  = (opts.netCostOverride != null && opts.netCostOverride !== '')
+                         ? parseFloat(opts.netCostOverride)
+                         : msrp * (1 - discount / 100);
+      const calc = netCost * qty;
+
+      if (noPoVendors.has(vendorId)) {
+        noPoVendors.get(vendorId).calcTotal += calc;
       } else {
-        vendorMap.set(vendorId, { poNumber, vendorName, poStatus, poEntry, calcTotal });
+        noPoVendors.set(vendorId, { vendorName, calcTotal: calc });
       }
     });
 
-    // Use the saved PO total when a PO exists; fall back to calculated total otherwise
-    const poRows = Array.from(vendorMap.values()).map(row => ({
-      ...row,
-      total: row.poEntry ? row.poEntry.total : row.calcTotal,
-    }));
+    // Build final rows: PO rows use POVersion.total; no-PO rows use calculated total
+    const poRows = [
+      ...Array.from(rowMap.values()).map(row => ({
+        poNumber:   row.poNumber,
+        vendorName: row.vendorName,
+        poStatus:   row.poStatus,
+        poEntry:    row.poEntry,
+        total:      parseFloat(row.poEntry.total) || 0,
+      })),
+      ...Array.from(noPoVendors.values()).map(row => ({
+        poNumber:   '(No PO# yet)',
+        vendorName: row.vendorName,
+        poStatus:   null,
+        poEntry:    null,
+        total:      row.calcTotal,
+      })),
+    ];
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Henderson Design Group';
@@ -2747,22 +2772,10 @@ const generateCogWithBill = async (req, res) => {
 
     const products = order.selectedProducts || [];
 
-    // vendorId → { _id, poNumber, status, total } — latest POVersion per vendor
+    // poVersions sorted desc — first hit per key = latest version
     const poVersions = await POVersion.find({ orderId: req.params.id }).sort({ version: -1 }).lean();
-    const vendorPOMap = new Map();
-    poVersions.forEach(po => {
-      const key = po.vendorId?.toString();
-      if (key && !vendorPOMap.has(key)) {
-        vendorPOMap.set(key, {
-          _id:      po._id,
-          poNumber: po.poNumber || '',
-          status:   po.status   || 'draft',
-          total:    parseFloat(po.total) || 0,
-        });
-      }
-    });
 
-    // poVersionId → BillInvoice — exact 1:1 match via poVersionId field
+    // poVersionId → BillInvoice (1:1 via poVersionId)
     const bills = await BillInvoice.find({ orderId: req.params.id }).lean();
     const billByPOVersionId = new Map();
     bills.forEach(b => {
@@ -2775,52 +2788,91 @@ const generateCogWithBill = async (req, res) => {
       return p.selectedOptions?.shipToName || 'HDG Inventory';
     };
 
-    // Group by vendor; track fallback calculated total for vendors without a PO
-    const vendorMap = new Map();
-    products.forEach((p) => {
-      const vendorId   = p.vendor?._id?.toString() || p.vendor?.toString() || 'no_vendor';
-      const vendorName = getVendorName(p);
-      const poEntry    = vendorId !== 'no_vendor' ? vendorPOMap.get(vendorId) : null;
-      const poNumber   = poEntry?.poNumber?.trim() || p.selectedOptions?.poNumber?.trim() || '(No PO# yet)';
-      const poStatus   = poEntry ? poEntry.status : null;
+    // ── One row per unique (vendorId + poNumber), POVersion as source of truth ──
+    const rowMap = new Map();
+    const vendorsWithPO = new Set();
 
-      // Match bill via the exact POVersion _id (1:1 relationship)
-      const bill = poEntry ? billByPOVersionId.get(poEntry._id.toString()) : null;
-
-      const opts      = p.selectedOptions || {};
-      const qty       = parseFloat(p.quantity) || 1;
-      const msrp      = parseFloat(opts.msrp) || 0;
-      const discount  = parseFloat(opts.discountPercent) || 0;
-      const netCost   = (opts.netCostOverride != null && opts.netCostOverride !== '')
-                          ? parseFloat(opts.netCostOverride)
-                          : msrp * (1 - discount / 100);
-      const calcTotal = netCost * qty;
-
-      if (vendorMap.has(vendorId)) {
-        vendorMap.get(vendorId).calcTotal += calcTotal;
-      } else {
-        vendorMap.set(vendorId, {
-          poNumber, vendorName, poStatus, poEntry,
+    poVersions.forEach(po => {
+      const vid = po.vendorId?.toString();
+      if (!vid) return;
+      vendorsWithPO.add(vid);
+      const pno = (po.poNumber || '').trim();
+      const key = `${vid}::${pno}`;
+      if (!rowMap.has(key)) {
+        const bill = billByPOVersionId.get(po._id.toString());
+        rowMap.set(key, {
+          vendorId:   vid,
+          poNumber:   pno || '(No PO# yet)',
+          vendorName: po.vendorInfo?.name || 'Unknown Vendor',
+          poStatus:   po.status || 'draft',
+          poEntry:    po,
           billTotal:  bill ? (parseFloat(bill.total) || 0) : null,
           billNumber: bill ? bill.billNumber : null,
           billStatus: bill ? bill.status : null,
-          calcTotal,
+          calcTotal:  0,
         });
       }
     });
 
-    // Use saved PO total when PO exists; fall back to calculated total otherwise
-    const poRows = Array.from(vendorMap.values()).map(row => ({
-      ...row,
-      total: row.poEntry ? row.poEntry.total : row.calcTotal,
-    }));
+    // Freshen vendor names; collect no-PO vendors
+    const noPoVendors = new Map();
+
+    products.forEach((p) => {
+      const vendorId   = p.vendor?._id?.toString() || p.vendor?.toString() || 'no_vendor';
+      const vendorName = getVendorName(p);
+
+      if (vendorsWithPO.has(vendorId)) {
+        for (const row of rowMap.values()) {
+          if (row.vendorId === vendorId) row.vendorName = vendorName;
+        }
+        return;
+      }
+
+      const opts     = p.selectedOptions || {};
+      const qty      = parseFloat(p.quantity) || 1;
+      const msrp     = parseFloat(opts.msrp) || 0;
+      const discount = parseFloat(opts.discountPercent) || 0;
+      const netCost  = (opts.netCostOverride != null && opts.netCostOverride !== '')
+                         ? parseFloat(opts.netCostOverride)
+                         : msrp * (1 - discount / 100);
+      const calc = netCost * qty;
+
+      if (noPoVendors.has(vendorId)) {
+        noPoVendors.get(vendorId).calcTotal += calc;
+      } else {
+        noPoVendors.set(vendorId, { vendorName, calcTotal: calc });
+      }
+    });
+
+    const poRows = [
+      ...Array.from(rowMap.values()).map(row => ({
+        poNumber:   row.poNumber,
+        vendorName: row.vendorName,
+        poStatus:   row.poStatus,
+        poEntry:    row.poEntry,
+        billTotal:  row.billTotal,
+        billNumber: row.billNumber,
+        billStatus: row.billStatus,
+        total:      parseFloat(row.poEntry.total) || 0,
+      })),
+      ...Array.from(noPoVendors.values()).map(row => ({
+        poNumber:   '(No PO# yet)',
+        vendorName: row.vendorName,
+        poStatus:   null,
+        poEntry:    null,
+        billTotal:  null,
+        billNumber: null,
+        billStatus: null,
+        total:      row.calcTotal,
+      })),
+    ];
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Henderson Design Group';
     const ws   = wb.addWorksheet('COG + Bill Comparison');
 
     // Row 1 — project title
-    ws.mergeCells('A1:E1');
+    ws.mergeCells('A1:F1');
     const r1 = ws.getCell('A1');
     r1.value     = projectLabel;
     r1.font      = { name: 'Arial', bold: true, size: 11 };
@@ -2828,13 +2880,13 @@ const generateCogWithBill = async (req, res) => {
     ws.getRow(1).height = 20;
 
     // Row 2 — yellow bar
-    ['A2','B2','C2','D2','E2'].forEach(addr => {
+    ['A2','B2','C2','D2','E2','F2'].forEach(addr => {
       ws.getCell(addr).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
     });
     ws.getRow(2).height = 14;
 
-    // Row 3 — black header (5 columns)
-    ['HDG PO#', 'Vendor', 'Status PO', 'HDG PO Total', 'Bill Invoice'].forEach((h, i) => {
+    // Row 3 — black header (6 columns)
+    ['HDG PO#', 'Vendor', 'Status PO', 'HDG PO Total', 'Bill Invoice', 'Status Bill'].forEach((h, i) => {
       const cell = ws.getCell(3, i + 1);
       cell.value     = h;
       cell.font      = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
@@ -2847,39 +2899,42 @@ const generateCogWithBill = async (req, res) => {
     poRows.forEach((row, i) => {
       const r = i + 4;
       ws.getRow(r).height = 22;
-      const poCell     = ws.getCell(r, 1);
-      const vendorCell = ws.getCell(r, 2);
-      const statusCell = ws.getCell(r, 3);
-      const totalCell  = ws.getCell(r, 4);
-      const billCell   = ws.getCell(r, 5);
+      const poCell         = ws.getCell(r, 1);
+      const vendorCell     = ws.getCell(r, 2);
+      const statusCell     = ws.getCell(r, 3);
+      const totalCell      = ws.getCell(r, 4);
+      const billCell       = ws.getCell(r, 5);
+      const billStatusCell = ws.getCell(r, 6);
 
-      poCell.value     = row.poNumber;
-      vendorCell.value = row.vendorName;
-      statusCell.value = row.poStatus || '—';
-      totalCell.value  = row.total;
-      billCell.value   = row.billTotal !== null ? row.billTotal : '—';
+      poCell.value         = row.poNumber;
+      vendorCell.value     = row.vendorName;
+      statusCell.value     = row.poStatus  || '—';
+      totalCell.value      = row.total;
+      billCell.value       = row.billTotal !== null ? row.billTotal : '—';
+      billStatusCell.value = row.billStatus || '—';
 
-      [poCell, vendorCell, statusCell, totalCell, billCell].forEach(c => {
+      [poCell, vendorCell, statusCell, totalCell, billCell, billStatusCell].forEach(c => {
         c.font   = { name: 'Arial', size: 10 };
         c.border = { bottom: { style: 'thin', color: { argb: 'FFEEEEEE' } } };
       });
-      poCell.alignment     = { horizontal: 'left',   vertical: 'middle', indent: 1 };
-      vendorCell.alignment = { horizontal: 'left',   vertical: 'middle', indent: 1 };
-      statusCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      totalCell.alignment  = { horizontal: 'right',  vertical: 'middle' };
-      billCell.alignment   = { horizontal: 'right',  vertical: 'middle' };
+      poCell.alignment         = { horizontal: 'left',   vertical: 'middle', indent: 1 };
+      vendorCell.alignment     = { horizontal: 'left',   vertical: 'middle', indent: 1 };
+      statusCell.alignment     = { horizontal: 'center', vertical: 'middle' };
+      totalCell.alignment      = { horizontal: 'right',  vertical: 'middle' };
+      billCell.alignment       = { horizontal: 'right',  vertical: 'middle' };
+      billStatusCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
       if (row.billTotal !== null) {
         totalCell.numFmt = '"$"#,##0.00';
         billCell.numFmt  = '"$"#,##0.00';
-        // Highlight mismatch in red
+        // Highlight amount mismatch in red
         if (Math.abs(row.total - row.billTotal) > 0.01) {
           billCell.font = { name: 'Arial', size: 10, color: { argb: 'FFCC0000' }, bold: true };
         }
       }
 
       if (row.poNumber === '(No PO# yet)') {
-        [poCell, vendorCell, statusCell, totalCell, billCell].forEach(c => {
+        [poCell, vendorCell, statusCell, totalCell, billCell, billStatusCell].forEach(c => {
           c.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF999999' } };
           c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
         });
@@ -2903,6 +2958,7 @@ const generateCogWithBill = async (req, res) => {
     ws.getColumn(3).width = 16;
     ws.getColumn(4).width = 18;
     ws.getColumn(5).width = 18;
+    ws.getColumn(6).width = 16;
 
     const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
     const filename = `COG_Bill_${safeName}_${shortId}.xlsx`;
