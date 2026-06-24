@@ -23,7 +23,10 @@ const {
   generateCogExcel,
   generateCogWithBill,
   getLatestConfirmedPOs,
-  generateAllProductsReport
+  generateAllProductsReport,
+  generateBulkExport,
+  generateBulkPO,
+  getAvailablePOVendors,
 } = require('../controllers/orderController');
 const {
   handlePaymentProofUpload,
@@ -52,6 +55,9 @@ router.use(protect);
 // ===================================
 
 router.get('/all-products-report', generateAllProductsReport);
+router.post('/bulk-export', generateBulkExport);
+router.post('/bulk-po', generateBulkPO);
+router.post('/bulk-po-vendors', getAvailablePOVendors);
 
 router.get('/:id/cog-report',           generateCogExcel);
 router.get('/:id/cog-report-with-bill', generateCogWithBill);

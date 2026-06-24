@@ -3257,6 +3257,492 @@ const generateAllProductsReport = async (req, res) => {
   }
 };
 
+// ─── Bulk PO Export — Excel (2 sheets: Summary + Detail) ────────────────────
+const generateBulkExport = async (req, res) => {
+  try {
+    const ExcelJS = require('exceljs');
+    const mongoose = require('mongoose');
+    const { orderIds } = req.body;
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ message: 'No order IDs provided' });
+    }
+
+    const orders = await Order.find({ _id: { $in: orderIds } }).lean();
+    orders.sort((a, b) =>
+      (a.clientInfo?.unitNumber || '').localeCompare(b.clientInfo?.unitNumber || '', undefined, { numeric: true })
+    );
+
+    // Fetch ALL PO versions for each order (vendor can have multiple versions)
+    const posByOrder = new Map();
+    await Promise.all(orders.map(async (order) => {
+      const oid = mongoose.Types.ObjectId.isValid(order._id) ? new mongoose.Types.ObjectId(order._id) : order._id;
+      const allPOs = await POVersion.find({ orderId: oid }).sort({ vendorId: 1, version: 1 }).lean();
+      posByOrder.set(order._id.toString(), allPOs);
+    }));
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Henderson Design Group';
+
+    const thinBorder = {
+      top: { style: 'thin' }, left: { style: 'thin' },
+      bottom: { style: 'thin' }, right: { style: 'thin' },
+    };
+    const wrapTop = { vertical: 'top', wrapText: true };
+    const money = (n) => ({ value: isNaN(parseFloat(n)) ? 0 : parseFloat(n), numFmt: '"$"#,##0.00' });
+
+    // ── Sheet 1: Summary ──────────────────────────────────────────────────────
+    const summaryWs = wb.addWorksheet('Summary');
+    // Columns: Client | Unit | Vendor | PO # | Ver | Order Date | PO Status | Total
+    [20, 8, 24, 14, 6, 13, 14, 14].forEach((w, i) => { summaryWs.getColumn(i + 1).width = w; });
+    summaryWs.mergeCells('A1:H1');
+    summaryWs.getCell('A1').value = `Henderson Design Group — Combined PO Export — ${new Date().toLocaleDateString('en-US')}`;
+    summaryWs.getCell('A1').font = { name: 'Arial', bold: true, size: 12, color: { argb: 'FF005670' } };
+    summaryWs.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' };
+    summaryWs.getRow(1).height = 26;
+
+    ['Client', 'Unit', 'Vendor', 'PO #', 'Ver', 'Order Date', 'PO Status', 'Total PO Cost'].forEach((h, i) => {
+      const cell = summaryWs.getCell(2, i + 1);
+      cell.value = h;
+      cell.font = { name: 'Arial', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF005670' } };
+      cell.border = thinBorder;
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    });
+    summaryWs.getRow(2).height = 22;
+    let summaryRow = 3;
+    let grandTotal = 0;
+
+    // ── Sheet 2: Detail ───────────────────────────────────────────────────────
+    const DCOLS = [
+      'Client', 'Unit', 'Vendor', 'PO #', 'Order Date', 'Account #', 'Rep Name',
+      'Product Name', 'SKU', 'Qty',
+      'Specs / Description', 'Color / Finish', 'Material / Fabric',
+      'Dimensions', 'Lead Time', 'Sidemark',
+      'Unit Cost', 'Total Cost',
+    ];
+    const DWIDTHS = [20, 8, 22, 14, 13, 14, 18, 28, 14, 6, 30, 16, 16, 14, 12, 20, 13, 13];
+
+    const detailWs = wb.addWorksheet('Detail');
+    DWIDTHS.forEach((w, i) => { detailWs.getColumn(i + 1).width = w; });
+    detailWs.mergeCells(1, 1, 1, DCOLS.length);
+    detailWs.getCell('A1').value = `Henderson Design Group — PO Detail — ${new Date().toLocaleDateString('en-US')}`;
+    detailWs.getCell('A1').font = { name: 'Arial', bold: true, size: 12, color: { argb: 'FF005670' } };
+    detailWs.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' };
+    detailWs.getRow(1).height = 26;
+    DCOLS.forEach((h, i) => {
+      const cell = detailWs.getCell(2, i + 1);
+      cell.value = h;
+      cell.font = { name: 'Arial', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF005670' } };
+      cell.border = thinBorder;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    });
+    detailWs.getRow(2).height = 22;
+    let detailRow = 3;
+
+    // ── Populate both sheets ──────────────────────────────────────────────────
+    orders.forEach(order => {
+      const clientName = order.clientInfo?.name || 'Unknown';
+      const unitNumber = order.clientInfo?.unitNumber || '';
+      const pos = posByOrder.get(order._id.toString()) || [];
+      let orderTotal = 0;
+
+      // Client separator row in Detail sheet
+      detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length);
+      const clientCell = detailWs.getCell(detailRow, 1);
+      clientCell.value = `${clientName}${unitNumber ? '  ·  Unit ' + unitNumber : ''}`;
+      clientCell.font = { name: 'Arial', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      clientCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF005670' } };
+      clientCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      detailWs.getRow(detailRow).height = 20;
+      detailRow++;
+
+      pos.forEach(po => {
+        const vendorName = po.vendorInfo?.name || 'Unknown Vendor';
+        const poNumber = po.poNumber || '';
+        const poVersion = po.version || 1;
+        const poStatus = po.status || 'draft';
+        const orderDate = po.orderDate ? new Date(po.orderDate).toLocaleDateString('en-US') : '';
+
+        // Vendor/version sub-header in Detail
+        detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length);
+        const vhCell = detailWs.getCell(detailRow, 1);
+        vhCell.value = `  ${vendorName}${poNumber ? '  ·  PO #: ' + poNumber : ''}  ·  v${poVersion}  ·  ${poStatus.toUpperCase()}`;
+        vhCell.font = { name: 'Arial', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+        vhCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+        vhCell.alignment = { vertical: 'middle', horizontal: 'left' };
+        detailWs.getRow(detailRow).height = 18;
+        detailRow++;
+
+        let poTotal = 0;
+        (po.products || []).forEach(p => {
+          const qty = parseFloat(p.quantity) || 1;
+          const unitCost = parseFloat(p.unitPrice) || 0;
+          const totalCost = parseFloat(p.totalPrice) || unitCost * qty;
+          poTotal += totalCost;
+          const opts = p.selectedOptions || {};
+
+          const rowData = [
+            clientName, unitNumber, vendorName, poNumber, orderDate,
+            po.accountNumber || '', po.repName || '',
+            p.name || '', p.product_id || '', qty,
+            opts.specifications || p.description || '',
+            opts.finish || '', opts.fabric || '', opts.size || '',
+            opts.leadTime || '', opts.sidemark || '',
+            money(unitCost), money(totalCost),
+          ];
+          rowData.forEach((val, i) => {
+            const cell = detailWs.getCell(detailRow, i + 1);
+            if (val && typeof val === 'object' && 'numFmt' in val) {
+              cell.value = val.value; cell.numFmt = val.numFmt;
+            } else { cell.value = val; }
+            cell.font = { name: 'Arial', size: 9 };
+            cell.border = thinBorder;
+            cell.alignment = wrapTop;
+          });
+          detailWs.getRow(detailRow).height = 18;
+          detailRow++;
+        });
+
+        const shipping = parseFloat(po.shipping) || 0;
+        const others = parseFloat(po.others) || 0;
+        const savedTotal = parseFloat(po.total) || 0;
+        const vendorTotal = savedTotal || (poTotal + shipping + others);
+        orderTotal += vendorTotal;
+
+        // PO total row in Detail
+        detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length - 1);
+        detailWs.getCell(detailRow, 1).value = `PO Total — ${vendorName} v${poVersion}`;
+        detailWs.getCell(detailRow, 1).font = { name: 'Arial', bold: true, size: 9 };
+        detailWs.getCell(detailRow, 1).alignment = { horizontal: 'right' };
+        const vtCell = detailWs.getCell(detailRow, DCOLS.length);
+        vtCell.value = vendorTotal; vtCell.numFmt = '"$"#,##0.00';
+        vtCell.font = { name: 'Arial', bold: true, size: 9 };
+        vtCell.border = { top: { style: 'thin' } };
+        detailWs.getRow(detailRow).height = 16;
+        detailRow++;
+
+        // Summary: one row per PO version — use po.status, not order.status
+        // Columns: Client | Unit | Vendor | PO # | Ver | Order Date | PO Status | Total
+        [clientName, unitNumber, vendorName, poNumber, `v${poVersion}`, orderDate, poStatus, money(vendorTotal)].forEach((val, i) => {
+          const cell = summaryWs.getCell(summaryRow, i + 1);
+          if (val && typeof val === 'object' && 'numFmt' in val) {
+            cell.value = val.value; cell.numFmt = val.numFmt;
+          } else { cell.value = val; }
+          cell.font = { name: 'Arial', size: 9 };
+          cell.border = thinBorder;
+          cell.alignment = { vertical: 'middle' };
+        });
+        summaryWs.getRow(summaryRow).height = 18;
+        summaryRow++;
+        grandTotal += vendorTotal;
+      });
+
+      // Order total row in Detail
+      detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length - 1);
+      detailWs.getCell(detailRow, 1).value = `Order Total — ${clientName}${unitNumber ? ' Unit ' + unitNumber : ''}`;
+      detailWs.getCell(detailRow, 1).font = { name: 'Arial', bold: true, size: 10 };
+      detailWs.getCell(detailRow, 1).alignment = { horizontal: 'right', vertical: 'middle' };
+      const otCell = detailWs.getCell(detailRow, DCOLS.length);
+      otCell.value = orderTotal; otCell.numFmt = '"$"#,##0.00';
+      otCell.font = { name: 'Arial', bold: true, size: 10 };
+      otCell.border = { top: { style: 'double' } };
+      detailWs.getRow(detailRow).height = 20;
+      detailRow++;
+    });
+
+    // Grand total in Summary — 8-col layout: label spans cols 1-7, value in col 8
+    summaryWs.mergeCells(summaryRow, 1, summaryRow, 7);
+    summaryWs.getCell(summaryRow, 1).value = 'GRAND TOTAL';
+    summaryWs.getCell(summaryRow, 1).font = { name: 'Arial', bold: true, size: 10 };
+    summaryWs.getCell(summaryRow, 1).alignment = { horizontal: 'right', vertical: 'middle' };
+    const grandSumCell = summaryWs.getCell(summaryRow, 8);
+    grandSumCell.value = grandTotal; grandSumCell.numFmt = '"$"#,##0.00';
+    grandSumCell.font = { name: 'Arial', bold: true, size: 10 };
+    grandSumCell.border = { top: { style: 'double' } };
+    summaryWs.getRow(summaryRow).height = 22;
+
+    const filename = `Alia - Combined PO Export - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('❌ generateBulkExport error:', error);
+    res.status(500).json({ message: 'Failed to generate bulk PO export', detail: error.message });
+  }
+};
+
+// ─── Get available vendors for selected orders (for PDF vendor picker) ───────
+const getAvailablePOVendors = async (req, res) => {
+  try {
+    const mongoose = require('mongoose');
+    const { orderIds } = req.body;
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ message: 'No order IDs provided' });
+    }
+    const oids = orderIds.map(id => new mongoose.Types.ObjectId(id));
+    const allPOs = await POVersion.find({ orderId: { $in: oids } }).sort({ version: -1 }).lean();
+    const vendorMap = new Map();
+    allPOs.forEach(po => {
+      const vid = po.vendorId?.toString();
+      if (vid && !vendorMap.has(vid)) {
+        vendorMap.set(vid, { vendorId: vid, vendorName: po.vendorInfo?.name || 'Unknown Vendor' });
+      }
+    });
+    const vendors = Array.from(vendorMap.values()).sort((a, b) => a.vendorName.localeCompare(b.vendorName));
+    res.json({ success: true, vendors });
+  } catch (error) {
+    console.error('❌ getAvailablePOVendors error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── Bulk PO HTML (selected orders + selected vendor → combined PO PDF) ──────
+const generateBulkPO = async (req, res) => {
+  try {
+    const mongoose = require('mongoose');
+    const { orderIds, vendorId } = req.body;
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ message: 'No order IDs provided' });
+    }
+    if (!vendorId) {
+      return res.status(400).json({ message: 'No vendor selected' });
+    }
+
+    const orders = await Order.find({ _id: { $in: orderIds } }).lean();
+    orders.sort((a, b) =>
+      (a.clientInfo?.unitNumber || '').localeCompare(b.clientInfo?.unitNumber || '', undefined, { numeric: true })
+    );
+
+    const escHtml = (text) => {
+      if (!text) return '';
+      return String(text)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    };
+    const fmtMoney = (n) => {
+      const num = parseFloat(n) || 0;
+      return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    // Fetch ALL PO versions for the selected vendor per order (sorted oldest→newest)
+    const vendorOid = new mongoose.Types.ObjectId(vendorId);
+    const posByOrder = new Map();
+    await Promise.all(orders.map(async (order) => {
+      const oid = mongoose.Types.ObjectId.isValid(order._id) ? new mongoose.Types.ObjectId(order._id) : order._id;
+      const pos = await POVersion.find({ orderId: oid, vendorId: vendorOid }).sort({ version: 1 }).lean();
+      posByOrder.set(order._id.toString(), pos);
+    }));
+
+    const printedDate = new Date().toLocaleDateString('en-US');
+
+    const buildPoPage = (po, order) => {
+      const vi = po.vendorInfo || {};
+      const st = po.shipTo || {};
+      const vendorAddrLine = [vi.address?.city, vi.address?.state, vi.address?.zip].filter(Boolean).join(', ');
+      const orderDate = po.orderDate ? new Date(po.orderDate).toLocaleDateString('en-US') : '';
+      const clientName = po.clientInfo?.name || order.clientInfo?.name || '';
+      const subTotal = parseFloat(po.subTotal) || 0;
+      const shipping = parseFloat(po.shipping) || 0;
+      const others = parseFloat(po.others) || 0;
+      const total = parseFloat(po.total) || (subTotal + shipping + others);
+
+      const productRows = (po.products || []).map(p => {
+        const opts = p.selectedOptions || {};
+        const qty = parseFloat(p.quantity) || 1;
+        const unitCost = parseFloat(p.unitPrice) || 0;
+        const totalCost = parseFloat(p.totalPrice) || unitCost * qty;
+        const imgSrc = opts.uploadedImages?.[0]?.url || opts.image || opts.images?.[0] || null;
+        const specs = opts.specifications || p.description || '';
+        const sidemark = opts.sidemark || opts.spotName || p.spotName || '';
+
+        return `<tr>
+            <td class="img-cell">
+              ${imgSrc
+                ? `<img src="${escHtml(imgSrc)}" alt="${escHtml(p.name)}" onerror="this.style.display='none'">`
+                : '<div class="img-placeholder">No Image</div>'}
+            </td>
+            <td class="desc-cell">
+              <div class="desc-row"><span class="desc-label">Quantity</span><span class="desc-val">${qty} ${opts.units || 'Each'}</span></div>
+              ${specs ? `<div class="desc-row"><span class="desc-label">Specs</span><span class="desc-val" style="white-space:pre-wrap">${escHtml(specs)}</span></div>` : ''}
+              ${p.name ? `<div class="desc-row"><span class="desc-label">Name</span><span class="desc-val">${escHtml(p.name)}</span></div>` : ''}
+              ${p.product_id ? `<div class="desc-row"><span class="desc-label">SKU</span><span class="desc-val">${escHtml(p.product_id)}</span></div>` : ''}
+              ${opts.size ? `<div class="desc-row"><span class="desc-label">Dimensions</span><span class="desc-val">${escHtml(opts.size)}</span></div>` : ''}
+              ${opts.fabric ? `<div class="desc-row"><span class="desc-label">Material</span><span class="desc-val">${escHtml(opts.fabric)}</span></div>` : ''}
+              ${opts.finish ? `<div class="desc-row"><span class="desc-label">Color</span><span class="desc-val">${escHtml(opts.finish)}</span></div>` : ''}
+              ${opts.leadTime ? `<div class="desc-row"><span class="desc-label">Lead Time</span><span class="desc-val">${escHtml(opts.leadTime)}</span></div>` : ''}
+              ${sidemark ? `<div class="sidemark-strip"><span class="desc-label">Sidemark</span> ${escHtml(sidemark)}</div>` : ''}
+            </td>
+            <td class="price-cell">${fmtMoney(unitCost)}</td>
+            <td class="price-cell">${fmtMoney(totalCost)}</td>
+          </tr>`;
+      }).join('');
+
+      const additionalRows = (po.additionalLines || [])
+        .filter(al => al.description || al.amount)
+        .map(al => `<tr class="totals-row">
+            <td colspan="2"></td>
+            <td class="price-cell label">${escHtml(al.lineType || 'Additional')}: ${escHtml(al.description || '')}</td>
+            <td class="price-cell">${fmtMoney(al.amount)}</td>
+          </tr>`).join('');
+
+      const versionBadge = po.version ? `<span class="version-badge">v${po.version}${po.status ? ' · ' + po.status.toUpperCase() : ''}</span>` : '';
+
+      return `<div class="po-page">
+          <div class="co-header">
+            <div style="font-size:11px;line-height:1.5;color:#333">
+              <div>4343 Royal Place</div>
+              <div>Honolulu, HI 96816</div>
+              <div>(808) 315-8782</div>
+            </div>
+            <div style="text-align:right">
+              <img src="/images/HDG-Logo.png" alt="Henderson Design Group" class="hdg-logo">
+            </div>
+          </div>
+
+          <h2 class="po-title">Purchase Order ${versionBadge}</h2>
+
+          <div class="info-grid">
+            <div class="info-left">
+              <div class="field-label">To:</div>
+              ${vi.name ? `<div style="font-weight:500">${escHtml(vi.name)}</div>` : ''}
+              ${vi.address?.street ? `<div>${escHtml(vi.address.street)}</div>` : ''}
+              ${vendorAddrLine ? `<div>${escHtml(vendorAddrLine)}</div>` : ''}
+              ${vi.representativeName ? `<div><span class="field-label">Attention: </span>${escHtml(vi.representativeName)}</div>` : ''}
+              ${vi.contactInfo?.phone ? `<div><span class="field-label">Phone: </span>${escHtml(vi.contactInfo.phone)}${vi.contactInfo?.fax ? `  <span class="field-label">Fax: </span>${escHtml(vi.contactInfo.fax)}` : ''}</div>` : ''}
+
+              <div class="field-label" style="margin-top:8px">Ship To:</div>
+              ${st.name ? `<div>${escHtml(st.name)}</div>` : ''}
+              ${st.address ? `<div>${escHtml(st.address)}</div>` : ''}
+              ${st.city ? `<div>${escHtml(st.city)}</div>` : ''}
+              ${st.attention ? `<div><span class="field-label">Attention: </span>${escHtml(st.attention)}</div>` : ''}
+              ${st.phone ? `<div><span class="field-label">Phone: </span>${escHtml(st.phone)}</div>` : ''}
+
+              ${po.comments ? `<div style="margin-top:6px"><span class="field-label">Comments: </span>${escHtml(po.comments)}</div>` : ''}
+              ${po.notes ? `<div><span class="field-label">Notes: </span>${escHtml(po.notes)}</div>` : ''}
+            </div>
+            <div class="info-right">
+              ${[
+                ['Order #:', po.poNumber],
+                ['Version:', po.version ? `v${po.version}` : null],
+                ['Status:', po.status ? po.status.toUpperCase() : null],
+                ['Order Date:', orderDate],
+                ['Printed Date:', printedDate],
+                ['Account Number:', po.accountNumber],
+                ['Rep Name:', po.repName],
+                ['Rep Phone:', po.repPhone],
+                ['Rep Email:', po.repEmail],
+                ['Terms:', po.terms],
+                ['Client:', clientName],
+                ['Estimate #:', po.estimateNumber],
+              ].map(([label, val]) => val ? `<div class="detail-row"><span class="field-label">${escHtml(label)}</span><span>${escHtml(val)}</span></div>` : '').join('')}
+            </div>
+          </div>
+
+          <table class="po-table">
+            <thead>
+              <tr>
+                <th style="width:120px"></th>
+                <th>Description</th>
+                <th class="price-head" style="width:100px">Unit Cost</th>
+                <th class="price-head" style="width:100px">Total Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${productRows}
+              ${additionalRows}
+              <tr class="totals-row"><td colspan="2"></td><td class="price-cell label">Sub Total:</td><td class="price-cell">${fmtMoney(subTotal)}</td></tr>
+              ${shipping ? `<tr class="totals-row"><td colspan="2"></td><td class="price-cell label">Shipping:</td><td class="price-cell">${fmtMoney(shipping)}</td></tr>` : ''}
+              ${others ? `<tr class="totals-row"><td colspan="2"></td><td class="price-cell label">Others:</td><td class="price-cell">${fmtMoney(others)}</td></tr>` : ''}
+              <tr class="totals-row total-final"><td colspan="2"></td><td class="price-cell label">Total:</td><td class="price-cell">${fmtMoney(total)}</td></tr>
+            </tbody>
+          </table>
+        </div>`;
+    };
+
+    const poPages = [];
+    orders.forEach(order => {
+      const pos = posByOrder.get(order._id.toString()) || [];
+      pos.forEach(po => {
+        poPages.push(buildPoPage(po, order));
+      });
+    });
+
+    const totalPOs = poPages.length;
+    const origin = req.headers.origin || req.headers.referer?.replace(/\/$/, '') || '';
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  ${origin ? `<base href="${origin}/">` : ''}
+  <style>
+    @page { size: letter portrait; margin: 0.5in; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 11px; background: #b8b8b8; }
+    @media print {
+      body { background: white; }
+      .no-print { display: none !important; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    }
+    .no-print { position: fixed; top: 0; left: 0; right: 0; z-index: 999; background: #005670; color: white; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; font-family: Arial, sans-serif; }
+    .print-btn { padding: 8px 18px; background: white; color: #005670; border: none; border-radius: 6px; font-weight: 700; font-size: 13px; cursor: pointer; }
+    .pages-wrap { padding: 60px 0 20px; }
+    .po-page { background: white; width: 8.5in; min-height: 11in; padding: 0.5in; margin: 0 auto 20px; box-shadow: 0 0 10px rgba(0,0,0,0.15); page-break-after: always; }
+    .po-page:last-child { page-break-after: avoid; }
+    .co-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .hdg-logo { height: 40px; width: auto; filter: brightness(0) saturate(100%) invert(21%) sepia(98%) saturate(1160%) hue-rotate(160deg) brightness(92%) contrast(90%); }
+    .po-title { font-size: 16px; font-weight: bold; margin: 10px 0 8px; color: #222; border-bottom: 2px solid #333; padding-bottom: 5px; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border-bottom: 1px solid #ccc; padding-bottom: 10px; margin-bottom: 10px; }
+    .info-left { padding-right: 20px; border-right: 1px solid #ccc; font-size: 11px; line-height: 1.6; }
+    .info-right { padding-left: 20px; font-size: 11px; }
+    .field-label { font-weight: bold; font-size: 11px; color: #333; }
+    .detail-row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+    .po-table { width: 100%; border-collapse: collapse; font-size: 11px; border: 1px solid #999; table-layout: fixed; }
+    .po-table th { background: #666; color: white; padding: 6px 10px; text-align: left; font-weight: 600; font-size: 10px; }
+    .price-head { text-align: right; }
+    .po-table td { padding: 10px; vertical-align: top; word-wrap: break-word; }
+    .po-table tbody tr + tr td { border-top: 1px solid #f0f0f0; }
+    .img-cell { width: 120px; text-align: center; vertical-align: middle; padding: 8px; }
+    .img-cell img { max-width: 110px; max-height: 110px; object-fit: contain; display: block; margin: 0 auto; }
+    .img-placeholder { width: 110px; height: 110px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #999; border: 1px solid #eee; margin: 0 auto; }
+    .desc-cell { padding: 10px; }
+    .desc-row { display: block; padding: 3px 0; font-size: 11px; border-bottom: 1px dotted #eee; }
+    .desc-row:last-child { border-bottom: none; }
+    .desc-label { font-weight: 700; color: #444; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; margin-right: 4px; }
+    .desc-label::after { content: ':'; }
+    .desc-val { color: #222; font-size: 11px; word-break: break-word; }
+    .sidemark-strip { display: block; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #ccc; font-size: 10px; }
+    .price-cell { text-align: right; width: 100px; font-size: 11px; white-space: nowrap; }
+    .price-cell.label { text-align: right; font-weight: bold; color: #333; font-size: 11px; }
+    .totals-row td { border: none !important; padding: 2px 10px; }
+    .total-final td { border-top: 2px solid #333 !important; font-weight: bold; font-size: 12px; }
+    .version-badge { font-size: 11px; font-weight: normal; background: #e2e8f0; color: #334155; border-radius: 4px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div class="no-print">
+    <span style="font-size:14px;font-weight:bold">Combined Purchase Orders — ${totalPOs} PO${totalPOs !== 1 ? 's' : ''} (${orders.length} unit${orders.length !== 1 ? 's' : ''})</span>
+    <div style="display:flex;align-items:center;gap:16px">
+      <span style="font-size:11px;opacity:0.8">Margins: None · Background Graphics: On · Orientation: Portrait</span>
+      <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
+    </div>
+  </div>
+  <div class="pages-wrap">
+    ${poPages.join('\n')}
+  </div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (error) {
+    console.error('❌ generateBulkPO error:', error);
+    res.status(500).json({ message: 'Failed to generate bulk PO' });
+  }
+};
+
 module.exports = {
   createOrder,
   getOrders,
@@ -3271,7 +3757,7 @@ module.exports = {
   getOrdersByClient,
   saveFurniturePlacements,
   uploadCustomProductImages,  // ✅ NEW
-  uploadOrderFloorPlan, 
+  uploadOrderFloorPlan,
   generateInstallBinder,
   generateInstallBinderExcel,
   generateStatusReport,
@@ -3280,5 +3766,8 @@ module.exports = {
   generateCogWithBill,
   getLatestConfirmedPOs,
   saveCurrentVersion,
-  generateAllProductsReport
+  generateAllProductsReport,
+  generateBulkExport,
+  generateBulkPO,
+  getAvailablePOVendors,
 };
