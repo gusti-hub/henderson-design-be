@@ -3565,7 +3565,7 @@ const generateBulkPO = async (req, res) => {
             </td>
             <td class="desc-cell">
               <div class="desc-row"><span class="desc-label">Quantity</span><span class="desc-val">${qty} ${opts.units || 'Each'}</span></div>
-              ${specs ? `<div class="desc-row"><span class="desc-label">Specs</span><span class="desc-val" style="white-space:pre-wrap">${escHtml(specs)}</span></div>` : ''}
+              ${specs ? `<div class="desc-row"><span class="desc-label">Specs</span><span class="desc-val" style="white-space:pre-wrap">${escHtml(specs).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')}</span></div>` : ''}
               ${p.name ? `<div class="desc-row"><span class="desc-label">Name</span><span class="desc-val">${escHtml(p.name)}</span></div>` : ''}
               ${p.product_id ? `<div class="desc-row"><span class="desc-label">SKU</span><span class="desc-val">${escHtml(p.product_id)}</span></div>` : ''}
               ${opts.size ? `<div class="desc-row"><span class="desc-label">Dimensions</span><span class="desc-val">${escHtml(opts.size)}</span></div>` : ''}

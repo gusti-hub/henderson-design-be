@@ -1,9 +1,61 @@
 const BillInvoice = require('../models/BillInvoice');
 const POVersion   = require('../models/POVersion');
+const Order       = require('../models/Order');
 const { quickbooksClient } = require('../utils/quickbooksClient');
 const QuickBooksToken      = require('../models/QuickBooksToken');
 
 const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+
+// Same formula as poController.computeNetCost — keeps BI and PO prices in sync
+const computeNetCost = (product) => {
+  const opts = product.selectedOptions || {};
+  if (opts.netCostOverride != null && opts.netCostOverride !== '') return parseFloat(opts.netCostOverride);
+  return parseFloat(opts.msrp || 0);
+};
+
+// Enrich POVersion products with live order data (same logic as getPurchaseOrder)
+const enrichProducts = (poProducts, order) => {
+  const orderMap = {};
+  (order?.selectedProducts || []).forEach(p => {
+    if (p.product_id) orderMap[p.product_id] = p;
+    if (p._id) orderMap[String(p._id)] = p;
+  });
+  return (poProducts || []).map(pp => {
+    const op = orderMap[pp.product_id] || orderMap[String(pp._id)];
+    if (!op) return pp;
+    const netCost = computeNetCost(op);
+    const qty = op.quantity || pp.quantity || 1;
+    const opts = op.selectedOptions || {};
+    const hasPoImages = (pp.selectedOptions?.uploadedImages?.length || 0) > 0;
+    return {
+      ...pp,
+      name: op.name || pp.name,
+      quantity: qty,
+      unitPrice: netCost,
+      totalPrice: netCost * qty,
+      selectedOptions: {
+        ...pp.selectedOptions,
+        msrp: parseFloat(opts.msrp) || pp.selectedOptions?.msrp || 0,
+        netCostOverride: opts.netCostOverride ?? null,
+        finish: opts.finish || '',
+        fabric: opts.fabric || '',
+        size: opts.size || '',
+        vendorDescription: opts.vendorDescription || '',
+        image:  opts.image  || pp.selectedOptions?.image  || '',
+        images: opts.images || pp.selectedOptions?.images || [],
+        uploadedImages: hasPoImages
+          ? pp.selectedOptions.uploadedImages
+          : (opts.uploadedImages || []),
+        sidemark:          pp.selectedOptions?.sidemark          || opts.sidemark          || '',
+        shipToName:        pp.selectedOptions?.shipToName        || opts.shipToName        || '',
+        shippingStreet:    pp.selectedOptions?.shippingStreet    || opts.shippingStreet    || '',
+        shippingCity:      pp.selectedOptions?.shippingCity      || opts.shippingCity      || '',
+        shippingState:     pp.selectedOptions?.shippingState     || opts.shippingState     || '',
+        shippingPostalCode:pp.selectedOptions?.shippingPostalCode|| opts.shippingPostalCode|| '',
+      },
+    };
+  });
+};
 
 // ─── Load QB tokens (same helper pattern as quickbooksController) ─────────────
 const loadTokensFromDatabase = async () => {
@@ -35,22 +87,44 @@ const getOrCreateBillInvoice = async (req, res) => {
 
     if (!poVersionId) return res.status(400).json({ message: 'poVersionId query param required' });
 
-    // Return existing if found; auto-fix legacy BI- prefix if present
-    const existing = await BillInvoice.findOne({ poVersionId });
+    // Always fetch PO + order so prices are computed the same way as getPurchaseOrder
+    const [existing, po, order] = await Promise.all([
+      BillInvoice.findOne({ poVersionId }),
+      POVersion.findById(poVersionId).lean(),
+      Order.findById(orderId).lean(),
+    ]);
+
+    if (!po) return res.status(404).json({ message: 'PO version not found' });
+
+    // Enrich PO products with live order prices (same formula as getPurchaseOrder)
+    const liveProducts = enrichProducts(po.products, order);
+    const subTotal = liveProducts.reduce((s, p) => s + (p.totalPrice || 0), 0);
+
+    // Return existing BI but override products with live prices so BI always matches PO
     if (existing) {
       if (existing.billNumber && existing.billNumber.startsWith('BI-')) {
         existing.billNumber = existing.billNumber.replace(/^BI-/, '');
         await existing.save();
       }
-      return res.json({ success: true, data: existing });
+      const existingObj = existing.toObject();
+      return res.json({
+        success: true,
+        data: {
+          ...existingObj,
+          products: liveProducts,
+          // PO reference data for comparison panel
+          _poAdditionalLines: po.additionalLines || [],
+          _poShipping: po.shipping || 0,
+          _poOthers:   po.others   || 0,
+          _poSubTotal: subTotal,
+        },
+      });
     }
 
-    // Create from PO
-    const po = await POVersion.findById(poVersionId).lean();
-    if (!po) return res.status(404).json({ message: 'PO version not found' });
-
-    const poNum    = po.poNumber || po._id.toString().slice(-8).toUpperCase();
-    const billNum  = poNum; // same format as PO (no BI- prefix)
+    // Create new Bill Invoice from PO metadata + live prices
+    const poNum   = po.poNumber || po._id.toString().slice(-8).toUpperCase();
+    const billNum = poNum;
+    const vendorProducts = liveProducts;
 
     const bill = await BillInvoice.create({
       orderId,
@@ -71,21 +145,21 @@ const getOrCreateBillInvoice = async (req, res) => {
       clientInfo: po.clientInfo,
       vendorInfo: po.vendorInfo,
 
-      originalProducts: (po.products || []).map(p => ({
-        product_id: p.product_id,
+      originalProducts: vendorProducts.map(p => ({
+        product_id: p._id?.toString() || p.product_id,
         name:       p.name,
         quantity:   p.quantity  || 1,
         unitPrice:  p.unitPrice || 0,
         totalPrice: p.totalPrice || 0,
       })),
 
-      products:        po.products        || [],
+      products:        vendorProducts,
       additionalLines: po.additionalLines || [],
 
-      subTotal: po.subTotal || 0,
+      subTotal,
       shipping: po.shipping || 0,
       others:   po.others   || 0,
-      total:    po.total    || 0,
+      total:    subTotal + (po.shipping || 0) + (po.others || 0),
 
       comments: po.comments || '',
       notes:    po.notes    || '',
