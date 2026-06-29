@@ -23,10 +23,12 @@ const {
   generateCogExcel,
   generateCogWithBill,
   getLatestConfirmedPOs,
+  getLinkedDocuments,
   generateAllProductsReport,
   generateBulkExport,
   generateBulkPO,
   getAvailablePOVendors,
+  createOrderForClient,
 } = require('../controllers/orderController');
 const {
   handlePaymentProofUpload,
@@ -86,6 +88,7 @@ router.post(
 
 router.get('/user-order', getCurrentUserOrder);
 router.get('/client/:clientId', getOrdersByClient);
+router.post('/client/:clientId/new-order', createOrderForClient);
 
 // ===================================
 // DOCUMENTS & EXPORTS
@@ -148,5 +151,6 @@ router.get('/:id/install-binder-excel', generateInstallBinderExcel);
 router.get('/:id/status-report',        generateStatusReport);
 
 router.get('/:orderId/po/latest-confirmed', getLatestConfirmedPOs);
+router.get('/:orderId/linked-documents',    getLinkedDocuments);
 
 module.exports = router;

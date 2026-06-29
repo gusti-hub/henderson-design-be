@@ -87,8 +87,56 @@ const updateOrder = async (req, res) => {
     if (req.body.selectedProducts && Array.isArray(req.body.selectedProducts)) {
       console.log(`📦 Processing ${req.body.selectedProducts.length} products`);
 
+      // ── Guard: block removal of products used in confirmed POs / approved Proposals ──
+      const existingIds = new Set(
+        (existingOrder.selectedProducts || []).map(p => String(p._id))
+      );
+      const incomingIds = new Set(
+        req.body.selectedProducts
+          .map(p => p._id && !String(p._id).startsWith('temp_') ? String(p._id) : null)
+          .filter(Boolean)
+      );
+      const removedIds = [...existingIds].filter(id => !incomingIds.has(id));
+
+      if (removedIds.length > 0) {
+        const removedProducts = (existingOrder.selectedProducts || []).filter(p =>
+          removedIds.includes(String(p._id))
+        );
+        const removedProductIds = removedProducts.map(p => p.product_id).filter(Boolean);
+
+        const [blockedPOs, blockedProposals] = await Promise.all([
+          POVersion.find({
+            orderId: existingOrder._id,
+            status: 'confirmed',
+            'products.product_id': { $in: removedProductIds },
+          }).select('poNumber vendorInfo.name').lean(),
+
+          ProposalVersion.find({
+            orderId: existingOrder._id,
+            status: { $in: ['sent', 'approved'] },
+            'selectedProducts.product_id': { $in: removedProductIds },
+          }).select('proposalNumber version status').lean(),
+        ]);
+
+        if (blockedPOs.length > 0 || blockedProposals.length > 0) {
+          return res.status(409).json({
+            message: 'Cannot remove product(s) that are already included in confirmed documents.',
+            blockedBy: {
+              pos: blockedPOs.map(po => ({
+                poNumber: po.poNumber,
+                vendor: po.vendorInfo?.name || 'Unknown Vendor',
+              })),
+              proposals: blockedProposals.map(p => ({
+                proposalNumber: p.proposalNumber,
+                version: p.version,
+                status: p.status,
+              })),
+            },
+          });
+        }
+      }
+
       // ── Build map dari existing products di DB: index → _id ──────────────
-      // Dipakai untuk restore _id yang tidak dikirim dari frontend
       const existingIdByIndex = new Map();
       const existingIdByProductId = new Map();
       (existingOrder.selectedProducts || []).forEach((p, idx) => {
@@ -304,58 +352,47 @@ const getOrders = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || '';
     const status = req.query.status;
+    const groupByClient = req.query.groupByClient !== 'false'; // default true
     const skip = (page - 1) * limit;
 
-    // ✅ Build optimized query
-    let searchQuery = {};
-
-    // Add search conditions
+    let matchStage = {};
     if (search) {
-      searchQuery.$or = [
+      matchStage.$or = [
         { 'clientInfo.name': { $regex: search, $options: 'i' } },
         { 'clientInfo.unitNumber': { $regex: search, $options: 'i' } }
       ];
     }
-
-    // Add status filter
     if (status && status !== 'all') {
-      searchQuery.status = status;
+      matchStage.status = status;
     }
 
-    console.log('📊 Query:', searchQuery);
-    console.time('getOrders');
+    const basePipeline = groupByClient
+      ? [
+          { $match: matchStage },
+          { $sort: { updatedAt: -1, createdAt: -1 } },
+          { $group: { _id: '$user', doc: { $first: '$$ROOT' } } },
+          { $replaceRoot: { newRoot: '$doc' } },
+          { $sort: { updatedAt: -1, createdAt: -1 } },
+        ]
+      : [
+          { $match: matchStage },
+          { $sort: { updatedAt: -1, createdAt: -1 } },
+        ];
 
-    // ✅ CRITICAL: Exclude heavy fields from list view
-    const excludeFields = {
-      // 'selectedProducts.selectedOptions.uploadedImages': 0, // Don't load images in list
-      'customFloorPlan.data': 0, // Don't load floor plan in list
-      'occupiedSpots': 0 // Don't need spot data in list
-    };
-
-    // Execute query with lean() for better performance
-    const [total, orders] = await Promise.all([
-      Order.countDocuments(searchQuery),
-      Order.find(searchQuery, excludeFields)
-        .populate({
-          path: 'user',
-          select: 'name email clientCode unitNumber'
-        })
-        .populate({
-          path: 'selectedProducts.vendor',
-          select: 'name'          // ✅ FIX: populate vendor name
-        })
-        .populate({ path: 'updatedBy', select: 'name' }) 
-        .select('-__v')
-        .skip(skip)
-        .limit(limit)
-        .sort({ createdAt: -1 })
-        .lean()
+    const [countResult, orders] = await Promise.all([
+      Order.aggregate([...basePipeline, { $count: 'total' }]),
+      Order.aggregate([...basePipeline, { $skip: skip }, { $limit: limit }]),
     ]);
 
-    console.timeEnd('getOrders');
-    console.log(`✅ Returned ${orders.length} orders in page ${page}`);
+    // Populate references (works on aggregation results)
+    await Order.populate(orders, [
+      { path: 'user', select: 'name email clientCode unitNumber' },
+      { path: 'selectedProducts.vendor', select: 'name' },
+      { path: 'updatedBy', select: 'name' },
+    ]);
 
-    // Send response
+    const total = countResult[0]?.total || 0;
+
     res.json({
       orders,
       total,
@@ -1240,17 +1277,18 @@ const getOrdersByClient = async (req, res) => {
     }
 
     let orders = await Order.find({ user: user._id })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: 1 }); // oldest first for consistent orderNumber assignment
 
     if (orders.length === 0 && user.status === 'approved') {
       console.log(`📦 Auto-creating order for approved client: ${user.clientCode}`);
-      
+
       const packageType = user.packageType || 'investor';
       const floorPlanConfigId = getFloorPlanConfigId(user.floorPlan, user.collection, packageType);
       const floorPlanImage = getFloorPlanImagePath(floorPlanConfigId);
-      
+
       const newOrder = await Order.create({
         user: user._id,
+        orderNumber: 1,
         packageType,
         clientInfo: {
           name: user.name,
@@ -1277,19 +1315,84 @@ const getOrdersByClient = async (req, res) => {
 
       orders = [newOrder];
       console.log('✅ Order created with config ID:', floorPlanConfigId, 'Package Type:', packageType);
+    } else {
+      // Lazily assign orderNumber to any orders that don't have one yet
+      const needsNumber = orders.filter(o => o.orderNumber == null);
+      if (needsNumber.length > 0) {
+        for (let i = 0; i < orders.length; i++) {
+          if (orders[i].orderNumber == null) {
+            orders[i].orderNumber = i + 1;
+            await Order.findByIdAndUpdate(orders[i]._id, { orderNumber: i + 1 });
+          }
+        }
+      }
     }
 
     res.json({
       success: true,
-      orders: orders
+      orders: orders.sort((a, b) => (a.orderNumber || 999) - (b.orderNumber || 999)),
     });
 
   } catch (error) {
     console.error('❌ Error getOrdersByClient:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: error.message 
+      message: error.message
     });
+  }
+};
+
+// @desc    Create a new order for an existing client
+// @route   POST /api/orders/client/:clientId/new-order
+// @access  Private (Admin)
+const createOrderForClient = async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { orderLabel } = req.body;
+
+    const user = await User.findById(clientId);
+    if (!user) return res.status(404).json({ success: false, message: 'Client not found' });
+
+    const existingOrders = await Order.find({ user: user._id }).select('orderNumber').lean();
+    const nextNumber = existingOrders.length + 1;
+
+    const packageType = user.packageType || 'custom';
+    const floorPlanConfigId = getFloorPlanConfigId(user.floorPlan, user.collection, packageType);
+    const floorPlanImage = getFloorPlanImagePath(floorPlanConfigId);
+
+    const newOrder = await Order.create({
+      user: user._id,
+      orderNumber: nextNumber,
+      orderLabel: `Order ${nextNumber}`,
+      packageType: 'custom',
+      clientInfo: {
+        name: user.name,
+        unitNumber: user.unitNumber,
+        floorPlan: user.floorPlan,
+      },
+      selectedPlan: {
+        id: floorPlanConfigId || 'custom-a',
+        title: user.floorPlan || 'Residence',
+        description: user.collection ? `${user.collection} - ${user.bedroomCount} Bedroom` : 'Custom',
+        image: floorPlanImage || '',
+        clientInfo: {
+          name: user.name,
+          unitNumber: user.unitNumber,
+          floorPlan: user.floorPlan,
+        },
+      },
+      Package: user.collection ? `${user.collection} - ${user.bedroomCount}BR` : 'Custom',
+      selectedProducts: [],
+      occupiedSpots: {},
+      status: 'ongoing',
+      step: 1,
+      createdBy: req.user.id,
+    });
+
+    res.status(201).json({ success: true, data: newOrder });
+  } catch (error) {
+    console.error('❌ Error createOrderForClient:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -3012,6 +3115,43 @@ const getLatestConfirmedPOs = async (req, res) => {
   }
 };
 
+const getLinkedDocuments = async (req, res) => {
+  try {
+    const mongoose    = require('mongoose');
+    const POVersion   = require('../models/POVersion');
+    const ProposalVersion = require('../models/ProposalVersion');
+    const { orderId } = req.params;
+
+    const orderObjectId = mongoose.Types.ObjectId.createFromHexString(orderId);
+
+    const [order, poVendors, latestProposal] = await Promise.all([
+      Order.findById(orderId).select('proposalNumber orderNumber orderLabel'),
+      POVersion.aggregate([
+        { $match: { orderId: orderObjectId } },
+        { $sort: { vendorId: 1, version: -1 } },
+        { $group: { _id: '$vendorId', poNumber: { $first: '$poNumber' }, vendorName: { $first: '$vendorInfo.name' } } }
+      ]),
+      ProposalVersion.findOne({ orderId: orderObjectId }, { status: 1, proposalNumber: 1 }, { sort: { version: -1 } }).lean()
+    ]);
+
+    const proposalNumber = latestProposal?.proposalNumber || order?.proposalNumber || null;
+
+    res.json({
+      success: true,
+      data: {
+        hasProposal: !!latestProposal,
+        proposalStatus: latestProposal?.status || null,
+        proposalApproved: latestProposal?.status === 'approved',
+        proposalNumber,
+        hasPO: poVendors.length > 0,
+        poVendors: poVendors.map(p => ({ vendorId: p._id?.toString() || null, vendorName: p.vendorName || 'Unknown Vendor', poNumber: p.poNumber || null })),
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const saveCurrentVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -3765,9 +3905,11 @@ module.exports = {
   generateCogExcel,
   generateCogWithBill,
   getLatestConfirmedPOs,
+  getLinkedDocuments,
   saveCurrentVersion,
   generateAllProductsReport,
   generateBulkExport,
   generateBulkPO,
   getAvailablePOVendors,
+  createOrderForClient,
 };
