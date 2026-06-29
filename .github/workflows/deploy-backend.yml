@@ -59,5 +59,5 @@ jobs:
             docker run -d \
               --name ${{ steps.vars.outputs.container }} \
               -p ${{ steps.vars.outputs.port }} \
-              --env-file /root/${{ steps.vars.outputs.envfile }} \
+              --env-file /app/${{ steps.vars.outputs.envfile }} \
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}
