@@ -2,7 +2,7 @@ name: Deploy Backend to Digital Ocean
 
 on:
   push:
-    branches: [ main, refactor/order-source-of-truth ]
+    branches: [ main, main-stable, refactor/order-source-of-truth ]
 
 env:
   REGISTRY: "registry.digitalocean.com/hale-project"
@@ -18,7 +18,7 @@ jobs:
       - name: Set deploy target
         id: vars
         run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/main-stable" ]; then
             echo "tag=latest" >> $GITHUB_OUTPUT
             echo "container=hale-be-container" >> $GITHUB_OUTPUT
             echo "port=5000:5000" >> $GITHUB_OUTPUT
