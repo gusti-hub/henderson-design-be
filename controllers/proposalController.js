@@ -194,11 +194,12 @@ const getProposalData = async (req, res) => {
         clientInfo:       order.clientInfo,
         user:             order.user,
         selectedPlan:     order.selectedPlan,
-        selectedProducts: finalSelectedProducts,
+        selectedProducts:  finalSelectedProducts,
         excludedProducts,
-        createdAt:        order.createdAt,
-        updatedAt:        order.updatedAt,
-        depositPercent:   latestVersion?.depositPercent ?? 100,
+        hiddenProductIds:  latestVersion?.hiddenProductIds || [],
+        createdAt:         order.createdAt,
+        updatedAt:         order.updatedAt,
+        depositPercent:    latestVersion?.depositPercent ?? 100,
       }
     });
 
@@ -480,7 +481,7 @@ const updateProposalStatus = async (req, res) => {
 const saveCurrentVersion = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { products, clientInfo, depositPercent, version } = req.body;
+    const { products, clientInfo, depositPercent, version, hiddenProductIds } = req.body;
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
@@ -502,6 +503,7 @@ const saveCurrentVersion = async (req, res) => {
       if (products !== undefined) targetVersion.selectedProducts = products;
       if (clientInfo) targetVersion.clientInfo = clientInfo;
       if (depositPercent !== undefined) targetVersion.depositPercent = depositPercent;
+      if (hiddenProductIds !== undefined) targetVersion.hiddenProductIds = hiddenProductIds;
       targetVersion.updatedAt = new Date();
       targetVersion.updatedBy = req.user.id;
       await targetVersion.save();

@@ -83,6 +83,11 @@ const proposalVersionSchema = new mongoose.Schema({
     type: Number,
     default: 90,
   },
+
+  hiddenProductIds: {
+    type: [String],
+    default: [],
+  },
   
   status: {
     type: String,
