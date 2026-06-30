@@ -175,72 +175,11 @@ const getProposalData = async (req, res) => {
       proposalNumber = await ensureProposalNumber(fullOrder);
     }
 
-    const allVersions = await ProposalVersion.find({ orderId }).lean();
-    // Order is source of truth — finalSelectedProducts is resolved below
-    let finalSelectedProducts = order.selectedProducts || latestVersion?.selectedProducts || [];
-    let excludedProducts = [];
-
-    if (latestVersion) {
-      // Auto-populate if version is still empty
-      if ((latestVersion.selectedProducts || []).length === 0) {
-        finalSelectedProducts = order.selectedProducts || [];
-        excludedProducts = [];
-        try {
-          await ProposalVersion.findByIdAndUpdate(latestVersion._id, {
-            selectedProducts: finalSelectedProducts,
-            updatedAt: new Date(),
-          });
-        } catch (_) {}
-      } else {
-        // ── Match order products against proposal using _id as primary key ──────
-        const proposalById  = new Map(); // _id → product_id (for corruption check)
-        const proposalKeyCount = {};     // toKey → count (for _id-less fallback)
-        (latestVersion.selectedProducts || []).forEach(p => {
-          const id = p._id?.toString();
-          if (id) {
-            proposalById.set(id, p.product_id || '');
-          } else {
-            const key = toKey(p);
-            if (key) proposalKeyCount[key] = (proposalKeyCount[key] || 0) + 1;
-          }
-        });
-
-        const usedIds  = new Set();
-        const keyCount = {};
-        excludedProducts = [];
-        (order.selectedProducts || []).forEach(p => {
-          const id = p._id?.toString();
-          const pid = p.product_id || '';
-          if (id && proposalById.has(id) && !usedIds.has(id) &&
-              proposalById.get(id) === pid) {
-            usedIds.add(id);
-            return;
-          }
-          const key = toKey(p);
-          if (!key) {
-            excludedProducts.push(p);
-            return;
-          }
-          keyCount[key] = (keyCount[key] || 0) + 1;
-          if (keyCount[key] > (proposalKeyCount[key] || 0)) {
-            excludedProducts.push(p);
-          }
-        });
-
-        // ── Use Order as source of truth for product data ─────────────────────
-        // For each product in the proposal, use fresh data from Order.
-        // Fallback to PV data only if product was removed from Order (historical record).
-        const orderProductById = new Map();
-        (order.selectedProducts || []).forEach(p => {
-          if (p._id) orderProductById.set(p._id.toString(), p);
-        });
-        finalSelectedProducts = (latestVersion.selectedProducts || []).map(pvProduct => {
-          const id = pvProduct._id?.toString();
-          const orderProduct = id && orderProductById.get(id);
-          return orderProduct || pvProduct;
-        });
-      }
-    }
+    // Proposal always mirrors Order — product list comes directly from the Order.
+    // Any add/edit/delete on Order is immediately reflected in the proposal.
+    // orderId is the join key, so multiple orders per client never cross-contaminate.
+    let finalSelectedProducts = order.selectedProducts || [];
+    const excludedProducts = [];
 
 
     res.json({
