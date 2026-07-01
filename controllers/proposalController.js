@@ -285,25 +285,20 @@ const saveAsNewVersion = async (req, res) => {
     ).lean();
     const nextVersion = (latestVersion?.version || 0) + 1;
 
-    // ── Proposal number logic ──
-    let versionProposalNumber;
-    if (nextVersion === 1) {
-      const fullOrder = await Order.findById(orderId);
-      versionProposalNumber = await ensureProposalNumber(fullOrder);
-    } else {
-      const clientName = order.clientInfo?.name || 'CLT';
-      const clientCode = clientCodeFromName(clientName);
+    // ── Proposal number: always generate a fresh sequential number per version ──
+    const clientName = order.clientInfo?.name || 'CLT';
+    const clientCode = clientCodeFromName(clientName);
+    const Counter = require('../models/Counter');
+    const counterDoc = await Counter.findOneAndUpdate(
+      { _id: `proposalNumber_${clientCode}` },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
+    const versionProposalNumber = `Hen-${clientCode}-${String(counterDoc.seq).padStart(6, '0')}`;
+    console.log(`[proposal] Generated proposalNumber for v${nextVersion}: ${versionProposalNumber}`);
 
-      const Counter = require('../models/Counter');
-      const counterDoc = await Counter.findOneAndUpdate(
-        { _id: `proposalNumber_${clientCode}` },
-        { $inc: { seq: 1 } },
-        { new: true, upsert: true }
-      );
-      const counter = String(counterDoc.seq).padStart(6, '0');
-      versionProposalNumber = `Hen-${clientCode}-${counter}`;
-      console.log(`[proposal] Generated new proposalNumber for v${nextVersion}: ${versionProposalNumber}`);
-    }
+    // Keep order.proposalNumber in sync with the latest version's number
+    await Order.findByIdAndUpdate(orderId, { $set: { proposalNumber: versionProposalNumber } });
 
     // ── Smart product filtering ──
     let finalProducts = [];
