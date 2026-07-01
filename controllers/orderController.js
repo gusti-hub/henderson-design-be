@@ -3085,7 +3085,7 @@ const getLatestConfirmedPOs = async (req, res) => {
     const confirmed = await POVersion.aggregate([
       { $match: {
           orderId: mongoose.Types.ObjectId.createFromHexString(orderId),
-          status: 'confirmed'
+          status: { $in: ['confirmed', 'paid'] }
       }},
       { $sort: { vendorId: 1, version: -1 } },
       { $group: {
@@ -3097,7 +3097,7 @@ const getLatestConfirmedPOs = async (req, res) => {
     ]);
  
     if (!confirmed.length) {
-      return res.status(404).json({ message: 'No confirmed POs found for this order' });
+      return res.status(404).json({ message: 'No confirmed or paid POs found for this order' });
     }
  
     res.json({

@@ -429,8 +429,8 @@ const syncPOToQuickBooks = async (req, res) => {
     const po = await POVersion.findById(req.params.poVersionId).lean();
     if (!po) return res.status(404).json({ message: 'PO not found' });
 
-    if (po.status !== 'confirmed') {
-      return res.status(400).json({ message: 'Only confirmed POs can be synced to QuickBooks' });
+    if (!['confirmed', 'paid'].includes(po.status)) {
+      return res.status(400).json({ message: 'Only confirmed or paid POs can be synced to QuickBooks' });
     }
 
     const isResync = req.query.force === 'true' && !!po.quickbooksId;
@@ -689,12 +689,12 @@ const getLatestConfirmedPOs = async (req, res) => {
     const oid = mongoose.Types.ObjectId.createFromHexString(orderId);
 
     const confirmed = await POVersion.find(
-      { orderId: oid, status: 'confirmed' },
+      { orderId: oid, status: { $in: ['confirmed', 'paid'] } },
       { _id: 1, poNumber: 1, version: 1, vendorId: 1, 'vendorInfo.name': 1,
         quickbooksId: 1, quickbooksSyncedAt: 1, quickbooksStatus: 1 }
     ).sort({ 'vendorInfo.name': 1, version: -1 }).lean();
 
-    if (!confirmed.length) return res.status(404).json({ message: 'No confirmed POs found for this order' });
+    if (!confirmed.length) return res.status(404).json({ message: 'No confirmed or paid POs found for this order' });
 
     res.json({
       success:      true,
