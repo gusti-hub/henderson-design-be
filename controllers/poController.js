@@ -763,17 +763,13 @@ const updatePOStatus = async (req, res) => {
     const { orderId, vendorId } = req.params;
     const { version, status } = req.body;
 
-    const validStatuses = ['draft', 'sent', 'confirmed', 'cancelled'];
+    const validStatuses = ['draft', 'sent', 'confirmed', 'cancelled', 'paid'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ success: false, message: 'Invalid status' });
     }
 
     const po = await POVersion.findOne({ orderId, vendorId, version });
     if (!po) return res.status(404).json({ success: false, message: 'PO version not found' });
-
-    if (po.status === 'confirmed') {
-      return res.status(400).json({ success: false, message: 'Confirmed PO cannot be changed. Create a new version instead.' });
-    }
 
     po.status = status;
     await po.save();

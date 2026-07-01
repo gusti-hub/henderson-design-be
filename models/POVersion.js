@@ -114,7 +114,7 @@ const poVersionSchema = new mongoose.Schema({
 
   status: {
     type: String,
-    enum: ['draft', 'sent', 'confirmed', 'cancelled'],
+    enum: ['draft', 'sent', 'confirmed', 'cancelled', 'paid'],
     default: 'draft'
   },
 
