@@ -2715,12 +2715,21 @@ const generateCogExcel = async (req, res) => {
       }
     });
 
-    // Freshen vendor names from populated products; collect no-PO vendors
-    const noPoVendors = new Map(); // vendorId → { vendorName, calcTotal }
+    // Build per-vendor calculated total from order products (same formula as PO Editor)
+    const vendorCalcTotals = new Map(); // vendorId → calcTotal
+    const noPoVendors = new Map();      // vendorId → { vendorName, calcTotal }
 
     products.forEach((p) => {
       const vendorId   = p.vendor?._id?.toString() || p.vendor?.toString() || 'no_vendor';
       const vendorName = getVendorName(p);
+
+      const opts    = p.selectedOptions || {};
+      const qty     = parseFloat(p.quantity) || 1;
+      const netCost = (opts.netCostOverride != null && opts.netCostOverride !== '')
+                        ? parseFloat(opts.netCostOverride)
+                        : parseFloat(opts.msrp || p.unitPrice || 0);
+      const calc = netCost * qty;
+      vendorCalcTotals.set(vendorId, (vendorCalcTotals.get(vendorId) || 0) + calc);
 
       if (vendorsWithPO.has(vendorId)) {
         // Update vendorName on all rows for this vendor
@@ -2730,16 +2739,7 @@ const generateCogExcel = async (req, res) => {
         return;
       }
 
-      // Vendor has no PO — accumulate calculated total
-      const opts     = p.selectedOptions || {};
-      const qty      = parseFloat(p.quantity) || 1;
-      const msrp     = parseFloat(opts.msrp) || 0;
-      const discount = parseFloat(opts.discountPercent) || 0;
-      const netCost  = (opts.netCostOverride != null && opts.netCostOverride !== '')
-                         ? parseFloat(opts.netCostOverride)
-                         : msrp * (1 - discount / 100);
-      const calc = netCost * qty;
-
+      // Vendor has no PO — accumulate into noPoVendors
       if (noPoVendors.has(vendorId)) {
         noPoVendors.get(vendorId).calcTotal += calc;
       } else {
@@ -2747,14 +2747,27 @@ const generateCogExcel = async (req, res) => {
       }
     });
 
-    // Build final rows: PO rows use POVersion.total; no-PO rows use calculated total
+    // Use POVersion.total when > 0; otherwise fall back to order-product calculation + shipping/others
+    const getPOTotal = (row) => {
+      const saved = parseFloat(row.poEntry.total);
+      if (saved > 0) return saved;
+      const base     = vendorCalcTotals.get(row.vendorId) || 0;
+      const shipping = parseFloat(row.poEntry.shipping) || 0;
+      const others   = parseFloat(row.poEntry.others)   || 0;
+      console.log(`[COG] ${row.vendorName} | saved=${saved} base=${base} => ${base + shipping + others}`);
+      return base + shipping + others;
+    };
+
+    console.log('[COG] vendorCalcTotals:', JSON.stringify([...vendorCalcTotals.entries()]));
+
+    // Build final rows
     const poRows = [
       ...Array.from(rowMap.values()).map(row => ({
         poNumber:   row.poNumber,
         vendorName: row.vendorName,
         poStatus:   row.poStatus,
         poEntry:    row.poEntry,
-        total:      parseFloat(row.poEntry.total) || 0,
+        total:      getPOTotal(row),
       })),
       ...Array.from(noPoVendors.values()).map(row => ({
         poNumber:   '(No PO# yet)',
@@ -2917,12 +2930,21 @@ const generateCogWithBill = async (req, res) => {
       }
     });
 
-    // Freshen vendor names; collect no-PO vendors
+    // Build per-vendor calculated total from order products (same formula as PO Editor)
+    const vendorCalcTotals = new Map();
     const noPoVendors = new Map();
 
     products.forEach((p) => {
       const vendorId   = p.vendor?._id?.toString() || p.vendor?.toString() || 'no_vendor';
       const vendorName = getVendorName(p);
+
+      const opts    = p.selectedOptions || {};
+      const qty     = parseFloat(p.quantity) || 1;
+      const netCost = (opts.netCostOverride != null && opts.netCostOverride !== '')
+                        ? parseFloat(opts.netCostOverride)
+                        : parseFloat(opts.msrp || p.unitPrice || 0);
+      const calc = netCost * qty;
+      vendorCalcTotals.set(vendorId, (vendorCalcTotals.get(vendorId) || 0) + calc);
 
       if (vendorsWithPO.has(vendorId)) {
         for (const row of rowMap.values()) {
@@ -2931,21 +2953,21 @@ const generateCogWithBill = async (req, res) => {
         return;
       }
 
-      const opts     = p.selectedOptions || {};
-      const qty      = parseFloat(p.quantity) || 1;
-      const msrp     = parseFloat(opts.msrp) || 0;
-      const discount = parseFloat(opts.discountPercent) || 0;
-      const netCost  = (opts.netCostOverride != null && opts.netCostOverride !== '')
-                         ? parseFloat(opts.netCostOverride)
-                         : msrp * (1 - discount / 100);
-      const calc = netCost * qty;
-
       if (noPoVendors.has(vendorId)) {
         noPoVendors.get(vendorId).calcTotal += calc;
       } else {
         noPoVendors.set(vendorId, { vendorName, calcTotal: calc });
       }
     });
+
+    const getPOTotal = (row) => {
+      const saved = parseFloat(row.poEntry.total);
+      if (saved > 0) return saved;
+      const base     = vendorCalcTotals.get(row.vendorId) || 0;
+      const shipping = parseFloat(row.poEntry.shipping) || 0;
+      const others   = parseFloat(row.poEntry.others)   || 0;
+      return base + shipping + others;
+    };
 
     const poRows = [
       ...Array.from(rowMap.values()).map(row => ({
@@ -2956,7 +2978,7 @@ const generateCogWithBill = async (req, res) => {
         billTotal:  row.billTotal,
         billNumber: row.billNumber,
         billStatus: row.billStatus,
-        total:      parseFloat(row.poEntry.total) || 0,
+        total:      getPOTotal(row),
       })),
       ...Array.from(noPoVendors.values()).map(row => ({
         poNumber:   '(No PO# yet)',
