@@ -1277,6 +1277,7 @@ const getOrdersByClient = async (req, res) => {
     }
 
     let orders = await Order.find({ user: user._id })
+      .populate('selectedProducts.vendor', 'name')
       .sort({ createdAt: 1 }); // oldest first for consistent orderNumber assignment
 
     if (orders.length === 0 && user.status === 'approved') {
