@@ -2240,9 +2240,7 @@ const generateStatusReport = async (req, res) => {
     const clientName = order.clientInfo?.name || 'Unknown Client';
     const unitNumber = order.clientInfo?.unitNumber || '';
     const floorPlan = order.clientInfo?.floorPlan || '';
-    // Project label: use orderLabel if set, otherwise build as "Name-FloorPlan-Unit"
-    const projectLabel = order.orderLabel ||
-      [clientName, floorPlan, unitNumber].filter(Boolean).join('-');
+    const projectLabel = [clientName, floorPlan, unitNumber].filter(Boolean).join('-');
     const todayStr = new Date().toLocaleDateString('en-US', {
       month: '2-digit', day: '2-digit', year: 'numeric'
     });
@@ -2699,7 +2697,7 @@ const generateStatusReport = async (req, res) => {
         // D - Proposal Number (look up from the product's own order)
         const cD = ws2.getCell(ir, 4);
         const pOid = p._orderId?.toString() || '';
-        cD.value = orderProposalMap.get(pOid) || order.proposalNumber || '';
+        cD.value = orderProposalMap.get(pOid) || '';
         cD.font = dataFont; cD.border = thinBorder; cD.alignment = wrapTop;
 
         // E - Vendor Name
