@@ -1621,11 +1621,12 @@ const loadAllClientProducts = async (orderId) => {
 
   const allOrderIds = allOrders.map(o => o._id);
 
-  // Merge products from all orders — tag each product with its order label
+  // Merge products from all orders — tag each product with its order label + orderId
   let products = allOrders.flatMap(o =>
     (o.selectedProducts || []).map(p => ({
       ...p,
       _orderLabel: o.orderLabel || (o.orderNumber ? `Order ${o.orderNumber}` : ''),
+      _orderId:    o._id,
     }))
   );
 
@@ -2219,12 +2220,29 @@ const generateStatusReport = async (req, res) => {
       return '';
     };
 
+    // Build orderId → proposalNumber from ProposalVersion (primary source)
+    const ProposalVersion = require('../models/ProposalVersion');
+    const proposalVersionDocs = await ProposalVersion.find(
+      { orderId: { $in: allOrderIds } },
+      { orderId: 1, proposalNumber: 1, version: 1 }
+    ).sort({ version: -1 }).lean();
+
+    const orderProposalMap = new Map(); // orderId string → proposalNumber string
+    proposalVersionDocs.forEach(pv => {
+      const oid = pv.orderId?.toString();
+      if (oid && !orderProposalMap.has(oid)) {
+        orderProposalMap.set(oid, pv.proposalNumber || '');
+      }
+    });
+
     const wb = new ExcelJS.Workbook();
     const products = allProducts;
     const clientName = order.clientInfo?.name || 'Unknown Client';
     const unitNumber = order.clientInfo?.unitNumber || '';
     const floorPlan = order.clientInfo?.floorPlan || '';
-    const projectLabel = [clientName, floorPlan].filter(Boolean).join(' - ');
+    // Project label: use orderLabel if set, otherwise build as "Name-FloorPlan-Unit"
+    const projectLabel = order.orderLabel ||
+      [clientName, floorPlan, unitNumber].filter(Boolean).join('-');
     const todayStr = new Date().toLocaleDateString('en-US', {
       month: '2-digit', day: '2-digit', year: 'numeric'
     });
@@ -2478,7 +2496,7 @@ const generateStatusReport = async (req, res) => {
     });
 
     // ── Project Info ──
-    ws1.getCell('A8').value = unitNumber || clientName;
+    ws1.getCell('A8').value = projectLabel;
     ws1.getCell('A8').font = titleFont;
     ws1.getRow(8).height = 25;
 
@@ -2616,7 +2634,7 @@ const generateStatusReport = async (req, res) => {
     ws2.getCell('C4').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDFB03' } };
 
     // Project info
-    ws2.getCell('A7').value = unitNumber || clientName;
+    ws2.getCell('A7').value = projectLabel;
     ws2.getCell('A7').font = { name: 'Arial', bold: true, size: 16 };
     ws2.getCell('A8').value = todayStr;
     ws2.getCell('A8').font = { name: 'Arial', bold: true, size: 16 };
@@ -2678,9 +2696,10 @@ const generateStatusReport = async (req, res) => {
         cC.value = resolvePoNumber(p);
         cC.font = dataFont; cC.border = thinBorder; cC.alignment = wrapTop;
 
-        // D - Proposal Number
+        // D - Proposal Number (look up from the product's own order)
         const cD = ws2.getCell(ir, 4);
-        cD.value = order.proposalNumber || '';
+        const pOid = p._orderId?.toString() || '';
+        cD.value = orderProposalMap.get(pOid) || order.proposalNumber || '';
         cD.font = dataFont; cD.border = thinBorder; cD.alignment = wrapTop;
 
         // E - Vendor Name
