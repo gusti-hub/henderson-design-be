@@ -1609,7 +1609,12 @@ const loadAllClientProducts = async (orderId) => {
   const userId = anchor.user?._id || anchor.user;
   let allOrders = [anchor];
   if (userId) {
-    const siblings = await Order.find({ user: userId, _id: { $ne: anchor._id } })
+    // Only merge orders for the same property (same clientInfo) — not ALL orders for this user
+    const siblingFilter = { user: userId, _id: { $ne: anchor._id } };
+    if (anchor.clientInfo?.name)       siblingFilter['clientInfo.name']       = anchor.clientInfo.name;
+    if (anchor.clientInfo?.floorPlan)  siblingFilter['clientInfo.floorPlan']  = anchor.clientInfo.floorPlan;
+    if (anchor.clientInfo?.unitNumber) siblingFilter['clientInfo.unitNumber'] = anchor.clientInfo.unitNumber;
+    const siblings = await Order.find(siblingFilter)
       .populate('selectedProducts.vendor')
       .sort({ orderNumber: 1, createdAt: 1 })
       .lean();
@@ -2240,7 +2245,7 @@ const generateStatusReport = async (req, res) => {
     const clientName = order.clientInfo?.name || 'Unknown Client';
     const unitNumber = order.clientInfo?.unitNumber || '';
     const floorPlan = order.clientInfo?.floorPlan || '';
-    const projectLabel = [clientName, floorPlan, unitNumber].filter(Boolean).join('-');
+    const projectLabel = [clientName, floorPlan, unitNumber ? `Unit ${unitNumber}` : ''].filter(Boolean).join(' - ');
     const todayStr = new Date().toLocaleDateString('en-US', {
       month: '2-digit', day: '2-digit', year: 'numeric'
     });
