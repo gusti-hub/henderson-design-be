@@ -379,9 +379,33 @@ const getOrders = async (req, res) => {
           { $sort: { updatedAt: -1, createdAt: -1 } },
         ];
 
+    // After paginating, join the latest ProposalVersion to get proposalNumber
+    const lookupPipeline = [
+      { $lookup: {
+          from: 'proposalversions',
+          let: { oid: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$orderId', '$$oid'] } } },
+            { $sort: { version: -1 } },
+            { $limit: 1 },
+            { $project: { proposalNumber: 1 } },
+          ],
+          as: '_latestProposal',
+      }},
+      { $addFields: {
+          proposalNumber: {
+            $ifNull: [
+              '$proposalNumber',
+              { $arrayElemAt: ['$_latestProposal.proposalNumber', 0] },
+            ],
+          },
+      }},
+      { $unset: '_latestProposal' },
+    ];
+
     const [countResult, orders] = await Promise.all([
       Order.aggregate([...basePipeline, { $count: 'total' }]),
-      Order.aggregate([...basePipeline, { $skip: skip }, { $limit: limit }]),
+      Order.aggregate([...basePipeline, { $skip: skip }, { $limit: limit }, ...lookupPipeline]),
     ]);
 
     // Populate references (works on aggregation results)
