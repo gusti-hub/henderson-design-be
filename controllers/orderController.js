@@ -1729,7 +1729,7 @@ const generateInstallBinder = async (req, res) => {
     <div class="page">
         <div class="header">
             <div class="header-left">
-                <img src="/images/HDG-Logo.png" alt="Henderson Design Group">
+                <span style="font-size:14pt;font-weight:bold;color:#005670;">Henderson Design Group</span>
             </div>
             <div class="header-right">
                 <h2>Install Binder</h2>
@@ -1789,10 +1789,16 @@ const generateInstallBinder = async (req, res) => {
 </body>
 </html>`;
 
-    res.setHeader('Content-Type', 'text/html');
+    const pdfBuffer = await generatePDF(htmlTemplate, {
+      format: 'Letter',
+      landscape: true,
+      printBackground: true,
+      margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' },
+    });
     const clientNameSafe = (order.clientInfo?.name || 'Client').replace(/[^a-zA-Z0-9 ]/g, '').trim();
-    res.setHeader('Content-Disposition', `inline; filename="InstallBinder_${clientNameSafe}.html"`);
-    res.send(htmlTemplate);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="InstallBinder_${clientNameSafe}.pdf"`);
+    res.send(pdfBuffer);
 
   } catch (error) {
     console.error('❌ Error generating install binder:', error);
