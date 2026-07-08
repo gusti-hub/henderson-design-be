@@ -1538,25 +1538,97 @@ const buildVendorPoNumberMap = (poVersions) => {
   return map;
 };
 
+// ── Shared: load all orders for the same client user and merge products ──
+// Returns { orders, products, allOrderIds, clientInfo }
+// Products are sorted by ROOM_ORDER (same sequence as proposals).
+const REPORT_ROOM_ORDER = [
+  'COURTYARD','EXTERIOR ENTRY','INTERIOR ENTRY','FOYER','LIVING ROOM','DINING ROOM',
+  'KITCHEN','PANTRY','PRIMARY BEDROOM','PRIMARY BEDROOM LANAI','PRIMARY BATHROOM',
+  'PRIMARY CLOSET','BEDROOM 2','BATHROOM 2','BEDROOM 2 CLOSET','BEDROOM 2 LANAI',
+  'BEDROOM 3','BATHROOM 3','BEDROOM 3 CLOSET','BEDROOM 3 LANAI','BEDROOM 4','BATHROOM 4',
+  'BEDROOM 4 CLOSET','BEDROOM 4 LANAI','POWDER ROOM','OFFICE','OFFICE 1','OFFICE 2',
+  'MEDIA ROOM','DEN','HALLWAY','HALLWAY 1','HALLWAY 2','LANAI','LANAI 1','LANAI 2','LANAI 3',
+  'MAIN LANAI','POOL LANAI','POOL AREA','BREAKFAST NOOK','GREAT ROOM','FAMILY ROOM','WET BAR',
+  'BBQ AREA','POOL BATH','PAVILLION','GYM','WINE ROOM','REC ROOM','GARAGE','SITTING ROOM',
+  'FLEX SPACE','LAUNDRY ROOM','MUD ROOM','TERRACE','BALCONY','OUTDOOR DINING','OUTDOOR LIVING',
+  'GUEST SUITE','DESIGN SERVICES','PROJECT MANAGEMENT SERVICES','PROCUREMENT SERVICES',
+  'FDI SERVICES (FREIGHT, DELIVERY & INSTALLATION)','WALLPAPER INSTALLATION SERVICES',
+  'ELECTRICAL INSTALLATION SERVICES','ART INSTALLATION SERVICES','WALLPAPER TRADE COORDINATION',
+  'ELECTRICAL TRADE COORDINATION','CLOSET SOLUTIONS','KITCHEN & HOUSEHOLD ESSENTIALS PACKAGE',
+  'WINDOW COVERING SERVICES','AUDIO VISUAL SERVICES','GREENERY & PLANT STYLING',
+  'CONSTRUCTION DESIGN & PM SERVICES','CUSTOM MILLWORK SERVICES','CUSTOM FURNITURE SERVICES',
+  'LIGHTING PROCUREMENT & COORDINATION','APPLIANCE COORDINATION','PLUMBING FIXTURE COORDINATION',
+  'DECORATIVE PLUMBING COORDINATION','STONE & SLAB COORDINATION','TILE & SURFACE COORDINATION',
+  'HARDWARE & DECORATIVE HARDWARE COORDINATION','OUTDOOR FURNISHINGS','LANAI / TERRACE FURNISHINGS',
+  'STYLING & ACCESSORIES','BEDDING PACKAGE','TURNKEY MOVE-IN PACKAGE',
+  'OWNER STORAGE & INVENTORY COORDINATION','CLIENT SUPPLIED ITEMS COORDINATION',
+  'WHITE GLOVE RECEIVING & WAREHOUSING','PUNCH LIST & COMPLETION COORDINATION',
+  'SITE VISIT COORDINATION','EXPEDITING SERVICES','BUILDING COORDINATION SERVICES',
+  'CONTRACTOR COORDINATION SERVICES','INSTALLATION OVERSIGHT','FINAL STYLING & STAGING',
+  'REVEAL PREPARATION',
+];
+
+const roomSortKey = (room) => {
+  if (!room) return 9999;
+  const idx = REPORT_ROOM_ORDER.indexOf(room.trim().toUpperCase());
+  return idx === -1 ? 9998 : idx;
+};
+
+const loadAllClientProducts = async (orderId) => {
+  const mongoose = require('mongoose');
+  const anchor = await Order.findById(orderId)
+    .populate('user')
+    .populate('selectedProducts.vendor')
+    .lean();
+  if (!anchor) return null;
+
+  const userId = anchor.user?._id || anchor.user;
+  let allOrders = [anchor];
+  if (userId) {
+    const siblings = await Order.find({ user: userId, _id: { $ne: anchor._id } })
+      .populate('selectedProducts.vendor')
+      .sort({ orderNumber: 1, createdAt: 1 })
+      .lean();
+    // anchor first (order 1), then siblings by orderNumber
+    allOrders = [anchor, ...siblings].sort((a, b) =>
+      (a.orderNumber || 999) - (b.orderNumber || 999)
+    );
+  }
+
+  const allOrderIds = allOrders.map(o => o._id);
+
+  // Merge products from all orders — tag each product with its order label
+  let products = allOrders.flatMap(o =>
+    (o.selectedProducts || []).map(p => ({
+      ...p,
+      _orderLabel: o.orderLabel || (o.orderNumber ? `Order ${o.orderNumber}` : ''),
+    }))
+  );
+
+  // Sort by room order
+  products.sort((a, b) => {
+    const ra = a.selectedOptions?.room?.trim() || '';
+    const rb = b.selectedOptions?.room?.trim() || '';
+    return roomSortKey(ra) - roomSortKey(rb);
+  });
+
+  return { anchor, allOrders, allOrderIds, products, clientInfo: anchor.clientInfo };
+};
+
 // ── REPLACE generateInstallBinder ───────────────────────────────────────
 const generateInstallBinder = async (req, res) => {
   try {
     const Order = require('../models/Order');
     const { generatePDF } = require('../config/pdfConfig');
-    
-    const order = await Order.findById(req.params.id)
-      .populate('user')
-      .populate('selectedProducts.vendor')
-      .lean();
 
-    if (!order) {
+    const clientData = await loadAllClientProducts(req.params.id);
+    if (!clientData) {
       return res.status(404).json({ message: 'Order not found' });
     }
+    const { anchor: order, products, allOrderIds } = clientData;
 
-    const products = order.selectedProducts || [];
-
-    // Build vendorId → latest PO number (latest version = highest version number)
-    const allPoVersions = await POVersion.find({ orderId: req.params.id })
+    // Build vendorId → latest PO number across ALL orders
+    const allPoVersions = await POVersion.find({ orderId: { $in: allOrderIds } })
       .sort({ version: -1 })
       .lean();
 
@@ -1733,40 +1805,20 @@ const generateInstallBinderExcel = async (req, res) => {
   try {
     const ExcelJS  = require('exceljs');
     const axios    = require('axios');
-    const mongoose = require('mongoose');
 
-    const order = await Order.findById(req.params.id)
-      .populate('user')
-      .populate('selectedProducts.vendor')
-      .lean();
+    const clientData = await loadAllClientProducts(req.params.id);
+    if (!clientData) return res.status(404).json({ message: 'Order not found' });
+    const { anchor: order, products, allOrderIds } = clientData;
 
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-
-    const products   = order.selectedProducts || [];
     const clientName = order.clientInfo?.name  || 'Client';
     const unitNumber = order.clientInfo?.unitNumber || '';
     const floorPlan  = order.clientInfo?.floorPlan  || '';
     const projectLabel = [clientName, unitNumber ? `Unit ${unitNumber}` : '', floorPlan]
       .filter(Boolean).join(' — ');
 
-    // ── Build product_id → PO number map ─────────────────────────────────
-    // Logic: for each product_id, find which PO version contains it.
-    // A product may appear in multiple PO versions (re-ordered).
-    // We want the EARLIEST version that contains the product
-    // (i.e., the first PO it was ordered on).
-    //
-    // Steps:
-    // 1. Fetch ALL PO versions for this vendor (all vendors in this order)
-    // 2. Sort ASC by version (earliest first)
-    // 3. For each product_id, record the first PO version that contains it
-    // ─────────────────────────────────────────────────────────────────────
-    const orderObjectId = mongoose.Types.ObjectId.isValid(req.params.id)
-      ? new mongoose.Types.ObjectId(req.params.id)
-      : req.params.id;
-
-    // Fetch ALL PO versions, ASC so earliest first
-    const allPoVersions = await POVersion.find({ orderId: orderObjectId })
-      .sort({ version: 1 })   // ASC — earliest version first
+    // Fetch ALL PO versions across all orders for this client, ASC so earliest first
+    const allPoVersions = await POVersion.find({ orderId: { $in: allOrderIds } })
+      .sort({ version: 1 })
       .lean();
 
     console.log(`[InstallBinder] ${allPoVersions.length} PO versions found`);
@@ -2029,17 +2081,14 @@ const generateStatusReport = async (req, res) => {
     const ExcelJS = require('exceljs');
     const axios = require('axios');
 
-    const order = await Order.findById(req.params.id)
-      .populate('user')
-      .populate('selectedProducts.vendor')
-      .lean();
-
-    if (!order) {
+    const clientData = await loadAllClientProducts(req.params.id);
+    if (!clientData) {
       return res.status(404).json({ message: 'Order not found' });
     }
+    const { anchor: order, products: allProducts, allOrderIds } = clientData;
 
-    // ── Fetch latest POVersion per vendor & build PO# lookup ──
-    const poVersions = await POVersion.find({ orderId: req.params.id })
+    // ── Fetch latest POVersion per vendor across ALL orders ──
+    const poVersions = await POVersion.find({ orderId: { $in: allOrderIds } })
       .sort({ version: -1 })
       .lean();
 
@@ -2076,7 +2125,7 @@ const generateStatusReport = async (req, res) => {
     };
 
     const wb = new ExcelJS.Workbook();
-    const products = order.selectedProducts || [];
+    const products = allProducts;
     const clientName = order.clientInfo?.name || 'Unknown Client';
     const unitNumber = order.clientInfo?.unitNumber || '';
     const floorPlan = order.clientInfo?.floorPlan || '';
