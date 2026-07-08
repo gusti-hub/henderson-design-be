@@ -1608,6 +1608,79 @@ const generateInstallBinder = async (req, res) => {
         .replace(/'/g, '&#039;');
     };
 
+    const clientName    = escapeHtml(order.clientInfo?.name || 'N/A');
+    const projectLabel  = escapeHtml([order.clientInfo?.name, order.clientInfo?.floorPlan].filter(Boolean).join(' - '));
+
+    const pagesHtml = Array.from({ length: totalPages }, (_, pageIndex) => {
+      const pageProducts = products.slice(pageIndex * 3, pageIndex * 3 + 3);
+
+      const rowsHtml = pageProducts.map(product => {
+        const vendorInfo = getVendorInfo(product);
+        let primaryImage = null;
+        if (product.selectedOptions?.image) primaryImage = product.selectedOptions.image;
+        else if (product.selectedOptions?.images?.length > 0) primaryImage = product.selectedOptions.images[0];
+        else if (product.selectedOptions?.uploadedImages?.length > 0) {
+          const u = product.selectedOptions.uploadedImages[0];
+          primaryImage = u.url || (u.data ? `data:${u.contentType};base64,${u.data}` : null);
+        }
+
+        const photoHtml = primaryImage
+          ? `<img src="${escapeHtml(primaryImage)}" alt="${escapeHtml(product.name)}" onerror="this.parentElement.innerHTML='<span style=\\'color:#999;font-size:7pt\\'>No Image</span>'">`
+          : '<span style="color:#999;font-size:7pt">No Image</span>';
+
+        const details = [
+          product.product_id                         ? `<div>Product ID: ${escapeHtml(product.product_id)}</div>` : '',
+          product.selectedOptions?.specifications    ? `<div>${escapeHtml(product.selectedOptions.specifications)}</div>` : '',
+          product.selectedOptions?.finish            ? `<div>Finish: ${escapeHtml(product.selectedOptions.finish)}</div>` : '',
+          product.selectedOptions?.fabric            ? `<div>Fabric: ${escapeHtml(product.selectedOptions.fabric)}</div>` : '',
+          product.selectedOptions?.size              ? `<div>Size: ${escapeHtml(product.selectedOptions.size)}</div>` : '',
+        ].join('');
+
+        return `
+                <tr>
+                    <td class="photo">${photoHtml}</td>
+                    <td class="room">${escapeHtml(product.selectedOptions?.room || product.category || product.spotName || 'General')}</td>
+                    <td class="vendor-name">${escapeHtml(vendorInfo.name)}</td>
+                    <td class="vendor-desc">
+                        <div class="product-name">${escapeHtml(product.name || 'N/A')}</div>
+                        <div class="product-details">${details}</div>
+                    </td>
+                    <td class="po">${escapeHtml(getPoNumber(product))}</td>
+                    <td class="quantity">${product.quantity || 1}</td>
+                    <td class="order-num">${escapeHtml(product.selectedOptions?.vendorOrderNumber || '')}</td>
+                    <td class="tracking">${escapeHtml(product.selectedOptions?.trackingInfo || '')}</td>
+                    <td class="notes">${escapeHtml(product.selectedOptions?.deliveryStatus || product.selectedOptions?.notes || '')}</td>
+                </tr>`;
+      }).join('');
+
+      return `
+    <div class="page">
+        <div class="header">
+            <div class="header-left">
+                <img src="/images/HDG-Logo.png" alt="Henderson Design Group">
+            </div>
+            <div class="header-right">
+                <h2>Install Binder</h2>
+                <p><strong>Designer:</strong> Henderson Design Group</p>
+                <p><strong>Client:</strong> ${clientName}</p>
+                <p><strong>Project:</strong> ${projectLabel}</p>
+            </div>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Photo</th><th>Room</th><th>Vendor Name</th><th>Vendor Description</th>
+                    <th>PO #</th><th>Quantity</th><th>Vendor Order Number</th>
+                    <th>Shipment Tracking Info</th><th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>${rowsHtml}
+            </tbody>
+        </table>
+        <div class="footer">Page ${pageIndex + 1} of ${totalPages}</div>
+    </div>`;
+    }).join('');
+
     const htmlTemplate = `<!DOCTYPE html>
 <html>
 <head>
@@ -1640,78 +1713,13 @@ const generateInstallBinder = async (req, res) => {
         .footer { position: absolute; bottom: 0; right: 0; font-size: 8pt; color: #666; }
     </style>
 </head>
-<body>
-    \${Array.from({ length: totalPages }, (_, pageIndex) => {
-      const startIdx = pageIndex * 3;
-      const pageProducts = products.slice(startIdx, startIdx + 3);
-      return \`
-    <div class="page">
-        <div class="header">
-            <div class="header-left">
-                <img src="/images/HDG-Logo.png" alt="Henderson Design Group">
-            </div>
-            <div class="header-right">
-                <h2>Install Binder</h2>
-                <p><strong>Designer:</strong> Henderson Design Group</p>
-                <p><strong>Client:</strong> \${escapeHtml(order.clientInfo?.name || 'N/A')}</p>
-                <p><strong>Project:</strong> \${escapeHtml([order.clientInfo?.name, order.clientInfo?.floorPlan].filter(Boolean).join(' - '))}</p>
-            </div>
-        </div>
-        <table>
-            <thead>
-                <tr>
-                    <th>Photo</th><th>Room</th><th>Vendor Name</th><th>Vendor Description</th>
-                    <th>PO #</th><th>Quantity</th><th>Vendor Order Number</th>
-                    <th>Shipment Tracking Info</th><th>Notes</th>
-                </tr>
-            </thead>
-            <tbody>
-                \${pageProducts.map(product => {
-                  const vendorInfo = getVendorInfo(product);
-                  let primaryImage = null;
-                  if (product.selectedOptions?.image) primaryImage = product.selectedOptions.image;
-                  else if (product.selectedOptions?.images?.length > 0) primaryImage = product.selectedOptions.images[0];
-                  else if (product.selectedOptions?.uploadedImages?.length > 0) {
-                    const u = product.selectedOptions.uploadedImages[0];
-                    primaryImage = u.url || (u.data ? \`data:\${u.contentType};base64,\${u.data}\` : null);
-                  }
-                  return \`
-                <tr>
-                    <td class="photo">
-                        \${primaryImage
-                          ? \`<img src="\${escapeHtml(primaryImage)}" alt="\${escapeHtml(product.name)}" onerror="this.parentElement.innerHTML='<span style=\\'color:#999;font-size:7pt\\'>No Image</span>'">\`
-                          : '<span style="color:#999;font-size:7pt">No Image</span>'}
-                    </td>
-                    <td class="room">\${escapeHtml(product.category || product.spotName || 'General')}</td>
-                    <td class="vendor-name">\${escapeHtml(vendorInfo.name)}</td>
-                    <td class="vendor-desc">
-                        <div class="product-name">\${escapeHtml(product.name || 'N/A')}</div>
-                        <div class="product-details">
-                            \${product.product_id ? \`<div>Product ID: \${escapeHtml(product.product_id)}</div>\` : ''}
-                            \${product.selectedOptions?.specifications ? \`<div>\${escapeHtml(product.selectedOptions.specifications)}</div>\` : ''}
-                            \${product.selectedOptions?.finish ? \`<div>Finish: \${escapeHtml(product.selectedOptions.finish)}</div>\` : ''}
-                            \${product.selectedOptions?.fabric ? \`<div>Fabric: \${escapeHtml(product.selectedOptions.fabric)}</div>\` : ''}
-                            \${product.selectedOptions?.size ? \`<div>Size: \${escapeHtml(product.selectedOptions.size)}</div>\` : ''}
-                        </div>
-                    </td>
-                    <td class="po">\${escapeHtml(getPoNumber(product))}</td>
-                    <td class="quantity">\${product.quantity || 1}</td>
-                    <td class="order-num">\${escapeHtml(product.selectedOptions?.vendorOrderNumber || '')}</td>
-                    <td class="tracking">\${escapeHtml(product.selectedOptions?.trackingInfo || '')}</td>
-                    <td class="notes">\${escapeHtml(product.selectedOptions?.deliveryStatus || product.selectedOptions?.notes || '')}</td>
-                </tr>\`;
-                }).join('')}
-            </tbody>
-        </table>
-        <div class="footer">Page \${pageIndex + 1} of \${totalPages}</div>
-    </div>\`;
-    }).join('')}
+<body>${pagesHtml}
 </body>
 </html>`;
 
     res.setHeader('Content-Type', 'text/html');
     const clientNameSafe = (order.clientInfo?.name || 'Client').replace(/[^a-zA-Z0-9 ]/g, '').trim();
-    res.setHeader('Content-Disposition', `inline; filename="InstallBinder_\${clientNameSafe}.html"`);
+    res.setHeader('Content-Disposition', `inline; filename="InstallBinder_${clientNameSafe}.html"`);
     res.send(htmlTemplate);
 
   } catch (error) {
