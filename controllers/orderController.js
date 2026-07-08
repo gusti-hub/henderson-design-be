@@ -1618,191 +1618,183 @@ const loadAllClientProducts = async (orderId) => {
 // ── REPLACE generateInstallBinder ───────────────────────────────────────
 const generateInstallBinder = async (req, res) => {
   try {
-    const Order = require('../models/Order');
-    const { generatePDF } = require('../config/pdfConfig');
+    const PDFDocument = require('pdfkit');
 
     const clientData = await loadAllClientProducts(req.params.id);
-    if (!clientData) {
-      return res.status(404).json({ message: 'Order not found' });
-    }
+    if (!clientData) return res.status(404).json({ message: 'Order not found' });
     const { anchor: order, products, allOrderIds } = clientData;
 
     // Build vendorId → latest PO number across ALL orders
     const allPoVersions = await POVersion.find({ orderId: { $in: allOrderIds } })
-      .sort({ version: -1 })
-      .lean();
-
-    const byVendor = new Map();
-    allPoVersions.forEach(po => {
-      const key = po.vendorId?.toString();
-      if (!key) return;
-      if (!byVendor.has(key)) byVendor.set(key, []);
-      byVendor.get(key).push(po);
-    });
+      .sort({ version: -1 }).lean();
 
     const vendorPOMap = new Map();
-    byVendor.forEach((versions, vendorId) => {
-      // versions already sorted desc — index 0 = latest version
-      vendorPOMap.set(vendorId, versions[0]?.poNumber || '');
+    allPoVersions.forEach(po => {
+      const key = po.vendorId?.toString();
+      if (key && !vendorPOMap.has(key)) vendorPOMap.set(key, po.poNumber || '');
     });
 
     const getPoNumber = (p) => {
-      let vid = null;
-      if (p.vendor) {
-        if (typeof p.vendor === 'object' && p.vendor._id) {
-          vid = p.vendor._id.toString();          // populated object
-        } else {
-          vid = p.vendor.toString();              // raw ObjectId or string
-        }
-      }
+      const vid = p.vendor?._id?.toString() || (p.vendor && typeof p.vendor !== 'object' ? String(p.vendor) : null);
       if (vid && vendorPOMap.has(vid)) return vendorPOMap.get(vid);
       return p.selectedOptions?.poNumber || '';
     };
 
-    // Calculate total pages (3 products per page)
-    const totalProducts = products.length;
-    const totalPages = Math.ceil(totalProducts / 3);
+    const safeText = (v) => (v == null ? '' : String(v).replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
 
-    const getVendorInfo = (product) => {
-      if (product.vendor) {
-        return { name: product.vendor.name || 'N/A', description: product.name || '' };
-      }
-      return { name: 'HDG Inventory', description: '*HNL Inventory' };
-    };
-
-    const escapeHtml = (text) => {
-      if (!text) return '';
-      return String(text)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    };
-
-    const clientName    = escapeHtml(order.clientInfo?.name || 'N/A');
-    const projectLabel  = escapeHtml([order.clientInfo?.name, order.clientInfo?.floorPlan].filter(Boolean).join(' - '));
-
-    const pagesHtml = Array.from({ length: totalPages }, (_, pageIndex) => {
-      const pageProducts = products.slice(pageIndex * 3, pageIndex * 3 + 3);
-
-      const rowsHtml = pageProducts.map(product => {
-        const vendorInfo = getVendorInfo(product);
-        let primaryImage = null;
-        if (product.selectedOptions?.image) primaryImage = product.selectedOptions.image;
-        else if (product.selectedOptions?.images?.length > 0) primaryImage = product.selectedOptions.images[0];
-        else if (product.selectedOptions?.uploadedImages?.length > 0) {
-          const u = product.selectedOptions.uploadedImages[0];
-          primaryImage = u.url || (u.data ? `data:${u.contentType};base64,${u.data}` : null);
-        }
-
-        const photoHtml = primaryImage
-          ? `<img src="${escapeHtml(primaryImage)}" alt="${escapeHtml(product.name)}" onerror="this.parentElement.innerHTML='<span style=\\'color:#999;font-size:7pt\\'>No Image</span>'">`
-          : '<span style="color:#999;font-size:7pt">No Image</span>';
-
-        const details = [
-          product.product_id                         ? `<div>Product ID: ${escapeHtml(product.product_id)}</div>` : '',
-          product.selectedOptions?.specifications    ? `<div>${escapeHtml(product.selectedOptions.specifications)}</div>` : '',
-          product.selectedOptions?.finish            ? `<div>Finish: ${escapeHtml(product.selectedOptions.finish)}</div>` : '',
-          product.selectedOptions?.fabric            ? `<div>Fabric: ${escapeHtml(product.selectedOptions.fabric)}</div>` : '',
-          product.selectedOptions?.size              ? `<div>Size: ${escapeHtml(product.selectedOptions.size)}</div>` : '',
-        ].join('');
-
-        return `
-                <tr>
-                    <td class="photo">${photoHtml}</td>
-                    <td class="room">${escapeHtml(product.selectedOptions?.room || product.category || product.spotName || 'General')}</td>
-                    <td class="vendor-name">${escapeHtml(vendorInfo.name)}</td>
-                    <td class="vendor-desc">
-                        <div class="product-name">${escapeHtml(product.name || 'N/A')}</div>
-                        <div class="product-details">${details}</div>
-                    </td>
-                    <td class="po">${escapeHtml(getPoNumber(product))}</td>
-                    <td class="quantity">${product.quantity || 1}</td>
-                    <td class="order-num">${escapeHtml(product.selectedOptions?.vendorOrderNumber || '')}</td>
-                    <td class="tracking">${escapeHtml(product.selectedOptions?.trackingInfo || '')}</td>
-                    <td class="notes">${escapeHtml(product.selectedOptions?.deliveryStatus || product.selectedOptions?.notes || '')}</td>
-                </tr>`;
-      }).join('');
-
-      return `
-    <div class="page">
-        <div class="header">
-            <div class="header-left">
-                <span style="font-size:14pt;font-weight:bold;color:#005670;">Henderson Design Group</span>
-            </div>
-            <div class="header-right">
-                <h2>Install Binder</h2>
-                <p><strong>Designer:</strong> Henderson Design Group</p>
-                <p><strong>Client:</strong> ${clientName}</p>
-                <p><strong>Project:</strong> ${projectLabel}</p>
-            </div>
-        </div>
-        <table>
-            <thead>
-                <tr>
-                    <th>Photo</th><th>Room</th><th>Vendor Name</th><th>Vendor Description</th>
-                    <th>PO #</th><th>Quantity</th><th>Vendor Order Number</th>
-                    <th>Shipment Tracking Info</th><th>Notes</th>
-                </tr>
-            </thead>
-            <tbody>${rowsHtml}
-            </tbody>
-        </table>
-        <div class="footer">Page ${pageIndex + 1} of ${totalPages}</div>
-    </div>`;
-    }).join('');
-
-    const htmlTemplate = `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        @page { size: letter landscape; margin: 0.5in; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; font-size: 9pt; line-height: 1.3; }
-        .page { page-break-after: always; position: relative; min-height: 7.5in; }
-        .page:last-child { page-break-after: avoid; }
-        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #000; }
-        .header-left img { height: 60px; width: auto; object-fit: contain; filter: brightness(0) saturate(100%) invert(21%) sepia(98%) saturate(1160%) hue-rotate(160deg) brightness(92%) contrast(90%); }
-        .header-right { text-align: right; font-size: 8pt; }
-        .header-right h2 { font-size: 20pt; font-weight: bold; margin-bottom: 8px; }
-        table { width: 100%; border-collapse: collapse; font-size: 8pt; }
-        th { background-color: #f0f0f0; border: 1px solid #000; padding: 6px 4px; text-align: left; font-weight: bold; font-size: 7pt; }
-        td { border: 1px solid #000; padding: 6px 4px; vertical-align: top; }
-        td.photo { width: 80px; text-align: center; padding: 4px; }
-        td.photo img { max-width: 70px; max-height: 70px; object-fit: contain; }
-        td.room { width: 100px; font-weight: 600; }
-        td.vendor-name { width: 100px; }
-        td.vendor-desc { width: auto; min-width: 150px; }
-        .product-name { font-weight: bold; margin-bottom: 3px; }
-        .product-details { font-size: 7pt; color: #333; line-height: 1.4; }
-        td.po { width: 85px; }
-        td.quantity { width: 50px; text-align: center; }
-        td.order-num { width: 90px; }
-        td.tracking { width: 120px; font-size: 7pt; }
-        td.notes { width: 120px; font-size: 7pt; white-space: pre-line; }
-        .footer { position: absolute; bottom: 0; right: 0; font-size: 8pt; color: #666; }
-    </style>
-</head>
-<body>${pagesHtml}
-</body>
-</html>`;
-
-    const pdfBuffer = await generatePDF(htmlTemplate, {
-      format: 'Letter',
-      landscape: true,
-      printBackground: true,
-      margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' },
-    });
+    // ── PDF setup ──────────────────────────────────────────────────────────────
     const clientNameSafe = (order.clientInfo?.name || 'Client').replace(/[^a-zA-Z0-9 ]/g, '').trim();
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="InstallBinder_${clientNameSafe}.pdf"`);
-    res.send(pdfBuffer);
+
+    const doc = new PDFDocument({
+      layout: 'landscape', size: 'letter',
+      margins: { top: 36, bottom: 36, left: 36, right: 36 },
+      autoFirstPage: true,
+      bufferPages: false,
+    });
+    doc.pipe(res);
+
+    // Page dimensions (landscape Letter = 792 × 612 pts)
+    const PW = doc.page.width;   // 792
+    const PH = doc.page.height;  // 612
+    const M  = 36;               // margin
+    const TW = PW - M * 2;      // table width = 720
+
+    // Column definitions — widths must sum to 720
+    const COLS = [
+      { key: 'room',     label: 'Room',              w: 90,  bold: true,  color: '#003344' },
+      { key: 'vendor',   label: 'Vendor',            w: 80,  bold: false, color: '#222' },
+      { key: 'desc',     label: 'Description',       w: 230, bold: false, color: '#222' },
+      { key: 'po',       label: 'PO #',              w: 65,  bold: false, color: '#222' },
+      { key: 'qty',      label: 'Qty',               w: 35,  bold: false, color: '#222' },
+      { key: 'orderNum', label: 'Vendor Order #',    w: 65,  bold: false, color: '#222' },
+      { key: 'tracking', label: 'Tracking',          w: 80,  bold: false, color: '#222' },
+      { key: 'notes',    label: 'Notes',             w: 75,  bold: false, color: '#222' },
+    ]; // 90+80+230+65+35+65+80+75 = 720
+
+    const PAD  = 3;
+    const FSM  = 7;  // small font
+    const HDR_H     = 52;  // height of the page header block
+    const COL_HDR_H = 16;  // height of column label row
+    const ROW_MIN   = 22;  // minimum row height
+
+    const clientLabel  = order.clientInfo?.name || 'N/A';
+    const projectLabel = [order.clientInfo?.name, order.clientInfo?.floorPlan].filter(Boolean).join(' - ');
+
+    // ── Draw the top header (logo area + doc title) ───────────────────────────
+    const drawPageHeader = () => {
+      // Company name left
+      doc.font('Helvetica-Bold').fontSize(12).fillColor('#005670')
+         .text('Henderson Design Group', M, M, { width: 250 });
+      doc.font('Helvetica').fontSize(FSM).fillColor('#666')
+         .text('Interior Design', M, M + 15, { width: 250 });
+
+      // Title right
+      doc.font('Helvetica-Bold').fontSize(18).fillColor('#005670')
+         .text('Install Binder', M, M, { width: TW, align: 'right' });
+      doc.font('Helvetica').fontSize(FSM).fillColor('#333')
+         .text(`Client: ${clientLabel}`, M, M + 22, { width: TW, align: 'right' });
+      doc.text(`Project: ${projectLabel}`, M, M + 32, { width: TW, align: 'right' });
+
+      // Divider
+      const divY = M + HDR_H - 4;
+      doc.moveTo(M, divY).lineTo(M + TW, divY)
+         .strokeColor('#005670').lineWidth(1.5).stroke();
+
+      // Column header row
+      const chy = M + HDR_H;
+      doc.rect(M, chy, TW, COL_HDR_H).fill('#d6eaf5').stroke('#005670');
+      let cx = M;
+      COLS.forEach(col => {
+        doc.font('Helvetica-Bold').fontSize(FSM).fillColor('#003344')
+           .text(col.label, cx + PAD, chy + PAD, { width: col.w - PAD * 2, lineBreak: false });
+        cx += col.w;
+      });
+
+      return M + HDR_H + COL_HDR_H; // Y where data rows start
+    };
+
+    const drawPageFooter = (pageNum) => {
+      doc.font('Helvetica').fontSize(6).fillColor('#999')
+         .text(`Page ${pageNum}`, M, PH - M - 8, { width: TW, align: 'center' });
+    };
+
+    // ── Render rows ────────────────────────────────────────────────────────────
+    let curY    = drawPageHeader();
+    let pageNum = 1;
+    drawPageFooter(pageNum);
+
+    const BOTTOM = PH - M - 14; // stop before footer
+
+    for (const product of products) {
+      // Build cell content
+      const descParts = [
+        product.name || '',
+        product.product_id               ? `ID: ${product.product_id}` : '',
+        product.selectedOptions?.specifications || '',
+        product.selectedOptions?.finish   ? `Finish: ${product.selectedOptions.finish}` : '',
+        product.selectedOptions?.fabric   ? `Fabric: ${product.selectedOptions.fabric}` : '',
+        product.selectedOptions?.size     ? `Size: ${product.selectedOptions.size}` : '',
+      ].filter(Boolean);
+
+      const cells = {
+        room:     safeText(product.selectedOptions?.room || product.category || product.spotName || ''),
+        vendor:   safeText(product.vendor?.name || 'HDG Inventory'),
+        desc:     safeText(descParts.join('\n')),
+        po:       safeText(getPoNumber(product)),
+        qty:      safeText(product.quantity || 1),
+        orderNum: safeText(product.selectedOptions?.vendorOrderNumber || ''),
+        tracking: safeText(product.selectedOptions?.trackingInfo || ''),
+        notes:    safeText(product.selectedOptions?.deliveryStatus || product.selectedOptions?.notes || ''),
+      };
+
+      // Calculate row height from tallest cell
+      doc.font('Helvetica').fontSize(FSM);
+      let rowH = ROW_MIN;
+      COLS.forEach(col => {
+        const h = doc.heightOfString(cells[col.key], { width: col.w - PAD * 2 }) + PAD * 2;
+        if (h > rowH) rowH = h;
+      });
+
+      // Page break
+      if (curY + rowH > BOTTOM) {
+        doc.addPage();
+        pageNum++;
+        curY = drawPageHeader();
+        drawPageFooter(pageNum);
+      }
+
+      // Row outer border
+      doc.rect(M, curY, TW, rowH).strokeColor('#ccc').lineWidth(0.5).stroke();
+
+      // Draw each cell
+      let cx = M;
+      COLS.forEach(col => {
+        // Right border
+        doc.moveTo(cx + col.w, curY).lineTo(cx + col.w, curY + rowH)
+           .strokeColor('#ccc').lineWidth(0.5).stroke();
+
+        doc.font(col.bold ? 'Helvetica-Bold' : 'Helvetica')
+           .fontSize(FSM)
+           .fillColor(col.color)
+           .text(cells[col.key], cx + PAD, curY + PAD, {
+             width: col.w - PAD * 2,
+             lineBreak: true,
+           });
+        cx += col.w;
+      });
+
+      curY += rowH;
+    }
+
+    doc.end();
 
   } catch (error) {
     console.error('❌ Error generating install binder:', error);
-    res.status(500).json({ message: 'Error generating install binder', error: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'Error generating install binder', error: error.message });
+    }
   }
 };
 
