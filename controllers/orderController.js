@@ -4080,6 +4080,54 @@ const generateBulkPO = async (req, res) => {
   }
 };
 
+// @desc  Move selected products from one order to another
+// @route POST /api/orders/move-products
+// @access Private (Admin)
+const moveProducts = async (req, res) => {
+  try {
+    const { sourceOrderId, targetOrderId, productIds } = req.body;
+    if (!sourceOrderId || !targetOrderId || !Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({ message: 'sourceOrderId, targetOrderId and productIds are required' });
+    }
+    if (sourceOrderId === targetOrderId) {
+      return res.status(400).json({ message: 'Source and target order must be different' });
+    }
+
+    const [sourceOrder, targetOrder] = await Promise.all([
+      Order.findById(sourceOrderId),
+      Order.findById(targetOrderId),
+    ]);
+    if (!sourceOrder) return res.status(404).json({ message: 'Source order not found' });
+    if (!targetOrder) return res.status(404).json({ message: 'Target order not found' });
+
+    const idSet = new Set(productIds.map(id => id.toString()));
+    const toMove   = (sourceOrder.selectedProducts || []).filter(p => idSet.has(p._id?.toString()));
+    const remaining = (sourceOrder.selectedProducts || []).filter(p => !idSet.has(p._id?.toString()));
+
+    if (toMove.length === 0) {
+      return res.status(400).json({ message: 'No matching products found in source order' });
+    }
+
+    // Strip _id so Mongoose assigns new ones in the target order
+    const productsToAdd = toMove.map(p => {
+      const obj = p.toObject ? p.toObject() : { ...p };
+      delete obj._id;
+      return obj;
+    });
+
+    sourceOrder.selectedProducts = remaining;
+    await sourceOrder.save();
+
+    targetOrder.selectedProducts = [...(targetOrder.selectedProducts || []), ...productsToAdd];
+    await targetOrder.save();
+
+    res.json({ message: 'Products moved successfully', movedCount: toMove.length });
+  } catch (err) {
+    console.error('❌ moveProducts error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
 module.exports = {
   createOrder,
   getOrders,
@@ -4108,5 +4156,6 @@ module.exports = {
   generateBulkExport,
   generateBulkPO,
   getAvailablePOVendors,
-  createOrderForClient
+  createOrderForClient,
+  moveProducts,
 };
