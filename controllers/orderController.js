@@ -1609,9 +1609,9 @@ const loadAllClientProducts = async (orderId) => {
   const userId = anchor.user?._id || anchor.user;
   let allOrders = [anchor];
   if (userId) {
-    // Only merge orders for the same property (same clientInfo) — not ALL orders for this user
+    // Only merge orders for the same property (same floorPlan + unitNumber) — not ALL orders for this user
+    // clientInfo.name is excluded because it can differ between orders for the same unit
     const siblingFilter = { user: userId, _id: { $ne: anchor._id } };
-    if (anchor.clientInfo?.name)       siblingFilter['clientInfo.name']       = anchor.clientInfo.name;
     if (anchor.clientInfo?.floorPlan)  siblingFilter['clientInfo.floorPlan']  = anchor.clientInfo.floorPlan;
     if (anchor.clientInfo?.unitNumber) siblingFilter['clientInfo.unitNumber'] = anchor.clientInfo.unitNumber;
     const siblings = await Order.find(siblingFilter)
@@ -2242,7 +2242,7 @@ const generateStatusReport = async (req, res) => {
 
     const wb = new ExcelJS.Workbook();
     const products = allProducts;
-    const clientName = order.clientInfo?.name || 'Unknown Client';
+    const clientName = order.user?.name || order.clientInfo?.name || 'Unknown Client';
     const unitNumber = order.clientInfo?.unitNumber || '';
     const floorPlan = order.clientInfo?.floorPlan || '';
     const projectLabel = [clientName, floorPlan, unitNumber ? `Unit ${unitNumber}` : ''].filter(Boolean).join(' - ');
