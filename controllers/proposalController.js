@@ -365,7 +365,7 @@ const getAllVersions = async (req, res) => {
         .populate('updatedBy', 'name email')
         .sort({ version: -1 })
         .lean(),
-      Order.findById(orderId).select('proposalNumber').lean(),
+      Order.findById(orderId).select('proposalNumber clientInfo orderLabel orderNumber').lean(),
     ]);
 
     const versionsWithNumber = versions.map(v => ({
@@ -373,7 +373,13 @@ const getAllVersions = async (req, res) => {
       proposalNumber: v.proposalNumber || order?.proposalNumber || null,
     }));
 
-    res.json({ success: true, data: versionsWithNumber });
+    res.json({
+      success: true,
+      data: versionsWithNumber,
+      orderClientInfo: order?.clientInfo || null,
+      orderLabel: order?.orderLabel || null,
+      orderNumber: order?.orderNumber || null,
+    });
   } catch (error) {
     console.error('Error getting versions:', error);
     res.status(500).json({ message: error.message });
