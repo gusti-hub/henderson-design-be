@@ -1559,7 +1559,9 @@ const updateProjectSummary = async (req, res) => {
       proposalLabel,
       originalCollectionInvestment,
       depositDesignFee,
-      depositTax,
+      taxRate,
+      taxOnDesignFee,
+      taxOnDeposit,
       depositAmount,
       approvedTotalToDate,
       paymentsReceived,
@@ -1572,19 +1574,24 @@ const updateProjectSummary = async (req, res) => {
       notes
     } = req.body;
 
-    const calcDepositDesignFee = Number(depositDesignFee) || 0;
-    const calcDepositTax       = Number(depositTax)       || 0;
-    const calcDepositAmount    = Number(depositAmount)    || 0;
-    const calcDepositReceived  = calcDepositDesignFee + calcDepositTax + calcDepositAmount;
+    const calcDesignFee     = Number(depositDesignFee) || 0;
+    const calcDepAmt        = Number(depositAmount)    || 0;
+    const calcTaxRate       = Number(taxRate) || 4.5;
+    const taxableAmount     = (taxOnDesignFee ? calcDesignFee : 0) + (taxOnDeposit ? calcDepAmt : 0);
+    const calcDepositTax    = Math.round(taxableAmount * calcTaxRate) / 100;
+    const calcDepositReceived = calcDesignFee + calcDepositTax + calcDepAmt;
 
     const update = {
       'projectSummary.published':                                        published === true,
       'projectSummary.statementDate':                                    statementDate || new Date(),
       'projectSummary.proposalLabel':                                    proposalLabel || '',
       'projectSummary.originalCollection.originalCollectionInvestment':  Number(originalCollectionInvestment) || 0,
-      'projectSummary.originalCollection.depositDesignFee':              calcDepositDesignFee,
+      'projectSummary.originalCollection.depositDesignFee':              calcDesignFee,
+      'projectSummary.originalCollection.taxRate':                       calcTaxRate,
+      'projectSummary.originalCollection.taxOnDesignFee':                taxOnDesignFee === true,
+      'projectSummary.originalCollection.taxOnDeposit':                  taxOnDeposit === true,
       'projectSummary.originalCollection.depositTax':                    calcDepositTax,
-      'projectSummary.originalCollection.depositAmount':                 calcDepositAmount,
+      'projectSummary.originalCollection.depositAmount':                 calcDepAmt,
       'projectSummary.originalCollection.depositReceived':               calcDepositReceived,
       'projectSummary.currentStatus.approvedTotalToDate':               Number(approvedTotalToDate)          || 0,
       'projectSummary.currentStatus.paymentsReceived':                  Number(paymentsReceived)             || 0,

@@ -493,6 +493,9 @@ userSchema.add({
     originalCollection: {
       originalCollectionInvestment: { type: Number, default: 0 },
       depositDesignFee:             { type: Number, default: 0 },
+      taxRate:                      { type: Number, default: 4.5 },
+      taxOnDesignFee:               { type: Boolean, default: false },
+      taxOnDeposit:                 { type: Boolean, default: false },
       depositTax:                   { type: Number, default: 0 },
       depositAmount:                { type: Number, default: 0 },
       depositReceived:              { type: Number, default: 0 },

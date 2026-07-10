@@ -466,6 +466,9 @@ const getProjectSummary = async (req, res) => {
     const depositDesignFee      = oc.depositDesignFee || 0;
     const depositTax            = oc.depositTax       || 0;
     const depositAmount         = oc.depositAmount    || 0;
+    const taxRate               = oc.taxRate ?? 4.5;
+    const taxOnDesignFee        = oc.taxOnDesignFee === true;
+    const taxOnDeposit          = oc.taxOnDeposit  === true;
     const subFieldsSum          = depositDesignFee + depositTax + depositAmount;
     const depositReceived       = oc.depositReceived  || subFieldsSum;
     // If sub-fields haven't been set yet, show the full amount under "Deposit" for display
@@ -520,6 +523,9 @@ const getProjectSummary = async (req, res) => {
           originalCollectionInvestment: totalAmount,
           depositPercentage: depositPct,
           depositDesignFee,
+          taxRate,
+          taxOnDesignFee,
+          taxOnDeposit,
           depositTax,
           depositAmount: viewDepositAmount,
           depositReceived,
@@ -550,7 +556,7 @@ const getProjectSummary = async (req, res) => {
           approvedCostsToDate: approvedTotalToDate,
           estimatedRemainingCosts: totalEstimatedRemaining,
           estimatedFinalProjectInvestment: estimatedFinalInvestment,
-          depositHeldOnAccount: depositReceived
+          depositHeldOnAccount: viewDepositAmount
         }
       }
     });
