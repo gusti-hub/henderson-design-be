@@ -1,0 +1,67 @@
+name: Build & Deploy Backend
+
+on:
+  push:
+    branches: [main-stable]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_ACCESS_TOKEN }}
+
+      - name: Login to DigitalOcean Registry
+        run: doctl registry login --expiry-seconds 600
+
+      - name: Build Docker image
+        run: docker build -t registry.digitalocean.com/hale-project/backend-app:latest .
+
+      - name: Push to registry
+        run: docker push registry.digitalocean.com/hale-project/backend-app:latest
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            docker pull registry.digitalocean.com/hale-project/backend-app:latest
+            docker stop hale-be-container || true
+            docker rm hale-be-container || true
+            docker run -d --name hale-be-container \
+              -p 5000:5000 \
+              --restart unless-stopped \
+              -e PORT=5000 \
+              -e MONGO_URI="${{ secrets.MONGO_URI }}" \
+              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+              -e JWT_EXPIRE=24h \
+              -e FRONTEND_URL=https://de-cora.com \
+              -e EMAIL_FROM_NAME="Henderson Design Group" \
+              -e EMAIL_FROM=hendersongroupnotify@gmail.com \
+              -e EMAIL_USER=hale.henderson.alia.project@gmail.com \
+              -e EMAIL_PASSWORD=nzbiyccrmtuvpxpb \
+              -e EMAIL_REPLY_TO=aloha@henderson.house \
+              -e BREVO_API_KEY=${{ secrets.BREVO_API_KEY }} \
+              -e ADMIN_EMAIL="gustianggara@henderson.house;almer@henderson.house;madeline@henderson.house" \
+              -e TEST_EMAIL=putra.a.gusti.anggara@gmail.com \
+              -e SPACES_KEY=${{ secrets.SPACES_KEY }} \
+              -e SPACES_SECRET="${{ secrets.SPACES_SECRET }}" \
+              -e SPACES_ENDPOINT=https://hale-project.sfo3.digitaloceanspaces.com \
+              -e SPACES_BUCKET=hale-project \
+              -e SPACES_REGION=sfo3 \
+              -e QUICKBOOKS_CLIENT_ID=${{ secrets.QUICKBOOKS_CLIENT_ID }} \
+              -e QUICKBOOKS_CLIENT_SECRET=${{ secrets.QUICKBOOKS_CLIENT_SECRET }} \
+              -e QUICKBOOKS_REDIRECT_URI=https://de-cora.com/api/quickbooks/callback \
+              -e QUICKBOOKS_ENVIRONMENT=production \
+              -e CHROME_BIN=/usr/bin/chromium-browser \
+              -e CHROME_PATH=/usr/lib/chromium/ \
+              -e PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+              -e PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+              registry.digitalocean.com/hale-project/backend-app:latest
