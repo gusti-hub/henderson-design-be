@@ -463,7 +463,10 @@ const getProjectSummary = async (req, res) => {
     const oc                    = user.projectSummary?.originalCollection || {};
     const totalAmount           = oc.originalCollectionInvestment || 0;
     const depositPct            = user.paymentInfo?.downPaymentPercentage || 30;
-    const depositReceived       = oc.depositReceived || 0;
+    const depositDesignFee      = oc.depositDesignFee || 0;
+    const depositTax            = oc.depositTax       || 0;
+    const depositAmount         = oc.depositAmount    || 0;
+    const depositReceived       = oc.depositReceived  || (depositDesignFee + depositTax + depositAmount);
     const remainingOrigBalance  = Math.max(0, totalAmount - depositReceived);
 
     // ── Current Project Status (Section 2) — manual input ─────────
@@ -513,6 +516,9 @@ const getProjectSummary = async (req, res) => {
         section1: {
           originalCollectionInvestment: totalAmount,
           depositPercentage: depositPct,
+          depositDesignFee,
+          depositTax,
+          depositAmount,
           depositReceived,
           remainingOriginalBalance: remainingOrigBalance
         },

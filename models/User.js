@@ -492,6 +492,9 @@ userSchema.add({
     proposalLabel: { type: String, default: '' },
     originalCollection: {
       originalCollectionInvestment: { type: Number, default: 0 },
+      depositDesignFee:             { type: Number, default: 0 },
+      depositTax:                   { type: Number, default: 0 },
+      depositAmount:                { type: Number, default: 0 },
       depositReceived:              { type: Number, default: 0 },
     },
     currentStatus: {

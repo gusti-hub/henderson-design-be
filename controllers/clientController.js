@@ -1558,7 +1558,9 @@ const updateProjectSummary = async (req, res) => {
       statementDate,
       proposalLabel,
       originalCollectionInvestment,
-      depositReceived,
+      depositDesignFee,
+      depositTax,
+      depositAmount,
       approvedTotalToDate,
       paymentsReceived,
       accentsAllowance,
@@ -1570,12 +1572,20 @@ const updateProjectSummary = async (req, res) => {
       notes
     } = req.body;
 
+    const calcDepositDesignFee = Number(depositDesignFee) || 0;
+    const calcDepositTax       = Number(depositTax)       || 0;
+    const calcDepositAmount    = Number(depositAmount)    || 0;
+    const calcDepositReceived  = calcDepositDesignFee + calcDepositTax + calcDepositAmount;
+
     const update = {
       'projectSummary.published':                                        published === true,
       'projectSummary.statementDate':                                    statementDate || new Date(),
       'projectSummary.proposalLabel':                                    proposalLabel || '',
       'projectSummary.originalCollection.originalCollectionInvestment':  Number(originalCollectionInvestment) || 0,
-      'projectSummary.originalCollection.depositReceived':              Number(depositReceived)              || 0,
+      'projectSummary.originalCollection.depositDesignFee':              calcDepositDesignFee,
+      'projectSummary.originalCollection.depositTax':                    calcDepositTax,
+      'projectSummary.originalCollection.depositAmount':                 calcDepositAmount,
+      'projectSummary.originalCollection.depositReceived':               calcDepositReceived,
       'projectSummary.currentStatus.approvedTotalToDate':               Number(approvedTotalToDate)          || 0,
       'projectSummary.currentStatus.paymentsReceived':                  Number(paymentsReceived)             || 0,
       'projectSummary.estimatedRemainingCosts.accentsAllowance':         Number(accentsAllowance)         || 0,
