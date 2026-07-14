@@ -13,45 +13,55 @@ const computeNetCost = (product) => {
   return parseFloat(opts.msrp || 0);
 };
 
-// Enrich POVersion products with live order data (same logic as getPurchaseOrder)
-const enrichProducts = (poProducts, order) => {
-  const orderMap = {};
-  (order?.selectedProducts || []).forEach(p => {
-    if (p.product_id) orderMap[p.product_id] = p;
-    if (p._id) orderMap[String(p._id)] = p;
+// Build vendor products from live order (same vendor filtering as PO editor).
+// PO-saved overrides (sidemark, uploaded images, netCostOverride, vendorDescription)
+// are preserved from po.products so Bill Invoice stays in sync with PO product list
+// while keeping PO-specific annotations.
+const buildVendorProducts = (order, po, vendorId) => {
+  const vendorStr = String(vendorId);
+
+  // Live products for this vendor — same filter as PurchaseOrderEditor.jsx
+  const vendorProducts = (order?.selectedProducts || []).filter(p => {
+    const pv = p.vendor;
+    if (!pv) return false;
+    const pvId = pv._id ? String(pv._id) : String(pv);
+    return pvId === vendorStr;
   });
-  return (poProducts || []).map(pp => {
-    const op = orderMap[pp.product_id] || orderMap[String(pp._id)];
-    if (!op) return pp;
-    const netCost = computeNetCost(op);
-    const qty = op.quantity || pp.quantity || 1;
+
+  // PO-saved overrides keyed by product_id
+  const poMap = {};
+  (po?.products || []).forEach(pp => {
+    if (pp.product_id) poMap[pp.product_id] = pp;
+  });
+
+  return vendorProducts.map(op => {
+    const pp   = poMap[op.product_id];
     const opts = op.selectedOptions || {};
-    const hasPoImages = (pp.selectedOptions?.uploadedImages?.length || 0) > 0;
+    const netCost = computeNetCost(op);
+    const qty     = op.quantity || 1;
+    const hasPoImages = (pp?.selectedOptions?.uploadedImages?.length || 0) > 0;
+
     return {
-      ...pp,
-      name: op.name || pp.name,
-      quantity: qty,
-      unitPrice: netCost,
+      ...op,
+      unitPrice:  netCost,
       totalPrice: netCost * qty,
       selectedOptions: {
-        ...pp.selectedOptions,
-        msrp: parseFloat(opts.msrp) || pp.selectedOptions?.msrp || 0,
-        netCostOverride: opts.netCostOverride ?? null,
-        finish: opts.finish || '',
-        fabric: opts.fabric || '',
-        size: opts.size || '',
-        vendorDescription: opts.vendorDescription || '',
-        image:  opts.image  || pp.selectedOptions?.image  || '',
-        images: opts.images || pp.selectedOptions?.images || [],
-        uploadedImages: hasPoImages
-          ? pp.selectedOptions.uploadedImages
-          : (opts.uploadedImages || []),
-        sidemark:          pp.selectedOptions?.sidemark          || opts.sidemark          || '',
-        shipToName:        pp.selectedOptions?.shipToName        || opts.shipToName        || '',
-        shippingStreet:    pp.selectedOptions?.shippingStreet    || opts.shippingStreet    || '',
-        shippingCity:      pp.selectedOptions?.shippingCity      || opts.shippingCity      || '',
-        shippingState:     pp.selectedOptions?.shippingState     || opts.shippingState     || '',
-        shippingPostalCode:pp.selectedOptions?.shippingPostalCode|| opts.shippingPostalCode|| '',
+        ...opts,
+        msrp:              parseFloat(opts.msrp) || 0,
+        netCostOverride:   pp?.selectedOptions?.netCostOverride ?? opts.netCostOverride ?? null,
+        finish:            opts.finish            || '',
+        fabric:            opts.fabric            || '',
+        size:              opts.size              || '',
+        vendorDescription: pp?.selectedOptions?.vendorDescription || opts.vendorDescription || '',
+        image:             opts.image             || '',
+        images:            opts.images            || [],
+        uploadedImages:    hasPoImages ? pp.selectedOptions.uploadedImages : (opts.uploadedImages || []),
+        sidemark:          pp?.selectedOptions?.sidemark           || opts.sidemark           || '',
+        shipToName:        pp?.selectedOptions?.shipToName         || opts.shipToName         || '',
+        shippingStreet:    pp?.selectedOptions?.shippingStreet     || opts.shippingStreet     || '',
+        shippingCity:      pp?.selectedOptions?.shippingCity       || opts.shippingCity       || '',
+        shippingState:     pp?.selectedOptions?.shippingState      || opts.shippingState      || '',
+        shippingPostalCode:pp?.selectedOptions?.shippingPostalCode || opts.shippingPostalCode || '',
       },
     };
   });
@@ -87,17 +97,18 @@ const getOrCreateBillInvoice = async (req, res) => {
 
     if (!poVersionId) return res.status(400).json({ message: 'poVersionId query param required' });
 
-    // Always fetch PO + order so prices are computed the same way as getPurchaseOrder
+    // Fetch PO + order (with vendor populated so we can filter by vendorId)
     const [existing, po, order] = await Promise.all([
       BillInvoice.findOne({ poVersionId }),
       POVersion.findById(poVersionId).lean(),
-      Order.findById(orderId).lean(),
+      Order.findById(orderId).populate('selectedProducts.vendor').lean(),
     ]);
 
     if (!po) return res.status(404).json({ message: 'PO version not found' });
 
-    // Enrich PO products with live order prices (same formula as getPurchaseOrder)
-    const liveProducts = enrichProducts(po.products, order);
+    // Build product list from live order filtered by vendor — same as PO editor.
+    // additionalLines remain independently editable on the Bill Invoice.
+    const liveProducts = buildVendorProducts(order, po, vendorId);
     const subTotal = liveProducts.reduce((s, p) => s + (p.totalPrice || 0), 0);
 
     // Return existing BI but override products with live prices so BI always matches PO
