@@ -479,8 +479,9 @@ const getProjectSummary = async (req, res) => {
     const cstat              = user.projectSummary?.currentStatus || {};
     const approvedTotalToDate = cstat.approvedTotalToDate || 0;
     const paymentsReceived    = cstat.paymentsReceived    || 0;
+    const creditAmount        = cstat.creditAmount        || 0;
     const proposalLabel       = user.projectSummary?.proposalLabel || '';
-    const outstandingBalance  = Math.max(0, approvedTotalToDate - paymentsReceived);
+    const outstandingBalance  = Math.max(0, approvedTotalToDate - paymentsReceived - creditAmount);
 
     // ── Estimated remaining costs (Section 3) ────────────────────
     const est = user.projectSummary?.estimatedRemainingCosts || {};
@@ -535,6 +536,7 @@ const getProjectSummary = async (req, res) => {
           proposalLabel,
           approvedTotalToDate,
           paymentsReceived,
+          creditAmount,
           outstandingBalance
         },
         section3: {
