@@ -470,9 +470,11 @@ const getProjectSummary = async (req, res) => {
     const taxOnDesignFee        = oc.taxOnDesignFee === true;
     const taxOnDeposit          = oc.taxOnDeposit  === true;
     const subFieldsSum          = depositDesignFee + depositTax + depositAmount;
-    const depositReceived       = oc.depositReceived  || subFieldsSum;
+    const depositReceivedBase   = oc.depositReceived  || subFieldsSum;
     // If sub-fields haven't been set yet, show the full amount under "Deposit" for display
-    const viewDepositAmount     = subFieldsSum === 0 && depositReceived > 0 ? depositReceived : depositAmount;
+    const viewDepositAmount     = subFieldsSum === 0 && depositReceivedBase > 0 ? depositReceivedBase : depositAmount;
+    // Total received = design fee + tax + deposit + credit/overpayment
+    const depositReceived       = depositReceivedBase + creditAmount;
     const remainingOrigBalance  = Math.max(0, totalAmount - depositReceived);
 
     // ── Current Project Status (Section 2) — manual input ─────────
