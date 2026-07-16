@@ -481,7 +481,7 @@ const getProjectSummary = async (req, res) => {
     const paymentsReceived    = cstat.paymentsReceived    || 0;
     const creditAmount        = cstat.creditAmount        || 0;
     const proposalLabel       = user.projectSummary?.proposalLabel || '';
-    const outstandingBalance  = Math.max(0, approvedTotalToDate - paymentsReceived - creditAmount);
+    const outstandingBalance  = Math.max(0, approvedTotalToDate - paymentsReceived);
 
     // ── Estimated remaining costs (Section 3) ────────────────────
     const est = user.projectSummary?.estimatedRemainingCosts || {};
@@ -530,13 +530,13 @@ const getProjectSummary = async (req, res) => {
           depositTax,
           depositAmount: viewDepositAmount,
           depositReceived,
+          creditAmount,
           remainingOriginalBalance: remainingOrigBalance
         },
         section2: {
           proposalLabel,
           approvedTotalToDate,
           paymentsReceived,
-          creditAmount,
           outstandingBalance
         },
         section3: {
