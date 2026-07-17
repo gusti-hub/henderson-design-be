@@ -4100,20 +4100,29 @@ const moveProducts = async (req, res) => {
     if (!sourceOrder) return res.status(404).json({ message: 'Source order not found' });
     if (!targetOrder) return res.status(404).json({ message: 'Target order not found' });
 
-    const idSet = new Set(productIds.map(id => id.toString()));
-    const toMove   = (sourceOrder.selectedProducts || []).filter(p => idSet.has(p._id?.toString()));
-    const remaining = (sourceOrder.selectedProducts || []).filter(p => !idSet.has(p._id?.toString()));
+    const { productIndices = [] } = req.body;
+    // _id in selectedProducts is a Product reference (can be null for manual items).
+    // Use index-based fallback so null-_id products can still be targeted.
+    const idSet = new Set(productIds.filter(id => id != null).map(id => id.toString()));
+    const indexSet = new Set(productIndices.map(Number));
+
+    const toMove = (sourceOrder.selectedProducts || []).filter((p, idx) =>
+      (p._id != null && idSet.has(p._id.toString())) || indexSet.has(idx)
+    );
+    const remaining = (sourceOrder.selectedProducts || []).filter((p, idx) =>
+      !((p._id != null && idSet.has(p._id.toString())) || indexSet.has(idx))
+    );
 
     if (toMove.length === 0) {
       return res.status(400).json({ message: 'No matching products found in source order' });
     }
 
-    // Strip _id so Mongoose assigns new ones in the target order
-    const productsToAdd = toMove.map(p => {
-      const obj = p.toObject ? p.toObject() : { ...p };
-      delete obj._id;
-      return obj;
-    });
+    // Keep _id (it's a Product reference, not a Mongoose subdoc auto-ID).
+    // Mongoose will still assign a new subdoc _id when the plain object is
+    // pushed into the target array if no _id is present.
+    const productsToAdd = toMove.map(p =>
+      p.toObject ? p.toObject() : { ...p }
+    );
 
     sourceOrder.selectedProducts = remaining;
     await sourceOrder.save();
