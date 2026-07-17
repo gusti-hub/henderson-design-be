@@ -233,6 +233,7 @@ const updateOrder = async (req, res) => {
             proposalNumber:           product.selectedOptions?.proposalNumber           || '',
             shipTo:                   product.selectedOptions?.shipTo                   || '',
             orderDate:                product.selectedOptions?.orderDate                || '',
+            revisedOrderDate:         product.selectedOptions?.revisedOrderDate         || '',
             expectedShipDate:         product.selectedOptions?.expectedShipDate         || '',
             expectedArrivalDate:      product.selectedOptions?.expectedArrivalDate      || '',
             dateReceived:             product.selectedOptions?.dateReceived             || '',

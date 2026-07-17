@@ -532,7 +532,8 @@ const updatePurchaseOrder = async (req, res) => {
     const {
       version, products, vendorInfo, shipTo, comments, notes,
       poNumber, accountNumber, repName, repPhone, repEmail,
-      terms, estimateNumber, shipping, others, status, clientInfo
+      terms, estimateNumber, shipping, others, status, clientInfo,
+      revisedOrderDate
     } = req.body;
 
     const poVersion = await POVersion.findOne({ orderId, vendorId, version });
@@ -556,6 +557,7 @@ const updatePurchaseOrder = async (req, res) => {
     if (repEmail !== undefined) poVersion.repEmail = repEmail;
     if (terms !== undefined) poVersion.terms = terms;
     if (estimateNumber !== undefined) poVersion.estimateNumber = estimateNumber;
+    if (revisedOrderDate !== undefined) poVersion.revisedOrderDate = revisedOrderDate;
     if (shipping !== undefined) poVersion.shipping = shipping;
     if (others !== undefined) poVersion.others = others;
     if (req.body.additionalLines !== undefined) {
@@ -609,7 +611,8 @@ const createPOVersion = async (req, res) => {
     const {
       products, vendorInfo, shipTo, comments, notes, versionNotes,
       poNumber, accountNumber, repName, repPhone, repEmail,
-      terms, estimateNumber, shipping, others, clientInfo
+      terms, estimateNumber, shipping, others, clientInfo,
+      revisedOrderDate
     } = req.body;
 
     if (!versionNotes?.trim()) {
@@ -681,6 +684,7 @@ const createPOVersion = async (req, res) => {
       repEmail: repEmail || latestVersion?.repEmail || '',
       terms: terms || latestVersion?.terms || '',
       estimateNumber: estimateNumber || '',
+      revisedOrderDate: revisedOrderDate || latestVersion?.revisedOrderDate || '',
       shipTo: shipTo || latestVersion?.shipTo || {},
       clientInfo: clientInfo || latestVersion?.clientInfo || {},
       vendorInfo: vendorInfo || latestVersion?.vendorInfo || {},

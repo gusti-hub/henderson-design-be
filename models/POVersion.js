@@ -26,6 +26,7 @@ const poVersionSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  revisedOrderDate: { type: String, default: '' },
   accountNumber: String,
   repName: String,
   repPhone: String,

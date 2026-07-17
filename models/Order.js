@@ -167,6 +167,7 @@ const orderSchema = new mongoose.Schema({
       proposalNumber:          { type: String, default: null }, // kept for legacy compat
       shipTo:                  String,
       orderDate:               String,
+      revisedOrderDate:        String,
       expectedShipDate:        String,
       expectedArrivalDate:     String,
       dateReceived:            String,
