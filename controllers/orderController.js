@@ -4085,9 +4085,11 @@ const generateBulkPO = async (req, res) => {
 // @access Private (Admin)
 const moveProducts = async (req, res) => {
   try {
-    const { sourceOrderId, targetOrderId, productIds } = req.body;
-    if (!sourceOrderId || !targetOrderId || !Array.isArray(productIds) || productIds.length === 0) {
-      return res.status(400).json({ message: 'sourceOrderId, targetOrderId and productIds are required' });
+    const { sourceOrderId, targetOrderId, productIds = [], productIndices: rawIndices = [] } = req.body;
+    const hasSelection = (Array.isArray(productIds) && productIds.length > 0) ||
+                         (Array.isArray(rawIndices) && rawIndices.length > 0);
+    if (!sourceOrderId || !targetOrderId || !hasSelection) {
+      return res.status(400).json({ message: 'sourceOrderId, targetOrderId and at least one product are required' });
     }
     if (sourceOrderId === targetOrderId) {
       return res.status(400).json({ message: 'Source and target order must be different' });
@@ -4100,11 +4102,10 @@ const moveProducts = async (req, res) => {
     if (!sourceOrder) return res.status(404).json({ message: 'Source order not found' });
     if (!targetOrder) return res.status(404).json({ message: 'Target order not found' });
 
-    const { productIndices = [] } = req.body;
     // _id in selectedProducts is a Product reference (can be null for manual items).
     // Use index-based fallback so null-_id products can still be targeted.
     const idSet = new Set(productIds.filter(id => id != null).map(id => id.toString()));
-    const indexSet = new Set(productIndices.map(Number));
+    const indexSet = new Set(rawIndices.map(Number));
 
     const toMove = (sourceOrder.selectedProducts || []).filter((p, idx) =>
       (p._id != null && idSet.has(p._id.toString())) || indexSet.has(idx)
