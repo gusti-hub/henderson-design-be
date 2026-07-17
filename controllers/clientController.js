@@ -881,14 +881,22 @@ const updateClient = async (req, res) => {
       }
     }
 
+    // When name changes but selectedPlan is not being fully replaced, also patch
+    // selectedPlan.clientInfo.name so Proposal and PO reflect the new name.
+    if (updates.name && !orderUpdateFields.selectedPlan) {
+      orderUpdateFields['selectedPlan.clientInfo.name'] = client.name;
+      shouldUpdateOrder = true;
+    }
+
     // Update order if needed
     if (shouldUpdateOrder) {
-      const order = await Order.findOne({ user: client._id });
-      
-      if (order) {
-        await Order.findByIdAndUpdate(order._id, orderUpdateFields);
-        console.log('✅ Order updated for client:', client.clientCode);
-      } else if (client.status === 'approved') {
+      const updatedCount = await Order.updateMany({ user: client._id }, { $set: orderUpdateFields });
+      if (updatedCount.modifiedCount > 0) {
+        console.log(`✅ ${updatedCount.modifiedCount} order(s) updated for client:`, client.clientCode);
+      }
+
+      const orderExists = await Order.exists({ user: client._id });
+      if (!orderExists && client.status === 'approved') {
         const collection = client.collection;
         const floorPlan = client.floorPlan;
         const packageType = client.packageType || 'investor';
