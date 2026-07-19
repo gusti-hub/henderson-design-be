@@ -239,6 +239,19 @@ const syncBillInvoiceToQuickBooks = async (req, res) => {
       });
     }
 
+    // Always fetch live order data so QB gets full descriptions (vendorDescription, sidemark, etc.)
+    // bill.products may have stripped selectedOptions due to schema; live order is always current
+    const [liveOrder, livePO] = await Promise.all([
+      Order.findById(bill.orderId).populate('selectedProducts.vendor').lean(),
+      POVersion.findById(bill.poVersionId).lean(),
+    ]);
+    const liveProducts = buildVendorProducts(liveOrder, livePO, bill.vendorId);
+    const liveMap = {};
+    liveProducts.forEach(p => {
+      const key = p.product_id || p._id?.toString();
+      if (key) liveMap[key] = p;
+    });
+
     // Vendor + Customer lookup/create
     const vendorName = bill.vendorInfo?.name || 'Unknown Vendor';
     const vendor     = await quickbooksClient.getOrCreateVendor(vendorName);
@@ -259,14 +272,18 @@ const syncBillInvoiceToQuickBooks = async (req, res) => {
         const total     = round2(unitPrice * qty);
         if (total === 0) return null; // skip zero-value lines only
 
+        // Enrich description from live order so QB always gets full data
+        const liveKey = p.product_id || p._id?.toString();
+        const opts    = (liveKey && liveMap[liveKey]?.selectedOptions) || p.selectedOptions || {};
+
         const desc = [
           p.name,
-          p.description                         ? p.description                              : null,
-          p.selectedOptions?.vendorDescription  ? p.selectedOptions.vendorDescription        : null,
-          p.selectedOptions?.finish             ? `Finish: ${p.selectedOptions.finish}`      : null,
-          p.selectedOptions?.fabric             ? `Fabric: ${p.selectedOptions.fabric}`      : null,
-          p.selectedOptions?.size               ? `Size: ${p.selectedOptions.size}`          : null,
-          p.selectedOptions?.sidemark           ? `Sidemark: ${p.selectedOptions.sidemark}`  : null,
+          p.description          ? p.description                    : null,
+          opts.vendorDescription ? opts.vendorDescription           : null,
+          opts.finish            ? `Finish: ${opts.finish}`         : null,
+          opts.fabric            ? `Fabric: ${opts.fabric}`         : null,
+          opts.size              ? `Size: ${opts.size}`             : null,
+          opts.sidemark          ? `Sidemark: ${opts.sidemark}`     : null,
         ].filter(Boolean).join(' | ');
 
         return { description: desc || p.name || 'Product', amount: total, qty: 1, unitPrice: total, lineType: 'Product' };
