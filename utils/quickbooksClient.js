@@ -401,6 +401,35 @@ async billExists(billId) {
     return response.data.Bill;
   }
 
+  // ─── BillPayment — GET / DELETE / CREATE ─────────────────────────────────────
+  async getBillPayment(paymentId) {
+    if (this.isTokenExpired()) await this.refreshAccessToken();
+    const response = await axios.get(
+      `${BASE_URL}/v3/company/${this.realmId}/billpayment/${paymentId}`,
+      { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Accept': 'application/json' } }
+    );
+    return response.data.BillPayment;
+  }
+
+  async deleteBillPayment(paymentId, syncToken) {
+    if (this.isTokenExpired()) await this.refreshAccessToken();
+    await axios.post(
+      `${BASE_URL}/v3/company/${this.realmId}/billpayment`,
+      { Id: paymentId, SyncToken: syncToken },
+      { params: { operation: 'delete' }, headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
+    );
+  }
+
+  async createBillPayment(paymentData) {
+    if (this.isTokenExpired()) await this.refreshAccessToken();
+    const response = await axios.post(
+      `${BASE_URL}/v3/company/${this.realmId}/billpayment`,
+      paymentData,
+      { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
+    );
+    return response.data.BillPayment;
+  }
+
   // ─── Bill — CREATE ────────────────────────────────────────────────────────────
   async createBill(billData) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
@@ -502,33 +531,64 @@ async billExists(billId) {
       const isLinked = detail.toLowerCase().includes('linked to') || detail.toLowerCase().includes('cannot be deleted');
       if (!isLinked) throw err;
 
-      // Bill has a linked payment — fall back to description-only update
-      // (preserve existing line IDs/amounts, only patch Description fields)
-      console.warn(`QB: Bill ${billId} has linked payment — falling back to description-only update`);
-      const descMap = {};
-      billData.lines.forEach((l, i) => { descMap[i] = (l.description || '').substring(0, 4000); });
+      // Bill has linked payments — delete them, do full update, then recreate them
+      console.warn(`QB: Bill ${billId} has linked payment — deleting payments, updating bill, recreating payments`);
 
-      const existingItemLines = (existing.Line || []).filter(l => l.DetailType === 'ItemBasedExpenseLineDetail');
-      const patchedLines = existingItemLines.map((l, i) => ({
-        ...l,
-        Description: descMap[i] !== undefined ? descMap[i] : (l.Description || ''),
-      }));
+      const linkedPaymentIds = (existing.LinkedTxn || [])
+        .filter(t => t.TxnType === 'BillPayment')
+        .map(t => t.TxnId);
 
-      if (patchedLines.length === 0) throw new Error('No line items found on existing QB bill');
+      // 1. Fetch full payment details before deleting
+      const paymentDetails = [];
+      for (const pid of linkedPaymentIds) {
+        try {
+          const p = await this.getBillPayment(pid);
+          paymentDetails.push(p);
+        } catch (e) {
+          console.warn(`QB: Could not fetch BillPayment ${pid}:`, e.message);
+        }
+      }
 
-      const patchBill = {
-        Id:        billId,
-        SyncToken: existing.SyncToken,
-        sparse:    true,
-        Line:      patchedLines,
-      };
-      const patchResponse = await axios.post(
+      // 2. Delete each payment
+      for (const p of paymentDetails) {
+        await this.deleteBillPayment(p.Id, p.SyncToken);
+        console.log(`QB: Deleted BillPayment ${p.Id} (will recreate after bill update)`);
+      }
+
+      // 3. Full bill update (now unlocked)
+      const fresh = await this.getBill(billId);
+      bill.SyncToken = fresh.SyncToken;
+      const updateResponse = await axios.post(
         `${BASE_URL}/v3/company/${this.realmId}/bill`,
-        patchBill,
+        bill,
         { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
       );
-      console.log('QB: Updated bill descriptions (linked payment preserved):', patchResponse.data.Bill.Id);
-      return patchResponse.data.Bill;
+      const updatedBill = updateResponse.data.Bill;
+      console.log(`QB: Full bill update done: ${updatedBill.Id}`);
+
+      // 4. Recreate each payment with same details
+      for (const p of paymentDetails) {
+        try {
+          const newPayment = {
+            VendorRef: p.VendorRef,
+            PayType:   p.PayType,
+            TotalAmt:  p.TotalAmt,
+            Line:      (p.Line || []).map(l => ({
+              Amount:    l.Amount,
+              LinkedTxn: l.LinkedTxn, // same bill ID, still valid after update
+            })),
+            ...(p.CheckPayment      ? { CheckPayment:      p.CheckPayment      } : {}),
+            ...(p.CreditCardPayment ? { CreditCardPayment: p.CreditCardPayment } : {}),
+            ...(p.PrivateNote       ? { PrivateNote:       p.PrivateNote       } : {}),
+          };
+          const recreated = await this.createBillPayment(newPayment);
+          console.log(`QB: Recreated BillPayment ${recreated.Id} (was ${p.Id})`);
+        } catch (recreateErr) {
+          console.error(`QB: FAILED to recreate BillPayment ${p.Id} — manual action needed:`, JSON.stringify(p));
+        }
+      }
+
+      return updatedBill;
     }
   }
 }
