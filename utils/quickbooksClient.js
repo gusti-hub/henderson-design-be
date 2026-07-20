@@ -549,10 +549,42 @@ async billExists(billId) {
         }
       }
 
-      // 2. Delete each payment
+      // 2. Try to delete each payment, fall back to description-only if any deletion is also blocked
+      let allDeleted = true;
       for (const p of paymentDetails) {
-        await this.deleteBillPayment(p.Id, p.SyncToken);
-        console.log(`QB: Deleted BillPayment ${p.Id} (will recreate after bill update)`);
+        try {
+          await this.deleteBillPayment(p.Id, p.SyncToken);
+          console.log(`QB: Deleted BillPayment ${p.Id} (will recreate after bill update)`);
+        } catch (delErr) {
+          console.warn(`QB: Cannot delete BillPayment ${p.Id} (linked to invoice?) — will use description-only update`);
+          allDeleted = false;
+          break;
+        }
+      }
+
+      if (!allDeleted) {
+        // Payments can't be deleted (linked to invoice) — fall back to description-only sparse update
+        console.warn(`QB: Falling back to description-only update for bill ${billId}`);
+        const existingItemLines = (existing.Line || []).filter(l => l.DetailType === 'ItemBasedExpenseLineDetail');
+        const patchedLines = existingItemLines.map((l, i) => ({
+          ...l,
+          Description: (billData.lines[i]?.description || l.Description || '').substring(0, 4000),
+        }));
+        if (patchedLines.length === 0) throw new Error('No line items found on existing QB bill to patch');
+        const patchBill = {
+          Id:        billId,
+          SyncToken: existing.SyncToken,
+          sparse:    true,
+          VendorRef: { value: billData.vendorId },
+          Line:      patchedLines,
+        };
+        const patchRes = await axios.post(
+          `${BASE_URL}/v3/company/${this.realmId}/bill`,
+          patchBill,
+          { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
+        );
+        console.log(`QB: Description-only update done for bill ${billId}`);
+        return patchRes.data.Bill;
       }
 
       // 3. Full bill update (now unlocked)
@@ -575,7 +607,7 @@ async billExists(billId) {
             TotalAmt:  p.TotalAmt,
             Line:      (p.Line || []).map(l => ({
               Amount:    l.Amount,
-              LinkedTxn: l.LinkedTxn, // same bill ID, still valid after update
+              LinkedTxn: l.LinkedTxn,
             })),
             ...(p.CheckPayment      ? { CheckPayment:      p.CheckPayment      } : {}),
             ...(p.CreditCardPayment ? { CreditCardPayment: p.CreditCardPayment } : {}),
