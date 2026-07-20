@@ -359,22 +359,15 @@ const syncBillInvoiceToQuickBooks = async (req, res) => {
     console.error('syncBillInvoiceToQuickBooks error:', error);
 
     const qbDetail = error.response?.data?.Fault?.Error?.[0]?.Detail || '';
-    const isLinkedToPayment = qbDetail.toLowerCase().includes('linked to') ||
-                              qbDetail.toLowerCase().includes('cannot be deleted');
 
-    // If bill is linked to a payment in QB, keep status as 'synced' — bill still exists in QB
     if (req.params.billInvoiceId) {
       await BillInvoice.findByIdAndUpdate(req.params.billInvoiceId, {
-        quickbooksStatus: isLinkedToPayment ? 'synced' : 'failed',
-        quickbooksError:  isLinkedToPayment ? null : (error.message || qbDetail),
+        quickbooksStatus: 'failed',
+        quickbooksError:  qbDetail || error.message,
       }).catch(() => {});
     }
 
-    const userMessage = isLinkedToPayment
-      ? 'This bill has an existing payment in QuickBooks and cannot be modified. Please void the payment in QuickBooks first, then re-sync.'
-      : (qbDetail || error.message);
-
-    res.status(isLinkedToPayment ? 409 : 500).json({ message: userMessage });
+    res.status(500).json({ message: qbDetail || error.message });
   }
 };
 

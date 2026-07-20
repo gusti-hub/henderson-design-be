@@ -469,7 +469,7 @@ async billExists(billId) {
           Qty:            qty,
           UnitPrice:      unitPrice,
           BillableStatus: 'NotBillable',
-          ...(billData.customerId ? { CustomerRef: { value: billData.customerId } } : {}), // ✅ tambah ini
+          ...(billData.customerId ? { CustomerRef: { value: billData.customerId } } : {}),
           ...(line.classRef       ? { ClassRef:    { value: line.classRef }       } : {}),
         },
       };
@@ -489,13 +489,47 @@ async billExists(billId) {
       DocNumber: billData.docNumber,
     };
 
-    const response = await axios.post(
-      `${BASE_URL}/v3/company/${this.realmId}/bill`,
-      bill,
-      { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
-    );
-    console.log('QB: Updated bill:', response.data.Bill.Id);
-    return response.data.Bill;
+    try {
+      const response = await axios.post(
+        `${BASE_URL}/v3/company/${this.realmId}/bill`,
+        bill,
+        { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
+      );
+      console.log('QB: Updated bill:', response.data.Bill.Id);
+      return response.data.Bill;
+    } catch (err) {
+      const detail = err.response?.data?.Fault?.Error?.[0]?.Detail || '';
+      const isLinked = detail.toLowerCase().includes('linked to') || detail.toLowerCase().includes('cannot be deleted');
+      if (!isLinked) throw err;
+
+      // Bill has a linked payment — fall back to description-only update
+      // (preserve existing line IDs/amounts, only patch Description fields)
+      console.warn(`QB: Bill ${billId} has linked payment — falling back to description-only update`);
+      const descMap = {};
+      billData.lines.forEach((l, i) => { descMap[i] = (l.description || '').substring(0, 4000); });
+
+      const existingItemLines = (existing.Line || []).filter(l => l.DetailType === 'ItemBasedExpenseLineDetail');
+      const patchedLines = existingItemLines.map((l, i) => ({
+        ...l,
+        Description: descMap[i] !== undefined ? descMap[i] : (l.Description || ''),
+      }));
+
+      if (patchedLines.length === 0) throw new Error('No line items found on existing QB bill');
+
+      const patchBill = {
+        Id:        billId,
+        SyncToken: existing.SyncToken,
+        sparse:    true,
+        Line:      patchedLines,
+      };
+      const patchResponse = await axios.post(
+        `${BASE_URL}/v3/company/${this.realmId}/bill`,
+        patchBill,
+        { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
+      );
+      console.log('QB: Updated bill descriptions (linked payment preserved):', patchResponse.data.Bill.Id);
+      return patchResponse.data.Bill;
+    }
   }
 }
 
