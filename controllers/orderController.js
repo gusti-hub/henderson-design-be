@@ -23,6 +23,25 @@ const { logOrderChanges } = require('../utils/auditLogger');
 const { generatePresignedUploadUrl } = require('../config/s3');
 
 
+// Strip HTML tags and convert block elements to newlines for plain-text export (PDF/Excel)
+const htmlToText = (html) => {
+  if (html == null) return '';
+  return String(html)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
 const createOrder = async (req, res) => {
   try {
     // Check if user already has an order
@@ -1805,7 +1824,7 @@ const generateInstallBinder = async (req, res) => {
         const descParts = [
           product.name || '',
           product.product_id                        ? `SKU: ${product.product_id}` : '',
-          product.selectedOptions?.specifications   || '',
+          htmlToText(product.selectedOptions?.specifications),
           product.selectedOptions?.finish           ? `Finish: ${product.selectedOptions.finish}` : '',
           product.selectedOptions?.fabric           ? `Fabric: ${product.selectedOptions.fabric}` : '',
           product.selectedOptions?.size             ? `Size: ${product.selectedOptions.size}` : '',
@@ -1813,9 +1832,9 @@ const generateInstallBinder = async (req, res) => {
         ].filter(Boolean);
 
         const notesParts = [
-          product.selectedOptions?.deliveryStatus,
-          product.selectedOptions?.notes,
-          product.selectedOptions?.installerNotes,
+          htmlToText(product.selectedOptions?.deliveryStatus),
+          htmlToText(product.selectedOptions?.notes),
+          htmlToText(product.selectedOptions?.installerNotes),
         ].filter(Boolean);
 
         const cells = {
@@ -2087,7 +2106,7 @@ const generateInstallBinderExcel = async (req, res) => {
         const descParts = [];
         if (p.name)                            descParts.push(p.name);
         if (p.product_id)                      descParts.push(`SKU: ${p.product_id}`);
-        if (p.selectedOptions?.specifications) descParts.push(p.selectedOptions.specifications);
+        if (p.selectedOptions?.specifications) descParts.push(htmlToText(p.selectedOptions.specifications));
         if (p.selectedOptions?.finish)         descParts.push(`Finish: ${p.selectedOptions.finish}`);
         if (p.selectedOptions?.fabric)         descParts.push(`Fabric: ${p.selectedOptions.fabric}`);
         if (p.selectedOptions?.size)           descParts.push(`Size: ${p.selectedOptions.size}`);
@@ -2138,9 +2157,9 @@ const generateInstallBinderExcel = async (req, res) => {
 
         const cellI = ws.getCell(rowNum, 9);
         const notesParts = [
-          p.selectedOptions?.deliveryStatus,
-          p.selectedOptions?.notes,
-          p.selectedOptions?.installerNotes,
+          htmlToText(p.selectedOptions?.deliveryStatus),
+          htmlToText(p.selectedOptions?.notes),
+          htmlToText(p.selectedOptions?.installerNotes),
         ].filter(Boolean);
         cellI.value = notesParts.join('\n') || '';
         cellI.font = dataFont; cellI.border = thinBorder; cellI.alignment = wrapTop;
