@@ -335,7 +335,7 @@ const updateOrder = async (req, res) => {
 
     // Fetch fresh dari DB — _id subdokumen pasti ada dan benar
     const freshForAudit = await Order.findById(updatedOrder._id)
-      .populate({ path: 'selectedProducts.vendor', select: 'name' })
+      .populate({ path: 'selectedProducts.vendor', select: 'name vendorCode defaultMarkup' })
       .lean();
 
     console.log(`[audit] queuing for order ${updatedOrder._id}, performer: ${performer.name}`);
