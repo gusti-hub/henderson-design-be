@@ -227,6 +227,10 @@ const orderSchema = new mongoose.Schema({
       }
     },
 
+    // ── Group / parent-child ──
+    isParent: { type: Boolean, default: false },
+    parentId: { type: String, default: null },
+
     placement: {
       spotKey: String,
       coordinates: {

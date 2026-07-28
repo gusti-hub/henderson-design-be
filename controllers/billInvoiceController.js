@@ -21,7 +21,9 @@ const buildVendorProducts = (order, po, vendorId) => {
   const vendorStr = String(vendorId);
 
   // Live products for this vendor — same filter as PurchaseOrderEditor.jsx
+  // Exclude parent (group container) products; only children + standalones are line items
   const vendorProducts = (order?.selectedProducts || []).filter(p => {
+    if (p.isParent) return false;
     const pv = p.vendor;
     if (!pv) return false;
     const pvId = pv._id ? String(pv._id) : String(pv);
@@ -265,7 +267,8 @@ const syncBillInvoiceToQuickBooks = async (req, res) => {
     });
 
     // Product lines — allow negative amounts (credit/discount lines)
-    const productLines = (bill.products || [])
+    // Exclude parent (group) products — only children and standalones go to QB
+    const productLines = (bill.products || []).filter(p => !p.isParent)
       .map(p => {
         const qty       = parseFloat(p.quantity)  || 1;
         const unitPrice = parseFloat(p.unitPrice) || 0;

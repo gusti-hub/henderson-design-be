@@ -216,6 +216,8 @@ const updateOrder = async (req, res) => {
           sourceType: product.sourceType || 'manual',
           isEditable: product.isEditable !== undefined ? product.isEditable : true,
           libraryProductId: product.libraryProductId || null,
+          isParent: product.isParent || false,
+          parentId: product.parentId || null,
           selectedOptions: {
             sidemark:           product.selectedOptions?.sidemark           || '',
             group:              product.selectedOptions?.group              || '',
