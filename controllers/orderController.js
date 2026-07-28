@@ -431,7 +431,7 @@ const getOrders = async (req, res) => {
     // Populate references (works on aggregation results)
     await Order.populate(orders, [
       { path: 'user', select: 'name email clientCode unitNumber' },
-      { path: 'selectedProducts.vendor', select: 'name' },
+      { path: 'selectedProducts.vendor', select: 'name vendorCode defaultMarkup' },
       { path: 'updatedBy', select: 'name' },
     ]);
 
@@ -461,7 +461,7 @@ const getOrderById = async (req, res) => {
       })
       .populate({
         path: 'selectedProducts.vendor',
-        select: 'name'          // ✅ FIX: populate vendor name
+        select: 'name vendorCode defaultMarkup',
       })
       .lean();
 
@@ -1321,7 +1321,7 @@ const getOrdersByClient = async (req, res) => {
     }
 
     let orders = await Order.find({ user: user._id })
-      .populate('selectedProducts.vendor', 'name')
+      .populate('selectedProducts.vendor', 'name vendorCode defaultMarkup')
       .sort({ createdAt: 1 }); // oldest first for consistent orderNumber assignment
 
     if (orders.length === 0 && user.status === 'approved') {
