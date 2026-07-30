@@ -597,18 +597,29 @@ const syncProposalToQuickBooks = async (req, res) => {
       clientCode: invoiceNumber,
     });
 
+    // Use pv snapshot when it has products; fall back to live order products when snapshot is empty
+    const pvProducts = pv.selectedProducts || [];
+    const sourceProducts = pvProducts.length > 0
+      ? pvProducts
+      : (order.selectedProducts || []).filter(p => !p.parentId);
+
     const lines = [];
-    for (const p of (pv.selectedProducts || [])) {
+    for (const p of sourceProducts) {
       const opts      = p.selectedOptions || {};
       const qty       = parseFloat(p.quantity) || 1;
-      const msrp      = parseFloat(opts.msrp) || 0;
-      const markupPct = parseFloat(opts.markupPercent) || 0;
-      const sell      = round2(msrp * (1 + markupPct / 100));
-      const subtotal  = round2(sell * qty);
-      const taxRate   = parseFloat(opts.salesTaxRate) || 0;
-      const tax       = round2(subtotal * (taxRate / 100));
-      const total     = round2(subtotal + tax);
-      // Note: $0 products (gifts) are intentionally included — do NOT skip on total === 0
+      let total;
+      if (p.isParent) {
+        total = round2(parseFloat(p.finalPrice) || 0);
+      } else {
+        const msrp      = parseFloat(opts.msrp) || 0;
+        const markupPct = parseFloat(opts.markupPercent) || 0;
+        const sell      = round2(msrp * (1 + markupPct / 100));
+        const subtotal  = round2(sell * qty);
+        const taxRate   = parseFloat(opts.salesTaxRate) || 0;
+        const tax       = round2(subtotal * (taxRate / 100));
+        total           = round2(subtotal + tax);
+      }
+      // $0 products (gifts) are intentionally included — do NOT skip on total === 0
 
       const descParts = [];
       if (opts.room)           descParts.push(`Room: ${opts.room}`);
