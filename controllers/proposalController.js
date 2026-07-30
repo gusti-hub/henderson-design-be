@@ -61,7 +61,12 @@ const buildPrevProposalClassifier = (allVersions) => {
 // full name if no comma is present (handles legacy "First Last" names too).
 const clientCodeFromName = (name) => {
   const raw = (name || 'CLT').trim();
-  const lastName = raw.includes(',') ? raw.split(',')[0].trim() : raw.split(/\s+/).pop() || raw;
+  const words = raw.includes(',') ? [raw.split(',')[0].trim()] : raw.split(/\s+/);
+  // Use last word; if it has no letters (e.g. unit number "1015"), fall back to first word with letters
+  let lastName = words[words.length - 1] || raw;
+  if (!/[a-zA-Z]/.test(lastName)) {
+    lastName = words.find(w => /[a-zA-Z]/.test(w)) || raw;
+  }
   return lastName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase().padEnd(3, 'X');
 };
 
