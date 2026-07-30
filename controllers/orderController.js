@@ -410,7 +410,7 @@ const getOrders = async (req, res) => {
             { $match: { $expr: { $eq: ['$orderId', '$$oid'] } } },
             { $sort: { version: -1 } },
             { $limit: 1 },
-            { $project: { proposalNumber: 1 } },
+            { $project: { proposalNumber: 1, status: 1 } },
           ],
           as: '_latestProposal',
       }},
@@ -421,6 +421,7 @@ const getOrders = async (req, res) => {
               { $arrayElemAt: ['$_latestProposal.proposalNumber', 0] },
             ],
           },
+          proposalStatus: { $arrayElemAt: ['$_latestProposal.status', 0] },
       }},
       { $unset: '_latestProposal' },
     ];

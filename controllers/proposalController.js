@@ -443,7 +443,7 @@ const updateProposalStatus = async (req, res) => {
     const { orderId } = req.params;
     const { status } = req.body;
 
-    const validStatuses = ['draft', 'sent', 'approved', 'rejected'];
+    const validStatuses = ['draft', 'sent', 'approved', 'paid', 'rejected'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ message: 'Invalid status' });
     }
