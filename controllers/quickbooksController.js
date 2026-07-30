@@ -599,16 +599,22 @@ const syncProposalToQuickBooks = async (req, res) => {
 
     const lines = [];
     for (const p of (pv.selectedProducts || [])) {
+      if (!p.name) continue;
       const opts      = p.selectedOptions || {};
       const qty       = parseFloat(p.quantity) || 1;
-      const msrp      = parseFloat(opts.msrp) || 0;
-      const markupPct = parseFloat(opts.markupPercent) || 0;
-      const sell      = round2(msrp * (1 + markupPct / 100));
-      const subtotal  = round2(sell * qty);
-      const taxRate   = parseFloat(opts.salesTaxRate) || 0;
-      const tax       = round2(subtotal * (taxRate / 100));
-      const total     = round2(subtotal + tax);
-      if (total === 0) continue;
+      let total;
+      if (p.isParent) {
+        // Group parent: price is auto-summed from children, stored in finalPrice
+        total = round2(parseFloat(p.finalPrice) || 0);
+      } else {
+        const msrp      = parseFloat(opts.msrp) || 0;
+        const markupPct = parseFloat(opts.markupPercent) || 0;
+        const sell      = round2(msrp * (1 + markupPct / 100));
+        const subtotal  = round2(sell * qty);
+        const taxRate   = parseFloat(opts.salesTaxRate) || 0;
+        const tax       = round2(subtotal * (taxRate / 100));
+        total           = round2(subtotal + tax);
+      }
 
       const descParts = [];
       if (opts.room)           descParts.push(`Room: ${opts.room}`);
@@ -630,7 +636,7 @@ const syncProposalToQuickBooks = async (req, res) => {
     }
 
     if (lines.length === 0) {
-      return res.status(400).json({ message: 'Proposal has no products with pricing' });
+      return res.status(400).json({ message: 'Proposal has no products' });
     }
 
     const invoiceDate = pv.createdAt
