@@ -599,7 +599,6 @@ const syncProposalToQuickBooks = async (req, res) => {
 
     const lines = [];
     for (const p of (pv.selectedProducts || [])) {
-      if (!p.name) continue;
       const opts      = p.selectedOptions || {};
       const qty       = parseFloat(p.quantity) || 1;
       let total;
@@ -616,9 +615,12 @@ const syncProposalToQuickBooks = async (req, res) => {
         total           = round2(subtotal + tax);
       }
 
+      const label = p.name || p.spotName;
+      if (!label) continue; // skip truly unnamed placeholder rows
+
       const descParts = [];
       if (opts.room)           descParts.push(`Room: ${opts.room}`);
-      if (p.name)              descParts.push(p.name);
+      descParts.push(label);
       if (opts.specifications) descParts.push(opts.specifications);
       if (opts.finish)         descParts.push(`Finish: ${opts.finish}`);
       if (opts.fabric)         descParts.push(`Fabric: ${opts.fabric}`);
