@@ -217,9 +217,10 @@ async getOrCreateCustomer(customerData) {
           Amount:              amount,
           Description:         (line.description || '').substring(0, 4000),
           SalesItemLineDetail: {
-            ItemRef:   { value: itemId, name: 'Product' },
-            Qty:       qty,
-            UnitPrice: unitPrice,
+            ItemRef:      { value: itemId, name: 'Product' },
+            Qty:          qty,
+            UnitPrice:    unitPrice,
+            TaxCodeRef:   { value: 'TAX' },
             ...(line.classRef ? { ClassRef: { value: line.classRef } } : {}),
           },
         };

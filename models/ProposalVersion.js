@@ -91,7 +91,7 @@ const proposalVersionSchema = new mongoose.Schema({
   
   status: {
     type: String,
-    enum: ['draft', 'sent', 'approved', 'rejected'],
+    enum: ['draft', 'sent', 'approved', 'rejected', 'paid'],
     default: 'draft'
   },
 
