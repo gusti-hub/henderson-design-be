@@ -582,7 +582,7 @@ const syncProposalToQuickBooks = async (req, res) => {
     const pv = await ProposalVersion.findById(pvId).lean();
     if (!pv) return res.status(404).json({ message: 'Proposal version not found' });
 
-    const order = await Order.findById(orderId).populate('user').lean();
+    const order = await Order.findById(orderId).populate('user').populate('selectedProducts.vendor').lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
     const invoiceNumber = pv.proposalNumber || order.proposalNumber;
@@ -597,13 +597,21 @@ const syncProposalToQuickBooks = async (req, res) => {
       clientCode: invoiceNumber,
     });
 
+    // Use live order products (same source as ProposalEditor) — more reliable than
+    // pv.selectedProducts which is a snapshot that may lack isParent/finalPrice fields.
+    // Exclude children (parentId set) — same filter as ProposalEditor display.
+    const proposalProducts = (order.selectedProducts || []).filter(p => !p.parentId);
+
     const lines = [];
-    for (const p of (pv.selectedProducts || [])) {
+    for (const p of proposalProducts) {
+      const label = p.name || p.spotName;
+      if (!label) continue;
+
       const opts      = p.selectedOptions || {};
       const qty       = parseFloat(p.quantity) || 1;
       let total;
       if (p.isParent) {
-        // Group parent: price is auto-summed from children, stored in finalPrice
+        // Group parent: finalPrice is auto-summed from children
         total = round2(parseFloat(p.finalPrice) || 0);
       } else {
         const msrp      = parseFloat(opts.msrp) || 0;
@@ -614,9 +622,7 @@ const syncProposalToQuickBooks = async (req, res) => {
         const tax       = round2(subtotal * (taxRate / 100));
         total           = round2(subtotal + tax);
       }
-
-      const label = p.name || p.spotName;
-      if (!label) continue; // skip truly unnamed placeholder rows
+      // Include $0 products (gifts/complimentary items) — do not skip
 
       const descParts = [];
       if (opts.room)           descParts.push(`Room: ${opts.room}`);
