@@ -597,29 +597,27 @@ const syncProposalToQuickBooks = async (req, res) => {
       clientCode: invoiceNumber,
     });
 
-    // Use pv snapshot when it has products; fall back to live order products when snapshot is empty
-    const pvProducts = pv.selectedProducts || [];
-    const sourceProducts = pvProducts.length > 0
-      ? pvProducts
-      : (order.selectedProducts || []).filter(p => !p.parentId);
+    // Always use live order products — same source as ProposalEditor.
+    // pv is only used for metadata (proposalNumber, invoiceDate).
+    // Children (parentId set) are excluded, matching ProposalEditor display.
+    const sourceProducts = (order.selectedProducts || []).filter(p => !p.parentId);
 
     const lines = [];
     for (const p of sourceProducts) {
       const opts      = p.selectedOptions || {};
       const qty       = parseFloat(p.quantity) || 1;
-      let total;
+      let subtotal;
       if (p.isParent) {
-        total = round2(parseFloat(p.finalPrice) || 0);
+        // Group parent: finalPrice is auto-summed from children (already a subtotal)
+        subtotal = round2(parseFloat(p.finalPrice) || 0);
       } else {
         const msrp      = parseFloat(opts.msrp) || 0;
         const markupPct = parseFloat(opts.markupPercent) || 0;
         const sell      = round2(msrp * (1 + markupPct / 100));
-        const subtotal  = round2(sell * qty);
-        const taxRate   = parseFloat(opts.salesTaxRate) || 0;
-        const tax       = round2(subtotal * (taxRate / 100));
-        total           = round2(subtotal + tax);
+        subtotal        = round2(sell * qty);
       }
-      // $0 products (gifts) are intentionally included — do NOT skip on total === 0
+      // Send subtotal (before tax) — QB handles tax separately.
+      // $0 products (gifts) are intentionally included.
 
       const descParts = [];
       if (opts.room)           descParts.push(`Room: ${opts.room}`);
@@ -633,9 +631,9 @@ const syncProposalToQuickBooks = async (req, res) => {
       const classRef = await resolveClassId(opts.itemClass || '');
       lines.push({
         description: descParts.join(' | ') || p.spotName || 'Product',
-        amount:      total,
+        amount:      subtotal,
         qty:         1,
-        unitPrice:   total,
+        unitPrice:   subtotal,
         classRef:    classRef || undefined,
       });
     }
