@@ -1,7 +1,6 @@
 const QCInspection = require('../models/QCInspection');
 const POVersion    = require('../models/POVersion');
 const Order        = require('../models/Order');
-const { uploadFileToS3 } = require('../utils/s3Upload');
 
 // ─── Helper: generate checks from product spec ───────────────────────────────
 const generateChecks = (product) => {
