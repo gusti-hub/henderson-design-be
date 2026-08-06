@@ -11,6 +11,19 @@ const crypto  = require('crypto');
 
 const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
+const stripHtml = (str) => {
+  if (!str) return '';
+  return str
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
 const SERVICE_TYPE_ITEM_MAP = {
   // ✅ Key pakai label/desc yang sama dengan yang diinput di FE
   'Decommission':                    '5',
@@ -461,12 +474,12 @@ const syncPOToQuickBooks = async (req, res) => {
 
         const desc = [
           p.name,
-          p.description                ? p.description                            : null,
-          p.selectedOptions?.vendorDescription ? p.selectedOptions.vendorDescription : null,
-          p.selectedOptions?.finish   ? `Finish: ${p.selectedOptions.finish}`     : null,
-          p.selectedOptions?.fabric   ? `Fabric: ${p.selectedOptions.fabric}`     : null,
-          p.selectedOptions?.size     ? `Size: ${p.selectedOptions.size}`         : null,
-          p.selectedOptions?.sidemark ? `Sidemark: ${p.selectedOptions.sidemark}` : null,
+          p.description                        ? stripHtml(p.description)                            : null,
+          p.selectedOptions?.vendorDescription ? stripHtml(p.selectedOptions.vendorDescription)      : null,
+          p.selectedOptions?.finish            ? `Finish: ${p.selectedOptions.finish}`               : null,
+          p.selectedOptions?.fabric            ? `Fabric: ${p.selectedOptions.fabric}`               : null,
+          p.selectedOptions?.size              ? `Size: ${p.selectedOptions.size}`                   : null,
+          p.selectedOptions?.sidemark          ? `Sidemark: ${p.selectedOptions.sidemark}`           : null,
         ].filter(Boolean).join(' | ');
 
         return {
