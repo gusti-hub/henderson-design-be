@@ -3672,15 +3672,29 @@ const generateBulkExport = async (req, res) => {
     let summaryRow = 3;
     let grandTotal = 0;
 
+    const stripHtml = (str) => {
+      if (!str) return '';
+      return str
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
     // ── Sheet 2: Detail ───────────────────────────────────────────────────────
     const DCOLS = [
       'Client', 'Unit', 'Vendor', 'PO #', 'Order Date', 'Account #', 'Rep Name',
       'Product Name', 'SKU', 'Qty',
-      'Specs / Description', 'Color / Finish', 'Material / Fabric',
+      'Vendor Description', 'Specs / Description', 'Color / Finish', 'Fabric', 'Materials',
       'Dimensions', 'Lead Time', 'Sidemark',
+      'Image',
       'Unit Cost', 'Total Cost',
     ];
-    const DWIDTHS = [20, 8, 22, 14, 13, 14, 18, 28, 14, 6, 30, 16, 16, 14, 12, 20, 13, 13];
+    const DWIDTHS = [20, 8, 22, 14, 13, 14, 18, 28, 14, 6, 32, 30, 16, 16, 18, 14, 12, 20, 22, 13, 13];
 
     const detailWs = wb.addWorksheet('Detail');
     DWIDTHS.forEach((w, i) => { detailWs.getColumn(i + 1).width = w; });
@@ -3742,21 +3756,33 @@ const generateBulkExport = async (req, res) => {
           poTotal += totalCost;
           const opts = p.selectedOptions || {};
 
+          const imageUrl = opts.uploadedImages?.[0]?.url || opts.images?.[0] || opts.image || '';
+          const IMG_COL_IDX = 18; // 0-based index of 'Image' column
           const rowData = [
             clientName, unitNumber, vendorName, poNumber, orderDate,
             po.accountNumber || '', po.repName || '',
             p.name || '', p.product_id || '', qty,
-            opts.specifications || p.description || '',
-            opts.finish || '', opts.fabric || '', opts.size || '',
+            stripHtml(opts.vendorDescription || ''),
+            stripHtml(opts.specifications || p.description || ''),
+            opts.finish || '', opts.fabric || '',
+            opts.customAttributes?.materials || '',
+            opts.size || '',
             opts.leadTime || '', opts.sidemark || '',
+            imageUrl,
             money(unitCost), money(totalCost),
           ];
           rowData.forEach((val, i) => {
             const cell = detailWs.getCell(detailRow, i + 1);
             if (val && typeof val === 'object' && 'numFmt' in val) {
               cell.value = val.value; cell.numFmt = val.numFmt;
-            } else { cell.value = val; }
-            cell.font = { name: 'Arial', size: 9 };
+              cell.font = { name: 'Arial', size: 9 };
+            } else if (i === IMG_COL_IDX && val) {
+              cell.value = { text: 'View Image', hyperlink: val };
+              cell.font = { name: 'Arial', size: 9, color: { argb: 'FF0563C1' }, underline: true };
+            } else {
+              cell.value = val;
+              cell.font = { name: 'Arial', size: 9 };
+            }
             cell.border = thinBorder;
             cell.alignment = wrapTop;
           });
