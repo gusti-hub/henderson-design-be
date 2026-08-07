@@ -3714,8 +3714,27 @@ const generateBulkExport = async (req, res) => {
     detailWs.getRow(2).height = 22;
     let detailRow = 3;
 
+    // ── Image helpers ─────────────────────────────────────────────────────────
+    const fetchImageBuffer = async (url) => {
+      if (!url || !url.startsWith('http')) return null;
+      try {
+        const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: 6000 });
+        return Buffer.from(resp.data);
+      } catch { return null; }
+    };
+    const getImageExt = (url = '') => {
+      const u = url.toLowerCase();
+      if (u.includes('.png')) return 'png';
+      if (u.includes('.gif')) return 'gif';
+      return 'jpeg';
+    };
+
     // ── Populate both sheets ──────────────────────────────────────────────────
-    orders.forEach(order => {
+    const IMG_COL_IDX = 18; // 0-based index of 'Image' column
+    const IMG_PX = 75;      // image size in pixels
+    const IMG_ROW_H = 58;   // row height in Excel points (~75px)
+
+    for (const order of orders) {
       const clientName = order.clientInfo?.name || 'Unknown';
       const unitNumber = order.clientInfo?.unitNumber || '';
       const pos = posByOrder.get(order._id.toString()) || [];
@@ -3731,7 +3750,7 @@ const generateBulkExport = async (req, res) => {
       detailWs.getRow(detailRow).height = 20;
       detailRow++;
 
-      pos.forEach(po => {
+      for (const po of pos) {
         const vendorName = po.vendorInfo?.name || 'Unknown Vendor';
         const poNumber = po.poNumber || '';
         const poVersion = po.version || 1;
@@ -3749,7 +3768,7 @@ const generateBulkExport = async (req, res) => {
         detailRow++;
 
         let poTotal = 0;
-        (po.products || []).forEach(p => {
+        for (const p of (po.products || [])) {
           const qty = parseFloat(p.quantity) || 1;
           const unitCost = parseFloat(p.unitPrice) || 0;
           const totalCost = parseFloat(p.totalPrice) || unitCost * qty;
@@ -3757,7 +3776,6 @@ const generateBulkExport = async (req, res) => {
           const opts = p.selectedOptions || {};
 
           const imageUrl = opts.uploadedImages?.[0]?.url || opts.images?.[0] || opts.image || '';
-          const IMG_COL_IDX = 18; // 0-based index of 'Image' column
           const rowData = [
             clientName, unitNumber, vendorName, poNumber, orderDate,
             po.accountNumber || '', po.repName || '',
@@ -3768,27 +3786,40 @@ const generateBulkExport = async (req, res) => {
             opts.customAttributes?.materials || '',
             opts.size || '',
             opts.leadTime || '', opts.sidemark || '',
-            imageUrl,
+            '', // Image column — image embedded separately below
             money(unitCost), money(totalCost),
           ];
           rowData.forEach((val, i) => {
             const cell = detailWs.getCell(detailRow, i + 1);
             if (val && typeof val === 'object' && 'numFmt' in val) {
               cell.value = val.value; cell.numFmt = val.numFmt;
-              cell.font = { name: 'Arial', size: 9 };
-            } else if (i === IMG_COL_IDX && val) {
-              cell.value = { text: 'View Image', hyperlink: val };
-              cell.font = { name: 'Arial', size: 9, color: { argb: 'FF0563C1' }, underline: true };
             } else {
               cell.value = val;
-              cell.font = { name: 'Arial', size: 9 };
             }
+            cell.font = { name: 'Arial', size: 9 };
             cell.border = thinBorder;
             cell.alignment = wrapTop;
           });
-          detailWs.getRow(detailRow).height = 18;
+
+          // Embed image
+          let rowHeight = 18;
+          if (imageUrl) {
+            const imgBuf = await fetchImageBuffer(imageUrl);
+            if (imgBuf) {
+              try {
+                const imgId = wb.addImage({ buffer: imgBuf, extension: getImageExt(imageUrl) });
+                detailWs.addImage(imgId, {
+                  tl: { col: IMG_COL_IDX, row: detailRow - 1 },
+                  ext: { width: IMG_PX, height: IMG_PX },
+                });
+                rowHeight = IMG_ROW_H;
+              } catch (_) { /* skip broken image */ }
+            }
+          }
+
+          detailWs.getRow(detailRow).height = rowHeight;
           detailRow++;
-        });
+        }
 
         const shipping = parseFloat(po.shipping) || 0;
         const others = parseFloat(po.others) || 0;
@@ -3808,8 +3839,7 @@ const generateBulkExport = async (req, res) => {
         detailWs.getRow(detailRow).height = 16;
         detailRow++;
 
-        // Summary: one row per PO version — use po.status, not order.status
-        // Columns: Client | Unit | Vendor | PO # | Ver | Order Date | PO Status | Total
+        // Summary: one row per PO version
         [clientName, unitNumber, vendorName, poNumber, `v${poVersion}`, orderDate, poStatus, money(vendorTotal)].forEach((val, i) => {
           const cell = summaryWs.getCell(summaryRow, i + 1);
           if (val && typeof val === 'object' && 'numFmt' in val) {
@@ -3822,7 +3852,7 @@ const generateBulkExport = async (req, res) => {
         summaryWs.getRow(summaryRow).height = 18;
         summaryRow++;
         grandTotal += vendorTotal;
-      });
+      }
 
       // Order total row in Detail
       detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length - 1);
@@ -3835,7 +3865,7 @@ const generateBulkExport = async (req, res) => {
       otCell.border = { top: { style: 'double' } };
       detailWs.getRow(detailRow).height = 20;
       detailRow++;
-    });
+    }
 
     // Grand total in Summary — 8-col layout: label spans cols 1-7, value in col 8
     summaryWs.mergeCells(summaryRow, 1, summaryRow, 7);
