@@ -3632,19 +3632,33 @@ const generateBulkExport = async (req, res) => {
       (a.clientInfo?.unitNumber || '').localeCompare(b.clientInfo?.unitNumber || '', undefined, { numeric: true })
     );
 
-    // Fetch latest active PO version per vendor per order
+    // Fetch latest active PO version per vendor per order,
+    // cross-referenced with vendors that currently have products in the order.
     const posByOrder = new Map();
     await Promise.all(orders.map(async (order) => {
       const oid = mongoose.Types.ObjectId.isValid(order._id) ? new mongoose.Types.ObjectId(order._id) : order._id;
+
+      // Build set of vendorIds that currently exist in the order's product list
+      const activeVendorIds = new Set(
+        (order.selectedProducts || [])
+          .map(p => p.vendor?._id?.toString() || p.vendor?.toString())
+          .filter(Boolean)
+      );
+
       const latestPOs = await POVersion.aggregate([
         { $match: { orderId: oid, status: { $ne: 'cancelled' } } },
         { $sort: { version: -1 } },
         { $group: { _id: '$vendorId', doc: { $first: '$$ROOT' } } },
         { $replaceRoot: { newRoot: '$doc' } },
-        { $match: { products: { $exists: true, $not: { $size: 0 } } } },
         { $sort: { 'vendorInfo.name': 1 } },
       ]);
-      posByOrder.set(order._id.toString(), latestPOs);
+
+      // Only keep POs whose vendor still has products in the order
+      const filtered = latestPOs.filter(po =>
+        po.vendorId && activeVendorIds.has(po.vendorId.toString())
+      );
+
+      posByOrder.set(order._id.toString(), filtered);
     }));
 
     const wb = new ExcelJS.Workbook();
