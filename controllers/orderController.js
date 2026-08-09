@@ -3632,12 +3632,19 @@ const generateBulkExport = async (req, res) => {
       (a.clientInfo?.unitNumber || '').localeCompare(b.clientInfo?.unitNumber || '', undefined, { numeric: true })
     );
 
-    // Fetch ALL PO versions for each order (vendor can have multiple versions)
+    // Fetch latest active PO version per vendor per order
     const posByOrder = new Map();
     await Promise.all(orders.map(async (order) => {
       const oid = mongoose.Types.ObjectId.isValid(order._id) ? new mongoose.Types.ObjectId(order._id) : order._id;
-      const allPOs = await POVersion.find({ orderId: oid }).sort({ vendorId: 1, version: 1 }).lean();
-      posByOrder.set(order._id.toString(), allPOs);
+      const latestPOs = await POVersion.aggregate([
+        { $match: { orderId: oid, status: { $ne: 'cancelled' } } },
+        { $sort: { version: -1 } },
+        { $group: { _id: '$vendorId', doc: { $first: '$$ROOT' } } },
+        { $replaceRoot: { newRoot: '$doc' } },
+        { $match: { products: { $exists: true, $not: { $size: 0 } } } },
+        { $sort: { 'vendorInfo.name': 1 } },
+      ]);
+      posByOrder.set(order._id.toString(), latestPOs);
     }));
 
     const wb = new ExcelJS.Workbook();
