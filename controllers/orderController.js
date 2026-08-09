@@ -3788,13 +3788,22 @@ const generateBulkExport = async (req, res) => {
         detailWs.getRow(detailRow).height = 18;
         detailRow++;
 
+        // Use live order products for this vendor (same logic as single PO view)
+        const liveProducts = (order.selectedProducts || []).filter(p => {
+          const pVid = p.vendor?._id?.toString() || p.vendor?.toString();
+          return pVid === po.vendorId?.toString();
+        });
+
         let poTotal = 0;
-        for (const p of (po.products || [])) {
-          const qty = parseFloat(p.quantity) || 1;
-          const unitCost = parseFloat(p.unitPrice) || 0;
-          const totalCost = parseFloat(p.totalPrice) || unitCost * qty;
-          poTotal += totalCost;
+        for (const p of liveProducts) {
           const opts = p.selectedOptions || {};
+          const qty = parseFloat(p.quantity) || 1;
+          // Mirror computeNetCost from poController
+          const unitCost = (opts.netCostOverride != null && opts.netCostOverride !== '')
+            ? parseFloat(opts.netCostOverride)
+            : parseFloat(opts.msrp || 0);
+          const totalCost = unitCost * qty;
+          poTotal += totalCost;
 
           const imageUrl = opts.uploadedImages?.[0]?.url || opts.images?.[0] || opts.image || '';
           const rowData = [
@@ -3844,8 +3853,8 @@ const generateBulkExport = async (req, res) => {
 
         const shipping = parseFloat(po.shipping) || 0;
         const others = parseFloat(po.others) || 0;
-        const savedTotal = parseFloat(po.total) || 0;
-        const vendorTotal = savedTotal || (poTotal + shipping + others);
+        // Use live-calculated poTotal so it matches the single PO view
+        const vendorTotal = poTotal + shipping + others;
         orderTotal += vendorTotal;
 
         // PO total row in Detail
