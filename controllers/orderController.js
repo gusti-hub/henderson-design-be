@@ -293,7 +293,16 @@ const updateOrder = async (req, res) => {
               size:        img.size        || 0,
               uploadedAt:  img.uploadedAt  || new Date(),
             })),
-            customAttributes: product.selectedOptions?.customAttributes || {},
+            customAttributes:    product.selectedOptions?.customAttributes    || {},
+            woodFinishVendor:   product.selectedOptions?.woodFinishVendor   || '',
+            woodFinishClient:   product.selectedOptions?.woodFinishClient   || '',
+            drawerFrontsVendor: product.selectedOptions?.drawerFrontsVendor || '',
+            drawerFrontsClient: product.selectedOptions?.drawerFrontsClient || '',
+            wingPanelsVendor:   product.selectedOptions?.wingPanelsVendor   || '',
+            wingPanelsClient:   product.selectedOptions?.wingPanelsClient   || '',
+            fabricVendor:       product.selectedOptions?.fabricVendor       || '',
+            fabricClient:       product.selectedOptions?.fabricClient       || '',
+            productVendor:      product.selectedOptions?.productVendor      || '',
           },
           placement: product.placement || null
         };

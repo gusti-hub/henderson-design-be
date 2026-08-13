@@ -109,6 +109,12 @@ const orderSchema = new mongoose.Schema({
       default: true
     },
 
+    libraryProductId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
+      default: null
+    },
+
     selectedOptions: {
 
       // ── General Info ──
@@ -224,7 +230,18 @@ const orderSchema = new mongoose.Schema({
         type: Map,
         of: mongoose.Schema.Types.Mixed,
         default: new Map()
-      }
+      },
+
+      // ── Vendor / Client variant fields (from Excel sub-header columns) ──
+      woodFinishVendor:   { type: String, default: '' },
+      woodFinishClient:   { type: String, default: '' },
+      drawerFrontsVendor: { type: String, default: '' },
+      drawerFrontsClient: { type: String, default: '' },
+      wingPanelsVendor:   { type: String, default: '' },
+      wingPanelsClient:   { type: String, default: '' },
+      fabricVendor:       { type: String, default: '' },
+      fabricClient:       { type: String, default: '' },
+      productVendor:      { type: String, default: '' }
     },
 
     // ── Group / parent-child ──
