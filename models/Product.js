@@ -53,6 +53,16 @@ const productSchema = new mongoose.Schema({
   fabric:     { type: String, default: '' },
   others:     { type: [String], default: [] },
 
+  // CLIENT / VENDOR variant fields (sub-header columns in Excel, NOT customAttributes)
+  woodFinishVendor:   { type: String, default: '' },
+  woodFinishClient:   { type: String, default: '' },
+  drawerFrontsVendor: { type: String, default: '' },
+  drawerFrontsClient: { type: String, default: '' },
+  wingPanelsVendor:   { type: String, default: '' },
+  wingPanelsClient:   { type: String, default: '' },
+  fabricVendor:       { type: String, default: '' },
+  fabricClient:       { type: String, default: '' },
+
   // Primary image
   image: {
     url: { type: String, default: '' },

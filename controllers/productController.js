@@ -54,6 +54,14 @@ const buildProductData = (body, uploadedFile = null) => {
     fabric,
     others,
     image,
+    woodFinishVendor:   body.woodFinishVendor   || '',
+    woodFinishClient:   body.woodFinishClient   || '',
+    drawerFrontsVendor: body.drawerFrontsVendor || '',
+    drawerFrontsClient: body.drawerFrontsClient || '',
+    wingPanelsVendor:   body.wingPanelsVendor   || '',
+    wingPanelsClient:   body.wingPanelsClient   || '',
+    fabricVendor:       body.fabricVendor       || '',
+    fabricClient:       body.fabricClient       || '',
     ...(buildCustomAttributes(body)),
   };
 };
@@ -101,7 +109,7 @@ const getProducts = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('product_id name description vendorDescription vendor category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image uploadedImages customAttributes')
+        .select('product_id name description vendorDescription vendor category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image uploadedImages customAttributes woodFinishVendor woodFinishClient drawerFrontsVendor drawerFrontsClient wingPanelsVendor wingPanelsClient fabricVendor fabricClient')
         .lean()
     ]);
 
@@ -572,7 +580,7 @@ const exportAllProducts = async (req, res) => {
   try {
     const products = await Product.find()
       .sort({ createdAt: -1 })
-      .select('product_id name description vendorDescription vendor category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image customAttributes')
+      .select('product_id name description vendorDescription vendor category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image customAttributes woodFinishVendor woodFinishClient drawerFrontsVendor drawerFrontsClient wingPanelsVendor wingPanelsClient fabricVendor fabricClient')
       .lean();
 
     res.json({ products, total: products.length });
