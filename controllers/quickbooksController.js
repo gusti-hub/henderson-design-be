@@ -633,13 +633,14 @@ const syncProposalToQuickBooks = async (req, res) => {
       // $0 products (gifts) are intentionally included.
 
       const descParts = [];
-      if (opts.room)           descParts.push(`Room: ${opts.room}`);
-      if (p.name)              descParts.push(p.name);
-      if (opts.specifications) descParts.push(opts.specifications);
-      if (opts.finish)         descParts.push(`Finish: ${opts.finish}`);
-      if (opts.fabric)         descParts.push(`Fabric: ${opts.fabric}`);
-      if (opts.size)           descParts.push(`Size: ${opts.size}`);
-      if (opts.leadTime)       descParts.push(`Lead Time: ${opts.leadTime}`);
+      if (opts.room)              descParts.push(`Room: ${opts.room}`);
+      if (p.name)                 descParts.push(p.name);
+      if (opts.specifications)    descParts.push(stripHtml(opts.specifications));
+      if (opts.vendorDescription) descParts.push(stripHtml(opts.vendorDescription));
+      if (opts.finish)            descParts.push(`Finish: ${opts.finish}`);
+      if (opts.fabric)            descParts.push(`Fabric: ${opts.fabric}`);
+      if (opts.size)              descParts.push(`Size: ${opts.size}`);
+      if (opts.leadTime)          descParts.push(`Lead Time: ${opts.leadTime}`);
 
       const classRef = await resolveClassId(opts.itemClass || '');
       lines.push({
