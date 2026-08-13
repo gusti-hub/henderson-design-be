@@ -25,9 +25,12 @@ const buildProductData = (body, uploadedFile = null) => {
     image = { url: parsed.url || '', key: parsed.key || '' };
   }
 
-  // ─── Price: support both new (buyPrice/sellPrice) and legacy (price) ────
-  const sellPrice = parseFloat(body.sellPrice ?? body.price) || 0;
-  const buyPrice  = parseFloat(body.buyPrice)  || 0;
+  // ─── Price: support both new (buyPrice/sellPrice/sellPrice2025/sellPrice2026) and legacy ────
+  const sellPrice2025 = parseFloat(body.sellPrice2025) || 0;
+  const sellPrice2026 = parseFloat(body.sellPrice2026) || 0;
+  // sellPrice = explicit override, OR fallback to 2026, OR 2025
+  const sellPrice = parseFloat(body.sellPrice ?? body.price) || sellPrice2026 || sellPrice2025 || 0;
+  const buyPrice  = parseFloat(body.buyPrice) || 0;
 
   return {
     product_id:        body.product_id,
@@ -37,18 +40,36 @@ const buildProductData = (body, uploadedFile = null) => {
     collection:        body.collection        || 'General',
     package:           (['Lani','Nalu','Mainland'].includes(body.package) ? body.package : ''),
     dimension:         body.dimension         || '',
+    vendor:            body.vendor            || '',
     colorFinish:       body.colorFinish       || '',
     itemUrl:           body.itemUrl           || '',
     itemClass:         body.itemClass         || '',
     vendorDescription: body.vendorDescription || '',
     buyPrice,
     sellPrice,
+    sellPrice2025,
+    sellPrice2026,
     price: sellPrice,  // keep legacy field in sync
     woodFinish,
     fabric,
     others,
     image,
+    ...(buildCustomAttributes(body)),
   };
+};
+
+// ─── Parse customAttributes from request body ─────────────────────────────
+const buildCustomAttributes = (body) => {
+  if (!body.customAttributes) return {};
+  try {
+    const raw = typeof body.customAttributes === 'string'
+      ? JSON.parse(body.customAttributes)
+      : body.customAttributes;
+    if (!raw || typeof raw !== 'object') return {};
+    const map = new Map();
+    Object.entries(raw).forEach(([k, v]) => { if (v !== '' && v != null) map.set(k, v); });
+    return { customAttributes: map };
+  } catch { return {}; }
 };
 
 // ─── GET all products ──────────────────────────────────────────────────────
@@ -80,7 +101,7 @@ const getProducts = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('product_id name description vendorDescription category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice price woodFinish fabric others image uploadedImages')
+        .select('product_id name description vendorDescription vendor category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image uploadedImages customAttributes')
         .lean()
     ]);
 
@@ -363,6 +384,7 @@ const buildUpdatePayloadFromRow = (row) => {
   if (row.name              !== undefined) payload.name              = str(row.name);
   if (row.description       !== undefined) payload.description       = str(row.description);
   if (row.vendorDescription !== undefined) payload.vendorDescription = str(row.vendorDescription);
+  if (row.vendor            !== undefined) payload.vendor            = str(row.vendor);
   if (row.category          !== undefined) payload.category          = str(row.category) || 'General';
   if (row.collection        !== undefined) payload.collection        = str(row.collection) || 'General';
   if (row.dimension         !== undefined) payload.dimension         = str(row.dimension);
@@ -373,11 +395,18 @@ const buildUpdatePayloadFromRow = (row) => {
   if (row.fabric            !== undefined) payload.fabric            = str(row.fabric);
 
   // ─── Price ───────────────────────────────────────────────────────────────
+  if (row.sellPrice2025 !== undefined) {
+    const p = num(row.sellPrice2025);
+    if (p !== undefined) payload.sellPrice2025 = p;
+  }
+  if (row.sellPrice2026 !== undefined) {
+    const p = num(row.sellPrice2026);
+    if (p !== undefined) { payload.sellPrice2026 = p; payload.sellPrice = p; payload.price = p; }
+  }
   if (row.sellPrice !== undefined) {
     const p = num(row.sellPrice);
     if (p !== undefined) { payload.sellPrice = p; payload.price = p; }
   } else if (row.price !== undefined) {
-    // legacy column support
     const p = num(row.price);
     if (p !== undefined) { payload.sellPrice = p; payload.price = p; }
   }
@@ -412,7 +441,7 @@ const diffProduct = (existing, payload) => {
   };
   const arrEq = (a, b) => JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
 
-  const numFields = ['sellPrice', 'buyPrice', 'price'];
+  const numFields = ['sellPrice', 'sellPrice2025', 'sellPrice2026', 'buyPrice', 'price'];
   const arrFields = ['others'];
 
   for (const [key, newVal] of Object.entries(payload)) {
@@ -543,7 +572,7 @@ const exportAllProducts = async (req, res) => {
   try {
     const products = await Product.find()
       .sort({ createdAt: -1 })
-      .select('product_id name description vendorDescription category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice price woodFinish fabric others image')
+      .select('product_id name description vendorDescription vendor category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image customAttributes')
       .lean();
 
     res.json({ products, total: products.length });

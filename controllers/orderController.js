@@ -433,7 +433,7 @@ const getOrders = async (req, res) => {
 
     // Populate references (works on aggregation results)
     await Order.populate(orders, [
-      { path: 'user', select: 'name email clientCode unitNumber' },
+      { path: 'user', select: 'name email clientCode unitNumber pricingYear' },
       { path: 'selectedProducts.vendor', select: 'name vendorCode defaultMarkup' },
       { path: 'updatedBy', select: 'name' },
     ]);
@@ -1376,10 +1376,22 @@ const getOrdersByClient = async (req, res) => {
       }
     }
 
-    res.json({
-      success: true,
-      orders: orders.sort((a, b) => (a.orderNumber || 999) - (b.orderNumber || 999)),
-    });
+    const sortedOrders = orders
+      .sort((a, b) => (a.orderNumber || 999) - (b.orderNumber || 999))
+      .map(o => {
+        const plain = o.toObject ? o.toObject() : o;
+        plain.user = {
+          _id:         user._id,
+          name:        user.name,
+          email:       user.email,
+          clientCode:  user.clientCode,
+          unitNumber:  user.unitNumber,
+          pricingYear: user.pricingYear || 2026,
+        };
+        return plain;
+      });
+
+    res.json({ success: true, orders: sortedOrders });
 
   } catch (error) {
     console.error('❌ Error getOrdersByClient:', error);

@@ -35,11 +35,14 @@ const productSchema = new mongoose.Schema({
   dimension: { type: String, default: '' },
 
   // ─── PRICE: split into buy & sell ───────────────────────────────────────
-  buyPrice:  { type: Number, default: 0 },   // cost / vendor price
-  sellPrice: { type: Number, required: true, default: 0 }, // client-facing / sell price
+  buyPrice:     { type: Number, default: 0 },   // cost / vendor price
+  sellPrice:    { type: Number, required: true, default: 0 }, // active sell price (mirrors sellPrice2026 by default)
+  sellPrice2025: { type: Number, default: 0 },  // 2025 pricing
+  sellPrice2026: { type: Number, default: 0 },  // 2026 pricing
   // Legacy field kept for backward compatibility (mirrors sellPrice)
-  price:     { type: Number, default: 0 },
+  price:        { type: Number, default: 0 },
 
+  vendor:            { type: String, default: '' },
   colorFinish:       { type: String, default: '' },
   itemUrl:           { type: String, default: '' },
   itemClass:         { type: String, default: '' },

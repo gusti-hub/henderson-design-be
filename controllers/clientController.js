@@ -505,9 +505,10 @@ const createClient = async (req, res) => {
       collection,
       bedroomCount,
       packageType = 'investor',
+      pricingYear = 2026,
       customNotes,
       teamAssignment,
-      address           // ✅ NEW: Address object
+      address
     } = req.body;
 
     const email = rawEmail && rawEmail.trim() !== '' ? rawEmail.trim() : null;
@@ -597,9 +598,10 @@ const createClient = async (req, res) => {
       collection: collection || '',
       bedroomCount: bedroomCount || 0,
       packageType,
+      pricingYear: [2025, 2026].includes(Number(pricingYear)) ? Number(pricingYear) : 2026,
       customNotes: customNotes || '',
       teamAssignment: processedTeamAssignment,
-      address: processedAddress,                // ✅ NEW
+      address: processedAddress,
       registrationType: 'admin-created',
       status: 'approved',
       approvedAt: new Date(),
@@ -732,7 +734,7 @@ const updateClient = async (req, res) => {
     const allowedUpdates = [
       'name', 'email', 'unitNumber', 'phoneNumber', 'propertyType',
       'floorPlan', 'questionnaire', 'paymentInfo', 'collection', 
-      'bedroomCount', 'packageType', 'teamAssignment', 'address',  // ✅ 'address' added
+      'bedroomCount', 'packageType', 'pricingYear', 'teamAssignment', 'address',
       'unitNumber2','floorPlan2','unitNumber3','floorPlan3',
       'unitNumber4','floorPlan4','unitNumber5','floorPlan5'
     ];

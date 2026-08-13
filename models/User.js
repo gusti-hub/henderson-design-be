@@ -58,6 +58,11 @@ const userSchema = new mongoose.Schema({
     enum: ['investor', 'custom', 'library'],
     default: 'investor'
   },
+  pricingYear: {
+    type: Number,
+    enum: [2025, 2026],
+    default: 2026
+  },
   // Tambahkan setelah field packageType
   teamAssignment: {
     designer: {
