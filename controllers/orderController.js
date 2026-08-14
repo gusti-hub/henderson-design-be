@@ -1757,17 +1757,19 @@ const generateInstallBinder = async (req, res) => {
     const TW = PW - M * 2;      // table width = 720
 
     // Columns — widths must sum to 720
-    // Photo(70) + Room(80) + Vendor(75) + Description(205) + PO(60) + Qty(30) + OrderNum(65) + Tracking(70) + Notes(65) = 720
+    // Photo(60)+Room(70)+Vendor(65)+Desc(170)+PO(55)+Qty(25)+OrderNum(55)+DateRcv(55)+Tracking(55)+ShipCarrier(55)+Notes(55)=720
     const COLS = [
-      { key: 'photo',    label: 'Photo',           w: 70  },
-      { key: 'room',     label: 'Room',            w: 80  },
-      { key: 'vendor',   label: 'Vendor Name',     w: 75  },
-      { key: 'desc',     label: 'Vendor Description', w: 205 },
-      { key: 'po',       label: 'HDG PO#',         w: 60  },
-      { key: 'qty',      label: 'Qty',             w: 30  },
-      { key: 'orderNum', label: 'Vendor Order #',  w: 65  },
-      { key: 'tracking', label: 'Tracking Info',   w: 70  },
-      { key: 'notes',    label: 'Notes',           w: 65  },
+      { key: 'photo',        label: 'Photo',             w: 60  },
+      { key: 'room',         label: 'Room',              w: 70  },
+      { key: 'vendor',       label: 'Vendor Name',       w: 65  },
+      { key: 'desc',         label: 'Vendor Description',w: 170 },
+      { key: 'po',           label: 'HDG PO#',           w: 55  },
+      { key: 'qty',          label: 'Qty',               w: 25  },
+      { key: 'orderNum',     label: 'Vendor Order #',    w: 55  },
+      { key: 'dateReceived', label: 'Date Received',     w: 55  },
+      { key: 'tracking',     label: 'Tracking Info',     w: 55  },
+      { key: 'shipCarrier',  label: 'Shipping Carrier',  w: 55  },
+      { key: 'notes',        label: 'Notes',             w: 55  },
     ];
 
     const PAD       = 3;
@@ -1862,14 +1864,16 @@ const generateInstallBinder = async (req, res) => {
         ].filter(Boolean);
 
         const cells = {
-          room:     safeText(product.selectedOptions?.room || product.category || product.spotName || ''),
-          vendor:   safeText(product.vendor?.name || 'HDG Inventory'),
-          desc:     safeText(descParts.join('\n')),
-          po:       safeText(getPoNumber(product)),
-          qty:      safeText(product.quantity || 1),
-          orderNum: safeText(product.selectedOptions?.vendorOrderNumber || ''),
-          tracking: safeText(product.selectedOptions?.trackingInfo || ''),
-          notes:    safeText(notesParts.join('\n')),
+          room:         safeText(product.selectedOptions?.room || product.category || product.spotName || ''),
+          vendor:       safeText(product.vendor?.name || 'HDG Inventory'),
+          desc:         safeText(descParts.join('\n')),
+          po:           safeText(getPoNumber(product)),
+          qty:          safeText(product.quantity || 1),
+          orderNum:     safeText(product.selectedOptions?.vendorOrderNumber || ''),
+          dateReceived: safeText(product.selectedOptions?.dateReceived || ''),
+          tracking:     safeText(product.selectedOptions?.trackingInfo || ''),
+          shipCarrier:  safeText(product.selectedOptions?.shippingCarrier || ''),
+          notes:        safeText(notesParts.join('\n')),
         };
 
         // Calculate row height from tallest text cell (photo column is fixed)
@@ -2055,8 +2059,10 @@ const generateInstallBinderExcel = async (req, res) => {
     ws.getColumn('E').width = 16;
     ws.getColumn('F').width = 10;
     ws.getColumn('G').width = 20;
-    ws.getColumn('H').width = 24;
-    ws.getColumn('I').width = 26;
+    ws.getColumn('H').width = 18;
+    ws.getColumn('I').width = 24;
+    ws.getColumn('J').width = 20;
+    ws.getColumn('K').width = 26;
 
     const thinBorder = {
       top: { style: 'thin' }, left: { style: 'thin' },
@@ -2066,21 +2072,21 @@ const generateInstallBinderExcel = async (req, res) => {
     const dataFont   = { name: 'Arial', size: 9 };
     const wrapTop    = { vertical: 'top', wrapText: true };
 
-    ws.mergeCells('A1:I1');
+    ws.mergeCells('A1:K1');
     const titleCell = ws.getCell('A1');
     titleCell.value     = 'Henderson Design Group — Install Binder';
     titleCell.font      = { name: 'Arial', bold: true, size: 13, color: { argb: 'FF005670' } };
     titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(1).height = 28;
 
-    ws.mergeCells('A2:I2');
+    ws.mergeCells('A2:K2');
     const projCell = ws.getCell('A2');
     projCell.value     = projectLabel;
     projCell.font      = { name: 'Arial', bold: true, size: 10 };
     projCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(2).height = 20;
 
-    ws.mergeCells('A3:I3');
+    ws.mergeCells('A3:K3');
     const dateCell = ws.getCell('A3');
     dateCell.value = `Printed: ${new Date().toLocaleDateString('en-US', {
       month: '2-digit', day: '2-digit', year: 'numeric'
@@ -2090,7 +2096,7 @@ const generateInstallBinderExcel = async (req, res) => {
     ws.getRow(3).height = 16;
 
     ['Photo','Room','Vendor Name','Vendor Description','HDG PO#','Qty',
-     'Vendor Order #','Tracking Info','Notes'].forEach((h, i) => {
+     'Vendor Order #','Date Received','Tracking Info','Shipping Carrier','Notes'].forEach((h, i) => {
       const cell = ws.getCell(4, i + 1);
       cell.value     = h;
       cell.font      = headerFont;
@@ -2110,7 +2116,7 @@ const generateInstallBinderExcel = async (req, res) => {
     let rowNum = 5;
 
     Object.entries(grouped).forEach(([room, roomProducts]) => {
-      ws.mergeCells(`A${rowNum}:I${rowNum}`);
+      ws.mergeCells(`A${rowNum}:K${rowNum}`);
       const roomCell = ws.getCell(`A${rowNum}`);
       roomCell.value     = room;
       roomCell.font      = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF005670' } };
@@ -2176,31 +2182,39 @@ const generateInstallBinderExcel = async (req, res) => {
         cellG.font = dataFont; cellG.border = thinBorder; cellG.alignment = wrapTop;
 
         const cellH = ws.getCell(rowNum, 8);
-        cellH.value = p.selectedOptions?.trackingInfo || '';
+        cellH.value = p.selectedOptions?.dateReceived || '';
         cellH.font = dataFont; cellH.border = thinBorder; cellH.alignment = wrapTop;
 
         const cellI = ws.getCell(rowNum, 9);
+        cellI.value = p.selectedOptions?.trackingInfo || '';
+        cellI.font = dataFont; cellI.border = thinBorder; cellI.alignment = wrapTop;
+
+        const cellJ = ws.getCell(rowNum, 10);
+        cellJ.value = p.selectedOptions?.shippingCarrier || '';
+        cellJ.font = dataFont; cellJ.border = thinBorder; cellJ.alignment = wrapTop;
+
+        const cellK = ws.getCell(rowNum, 11);
         const notesParts = [
           htmlToText(p.selectedOptions?.deliveryStatus),
           htmlToText(p.selectedOptions?.notes),
           htmlToText(p.selectedOptions?.installerNotes),
         ].filter(Boolean);
-        cellI.value = notesParts.join('\n') || '';
-        cellI.font = dataFont; cellI.border = thinBorder; cellI.alignment = wrapTop;
+        cellK.value = notesParts.join('\n') || '';
+        cellK.font = dataFont; cellK.border = thinBorder; cellK.alignment = wrapTop;
 
         rowNum++;
       });
     });
 
     if (products.length === 0) {
-      ws.mergeCells(`A${rowNum}:I${rowNum}`);
+      ws.mergeCells(`A${rowNum}:K${rowNum}`);
       ws.getCell(`A${rowNum}`).value     = 'No products in this order';
       ws.getCell(`A${rowNum}`).font      = { ...dataFont, italic: true };
       ws.getCell(`A${rowNum}`).alignment = { horizontal: 'center' };
       rowNum++;
     }
 
-    ws.mergeCells(`A${rowNum}:I${rowNum}`);
+    ws.mergeCells(`A${rowNum}:K${rowNum}`);
     const footerCell = ws.getCell(`A${rowNum}`);
     footerCell.value = 'Henderson Design Group  |  4343 Royal Place, Honolulu, HI 96816  |  (808) 315-8782';
     footerCell.font  = { name: 'Arial', size: 8, color: { argb: 'FF999999' }, italic: true };
