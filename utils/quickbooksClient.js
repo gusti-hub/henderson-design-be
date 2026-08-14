@@ -1,6 +1,16 @@
 // utils/quickbooksClient.js
 const axios = require('axios');
 
+// QB rejects certain characters in DisplayName — strip/replace them
+const sanitizeQbName = (name) => {
+  if (!name || typeof name !== 'string') return name;
+  // QB invalid chars: : < > " \ | ? * and leading/trailing whitespace
+  return name
+    .replace(/:/g, '-')
+    .replace(/[<>"\\|?*]/g, '')
+    .trim();
+};
+
 const QUICKBOOKS_CONFIG = {
   clientId:     process.env.QUICKBOOKS_CLIENT_ID     || 'ABBIX7EBi1jR9C45z5ZcnHczpIbV30CeD0aO0McUGD0tJmSWg6',
   clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || 'TP4bXyTrlvZ4bmhXf6lgRPdGk3R2RI4S8OOML1lu',
@@ -133,7 +143,7 @@ class QuickBooksClient {
   async createCustomer(customerData) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
     const customer = {
-      DisplayName:      customerData.name,
+      DisplayName:      sanitizeQbName(customerData.name),
       PrimaryEmailAddr: customerData.email ? { Address: customerData.email } : undefined,
       PrimaryPhone:     customerData.phone ? { FreeFormNumber: customerData.phone } : undefined,
       Notes:            `Unit: ${customerData.unitNumber || ''}, Code: ${customerData.clientCode || ''}`,
@@ -373,8 +383,9 @@ async billExists(billId) {
   // ─── Vendor ───────────────────────────────────────────────────────────────────
   async getOrCreateVendor(vendorName) {
     if (this.isTokenExpired()) await this.refreshAccessToken();
+    const cleanName = sanitizeQbName(vendorName);
     try {
-      const safeName = vendorName.replace(/'/g, "\\'");
+      const safeName = cleanName.replace(/'/g, "\\'");
       const searchRes = await axios.get(`${BASE_URL}/v3/company/${this.realmId}/query`, {
         params: { query: `SELECT * FROM Vendor WHERE DisplayName = '${safeName}'` },
         headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Accept': 'application/json' },
@@ -385,10 +396,10 @@ async billExists(billId) {
 
     const createRes = await axios.post(
       `${BASE_URL}/v3/company/${this.realmId}/vendor`,
-      { DisplayName: vendorName },
+      { DisplayName: cleanName },
       { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } }
     );
-    console.log('QB: Created vendor:', vendorName);
+    console.log('QB: Created vendor:', cleanName);
     return createRes.data.Vendor;
   }
 
