@@ -6,6 +6,21 @@ const QuickBooksToken      = require('../models/QuickBooksToken');
 
 const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
+// Strip HTML tags to plain text for QB description fields
+const stripHtml = (html) => {
+  if (!html || typeof html !== 'string') return '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\n{3,}/g, '\n')
+    .trim();
+};
+
 // Same formula as poController.computeNetCost — keeps BI and PO prices in sync
 const computeNetCost = (product) => {
   const opts = product.selectedOptions || {};
@@ -281,12 +296,12 @@ const syncBillInvoiceToQuickBooks = async (req, res) => {
 
         const desc = [
           p.name,
-          p.description          ? p.description                    : null,
-          opts.vendorDescription ? opts.vendorDescription           : null,
-          opts.finish            ? `Finish: ${opts.finish}`         : null,
-          opts.fabric            ? `Fabric: ${opts.fabric}`         : null,
-          opts.size              ? `Size: ${opts.size}`             : null,
-          opts.sidemark          ? `Sidemark: ${opts.sidemark}`     : null,
+          p.description          ? stripHtml(p.description)          : null,
+          opts.vendorDescription ? stripHtml(opts.vendorDescription) : null,
+          opts.finish            ? `Finish: ${opts.finish}`          : null,
+          opts.fabric            ? `Fabric: ${opts.fabric}`          : null,
+          opts.size              ? `Size: ${opts.size}`              : null,
+          opts.sidemark          ? `Sidemark: ${opts.sidemark}`      : null,
         ].filter(Boolean).join(' | ');
 
         return { description: desc || p.name || 'Product', amount: total, qty: 1, unitPrice: total, lineType: 'Product' };
