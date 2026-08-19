@@ -229,6 +229,15 @@ const buildPoProductFromOrder = (orderProduct) => {
       shippingState: opts.shippingState || '',
       shippingPostalCode: opts.shippingPostalCode || '',
       shipToPhone: opts.shipToPhone || '',
+      woodFinishVendor:   opts.woodFinishVendor   || '',
+      woodFinishClient:   opts.woodFinishClient   || '',
+      drawerFrontsVendor: opts.drawerFrontsVendor || '',
+      drawerFrontsClient: opts.drawerFrontsClient || '',
+      wingPanelsVendor:   opts.wingPanelsVendor   || '',
+      wingPanelsClient:   opts.wingPanelsClient   || '',
+      fabricVendor:       opts.fabricVendor       || '',
+      fabricClient:       opts.fabricClient       || '',
+      leadTime:           opts.leadTime           || '',
     }
   };
 };
@@ -318,6 +327,15 @@ const getPurchaseOrder = async (req, res) => {
                 shippingState: opts.shippingState || '',
                 shippingPostalCode: opts.shippingPostalCode || '',
                 shipToPhone: opts.shipToPhone || '',
+                woodFinishVendor:   opts.woodFinishVendor   || '',
+                woodFinishClient:   opts.woodFinishClient   || '',
+                drawerFrontsVendor: opts.drawerFrontsVendor || '',
+                drawerFrontsClient: opts.drawerFrontsClient || '',
+                wingPanelsVendor:   opts.wingPanelsVendor   || '',
+                wingPanelsClient:   opts.wingPanelsClient   || '',
+                fabricVendor:       opts.fabricVendor       || '',
+                fabricClient:       opts.fabricClient       || '',
+                leadTime:           opts.leadTime           || '',
               }
             };
           });
@@ -360,21 +378,17 @@ const getPurchaseOrder = async (req, res) => {
             };
           }
 
-          if (version === 'latest') {
-            // Only update vendor info, rep details, shipTo — NOT the products list.
-            // Products list is the source of truth for what's included in this PO version.
-            // Pricing/spec updates are applied in-memory above and returned to frontend,
-            // but not persisted here so we don't accidentally re-add excluded products.
-            await POVersion.findByIdAndUpdate(poVersion._id, {
-              terms: vendorTerms,
-              repName: vendorRepName,
-              repPhone: vendorRepPhone,
-              repEmail: vendorRepEmail,
-              accountNumber: vendorAccountNumber,
-              vendorInfo: vendorInfoLatest,
-              shipTo: shipToLatest,
-            });
-          }
+          // Always refresh vendor info from master — safe because we only update
+          // vendor/rep/shipTo fields, never the products list.
+          await POVersion.findByIdAndUpdate(poVersion._id, {
+            terms: vendorTerms,
+            repName: vendorRepName,
+            repPhone: vendorRepPhone,
+            repEmail: vendorRepEmail,
+            accountNumber: vendorAccountNumber,
+            vendorInfo: vendorInfoLatest,
+            shipTo: shipToLatest,
+          });
 
           poVersion = {
             ...poVersion,
