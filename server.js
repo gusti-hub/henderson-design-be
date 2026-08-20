@@ -88,6 +88,7 @@ app.use('/api/proposals', proposalRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/qc',      qcRoutes);
+app.use('/api/financial-review', require('./routes/financialReviewRoutes'));
 
 // Enhanced error handling
 app.use((err, req, res, next) => {

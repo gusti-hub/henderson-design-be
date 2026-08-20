@@ -41,4 +41,15 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, authorize };
+const restrictToEmails = (...emails) => {
+  return (req, res, next) => {
+    if (!emails.includes(req.user.email)) {
+      return res.status(403).json({
+        message: 'You are not authorized to access this resource'
+      });
+    }
+    next();
+  };
+};
+
+module.exports = { protect, authorize, restrictToEmails };
