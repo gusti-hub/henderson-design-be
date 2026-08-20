@@ -78,7 +78,7 @@ const mapVendorToInfo = (vendor) => {
   return {
     name: vendor.name || '',
     vendorCode: vendor.vendorCode || '',
-    representativeName: vendor.representativeName || '',
+    representativeName: vendor.loginCredentials?.vendorRepName || vendor.representativeName || '',
     website: vendor.website || '',
     address: {
       street: vendor.address?.street || '',
@@ -353,7 +353,7 @@ const getPurchaseOrder = async (req, res) => {
             const latestVendor = await Vendor.findById(vendorId).lean();
             if (latestVendor) {
               vendorTerms = latestVendor.termsAndPayment?.terms || '';
-              vendorRepName = latestVendor.representativeName || '';
+              vendorRepName = latestVendor.loginCredentials?.vendorRepName || latestVendor.representativeName || '';
               vendorRepPhone = latestVendor.contactInfo?.phone || '';
               vendorRepEmail = latestVendor.contactInfo?.email || '';
               vendorAccountNumber = latestVendor.accountNumber || '';
@@ -454,7 +454,7 @@ const getPurchaseOrder = async (req, res) => {
         poNumber,
         orderDate: new Date(),
         accountNumber: vendor.accountNumber || '',
-        repName: vendor.representativeName || '',
+        repName: vendor.loginCredentials?.vendorRepName || vendor.representativeName || '',
         repPhone: vendor.contactInfo?.phone || '',
         repEmail: vendor.contactInfo?.email || '',
         terms: vendor.termsAndPayment?.terms || '',
