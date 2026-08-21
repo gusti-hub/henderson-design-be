@@ -40,6 +40,7 @@ const buildProductData = (body, uploadedFile = null) => {
     collection:        body.collection        || 'General',
     package:           (['Lani','Nalu','Mainland'].includes(body.package) ? body.package : ''),
     dimension:         body.dimension         || '',
+    shipTo:            body.shipTo            || '',
     vendor:            body.vendor            || '',
     colorFinish:       body.colorFinish       || '',
     itemUrl:           body.itemUrl           || '',
@@ -109,7 +110,7 @@ const getProducts = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('product_id name description vendorDescription vendor category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image uploadedImages customAttributes woodFinishVendor woodFinishClient drawerFrontsVendor drawerFrontsClient wingPanelsVendor wingPanelsClient fabricVendor fabricClient')
+        .select('product_id name description vendorDescription vendor category collection package dimension shipTo colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image uploadedImages customAttributes woodFinishVendor woodFinishClient drawerFrontsVendor drawerFrontsClient wingPanelsVendor wingPanelsClient fabricVendor fabricClient')
         .lean()
     ]);
 

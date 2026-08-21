@@ -33,6 +33,7 @@ const productSchema = new mongoose.Schema({
 
   // Specs
   dimension: { type: String, default: '' },
+  shipTo:    { type: String, default: '' },
 
   // ─── PRICE: split into buy & sell ───────────────────────────────────────
   buyPrice:     { type: Number, default: 0 },   // cost / vendor price
