@@ -147,8 +147,21 @@ const getProductsBasicInfo = async (req, res) => {
 // ─── CREATE product ────────────────────────────────────────────────────────
 const createProduct = async (req, res) => {
   try {
-    // Explicit duplicate SKU check before insert
     const skuToCheck = (req.body.product_id || '').trim();
+    const allowUpsert = req.query.upsert === 'true';
+
+    if (skuToCheck && allowUpsert) {
+      // Bulk import path: create or update existing by SKU
+      const uploadedFile = req.file || null;
+      const data = buildProductData(req.body, uploadedFile);
+      const product = await Product.findOneAndUpdate(
+        { product_id: skuToCheck },
+        { $set: { ...data, sourceType: 'admin-created' } },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+      return res.status(200).json(product);
+    }
+
     if (skuToCheck) {
       const existing = await Product.findOne({ product_id: skuToCheck }).lean();
       if (existing)
@@ -161,7 +174,6 @@ const createProduct = async (req, res) => {
     res.status(201).json(product);
   } catch (error) {
     console.error('createProduct error:', error);
-    // Fallback: catch MongoDB E11000 duplicate key error
     if (error.code === 11000) {
       return res.status(409).json({ message: `SKU "${req.body.product_id}" already exists. Use Edit to update it.` });
     }
