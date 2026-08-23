@@ -37,8 +37,11 @@ const initializeQuickBooks = async () => {
   }
 };
 
+const { autoSeedRoles } = require('./controllers/roleController');
+
 setTimeout(() => {
   initializeQuickBooks();
+  autoSeedRoles();
 }, 1000); // Wait 1 second for DB connection
 
 // CORS — harus sebelum semua middleware lain
@@ -89,6 +92,7 @@ app.use('/api/vendors', vendorRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/qc',      qcRoutes);
 app.use('/api/financial-review', require('./routes/financialReviewRoutes'));
+app.use('/api/roles', require('./routes/roleRoutes'));
 
 // Enhanced error handling
 app.use((err, req, res, next) => {

@@ -2,17 +2,16 @@ const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 
 
-// Get admin users with pagination
+// Get admin users with pagination (all non-client users)
 const getAdminUsers = async (req, res) => {
     try {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || '';
       const skip = (page - 1) * limit;
-  
-      // Create search query
+
       const searchQuery = {
-        role: 'admin',
+        role: { $ne: 'user' },
         $or: [
           { name: { $regex: search, $options: 'i' } },
           { email: { $regex: search, $options: 'i' } }
@@ -58,11 +57,11 @@ const getAdminUsers = async (req, res) => {
         });
       }
   
-      const adminUser = await User.create({ 
+      const adminUser = await User.create({
         email,
         name,
         password,
-        role: 'admin'
+        role: req.body.role || 'admin_temporary',
       });
   
       res.status(201).json({
@@ -136,12 +135,12 @@ const updateAdminUser = async (req, res) => {
       }
 };
 
-// Delete admin user
+// Delete admin user (any non-client user)
 const deleteAdminUser = async (req, res) => {
   try {
-    const user = await User.findOneAndDelete({ 
-      _id: req.params.id, 
-      role: 'admin' 
+    const user = await User.findOneAndDelete({
+      _id: req.params.id,
+      role: { $ne: 'user' },
     });
     
     if (!user) {

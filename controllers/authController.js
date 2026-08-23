@@ -1,7 +1,21 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Role = require('../models/Role');
 const bcrypt = require('bcryptjs');
 const ActivityLog = require('../models/ActivityLog');
+
+const ALL_PERMISSIONS = [
+  'view_dashboard', 'view_orders', 'view_expenses', 'view_vendors',
+  'view_users', 'view_clients', 'view_products', 'view_product_mapping',
+  'view_financial_review', 'view_role_management',
+];
+
+const resolvePermissions = async (user) => {
+  if (user.role === 'admin') return ALL_PERMISSIONS;
+  if (user.role === 'user') return [];
+  const role = await Role.findOne({ name: user.role });
+  return role ? role.permissions : [];
+};
 const { generateClientCode } = require('../utils/clientCodeGenerator');
 
 // Generate JWT Token
@@ -169,12 +183,14 @@ const login = async (req, res) => {
     });
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+    const permissions = await resolvePermissions(user);
 
     res.json({
       _id: user._id,
       name: user.name,
       email: user.email,
       role: user.role,
+      permissions,
       token
     });
   } catch (error) {
