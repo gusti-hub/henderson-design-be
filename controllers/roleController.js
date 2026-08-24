@@ -11,6 +11,7 @@ const ALL_ACTIONS = [
   'view_product_mapping',
   'view_financial_review',
   'view_role_management',
+  'view_logistic_tracker',
 ];
 
 const SEED_ROLES = [
@@ -36,7 +37,7 @@ const SEED_ROLES = [
     name: 'Logistics',
     description: 'Logistics team',
     isSystem: false,
-    permissions: ['view_dashboard', 'view_orders', 'view_vendors', 'view_products'],
+    permissions: ['view_dashboard', 'view_orders', 'view_vendors', 'view_products', 'view_logistic_tracker'],
   },
   {
     name: 'Designer',
@@ -59,13 +60,14 @@ const SEED_ROLES = [
 ];
 
 // Auto-seed on startup — called from server.js
+// Uses $set so system-role permissions stay in sync with code changes
 const autoSeedRoles = async () => {
   try {
     for (const role of SEED_ROLES) {
       await Role.findOneAndUpdate(
         { name: role.name },
-        { $setOnInsert: role },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { $set: { description: role.description, isSystem: role.isSystem, permissions: role.permissions } },
+        { upsert: true, new: true }
       );
     }
     console.log('✅ Roles seeded');

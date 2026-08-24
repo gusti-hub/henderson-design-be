@@ -15,7 +15,8 @@ const proposalRoutes = require('./routes/proposalRoutes');
 const vendorRoutes = require('./routes/vendorRoutes');
 const poRoutes = require('./routes/poRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
-const qcRoutes      = require('./routes/qcRoutes');
+const qcRoutes        = require('./routes/qcRoutes');
+const logisticRoutes  = require('./routes/logisticRoutes');
 
 // Load env vars
 dotenv.config();
@@ -90,7 +91,8 @@ app.use('/api/agreements', agreementRoutes);
 app.use('/api/proposals', proposalRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/expenses', expenseRoutes);
-app.use('/api/qc',      qcRoutes);
+app.use('/api/qc',       qcRoutes);
+app.use('/api/logistic', logisticRoutes);
 app.use('/api/financial-review', require('./routes/financialReviewRoutes'));
 app.use('/api/roles', require('./routes/roleRoutes'));
 

@@ -93,6 +93,25 @@ const poVersionSchema = new mongoose.Schema({
       images: [String],
       notes: String,
       poNumber: String,
+
+      // Logistic fields (used when this product has no matching Order.selectedProduct)
+      cargoReadyDate:      { type: String, default: '' },
+      shipmentDate:        { type: String, default: '' },
+      logDrawing:          { type: Number, default: 0, min: 0, max: 5 },
+      logMachining:        { type: Number, default: 0, min: 0, max: 5 },
+      logAssembly:         { type: Number, default: 0, min: 0, max: 5 },
+      logFinishing:        { type: Number, default: 0, min: 0, max: 5 },
+      logQcChecking:       { type: Number, default: 0, min: 0, max: 5 },
+      logPacking:          { type: Number, default: 0, min: 0, max: 5 },
+      packingList:         { type: String, default: '' },
+      containerNumber:     { type: String, default: '' },
+      statusCategory:      { type: String, default: '' },
+      expectedShipDate:    { type: String, default: '' },
+      expectedArrivalDate: { type: String, default: '' },
+      dateInspected:       { type: String, default: '' },
+      projectCode:         { type: String, default: '' },
+      location:            { type: String, default: '' },
+      remark:              { type: String, default: '' },
     }
   }],
 

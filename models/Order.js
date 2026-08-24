@@ -28,6 +28,9 @@ const orderSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+
+  // Project code for Logistic Order Tracker (order-level, applies to all products in this order)
+  projectCode: { type: String, default: '' },
   proposalQbId:      { type: String, default: null },
   proposalQbSyncedAt:{ type: Date,   default: null },
 
@@ -231,6 +234,18 @@ const orderSchema = new mongoose.Schema({
         of: mongoose.Schema.Types.Mixed,
         default: new Map()
       },
+
+      // ── Logistic Order Tracker fields (managed by Logistics team) ──
+      cargoReadyDate:  { type: String, default: '' },
+      shipmentDate:    { type: String, default: '' },
+      logDrawing:      { type: Number, default: 0, min: 0, max: 5 },
+      logMachining:    { type: Number, default: 0, min: 0, max: 5 },
+      logAssembly:     { type: Number, default: 0, min: 0, max: 5 },
+      logFinishing:    { type: Number, default: 0, min: 0, max: 5 },
+      logQcChecking:   { type: Number, default: 0, min: 0, max: 5 },
+      logPacking:      { type: Number, default: 0, min: 0, max: 5 },
+      packingList:     { type: String, default: '' },
+      containerNumber: { type: String, default: '' },
 
       // ── Vendor / Client variant fields (from Excel sub-header columns) ──
       woodFinishVendor:   { type: String, default: '' },
