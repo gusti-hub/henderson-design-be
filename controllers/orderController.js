@@ -315,6 +315,7 @@ const updateOrder = async (req, res) => {
     }
     if (req.body.occupiedSpots !== undefined)  updateData.occupiedSpots   = req.body.occupiedSpots;
     if (req.body.selectedPlan)                 updateData.selectedPlan    = req.body.selectedPlan;
+    if (req.body.orderLabel !== undefined)     updateData.orderLabel      = req.body.orderLabel;
     if (req.body.status)                       updateData.status          = req.body.status;
     if (req.body.step !== undefined)           updateData.step            = req.body.step;
     if (req.body.installationDate !== undefined) updateData.installationDate  = req.body.installationDate;
@@ -4282,8 +4283,25 @@ const moveProducts = async (req, res) => {
   }
 };
 
+// PATCH /api/orders/:id/label — lightweight label-only update, no audit overhead
+const patchOrderLabel = async (req, res) => {
+  try {
+    const { orderLabel } = req.body;
+    const updated = await Order.findByIdAndUpdate(
+      req.params.id,
+      { orderLabel: orderLabel?.trim() || null },
+      { new: true, select: '_id orderLabel' }
+    );
+    if (!updated) return res.status(404).json({ message: 'Order not found' });
+    res.json({ orderLabel: updated.orderLabel });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   createOrder,
+  patchOrderLabel,
   getOrders,
   getOrderById,
   updateOrder,

@@ -30,6 +30,7 @@ const {
   getAvailablePOVendors,
   createOrderForClient,
   moveProducts,
+  patchOrderLabel,
 } = require('../controllers/orderController');
 const {
   handlePaymentProofUpload,
@@ -140,6 +141,7 @@ router.route('/:id')
 // PAYMENT
 // ===================================
 
+router.patch('/:id/label', patchOrderLabel);
 router.put('/:id/payment-status', updatePaymentStatus);
 
 // ===================================

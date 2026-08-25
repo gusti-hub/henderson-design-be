@@ -50,8 +50,11 @@ const vendorSchema = new mongoose.Schema({
     },
     email: {
       type: String,
-      required: [true, 'Please add an email'],
-      match: [/^\S+@\S+\.\S+$/, 'Please add a valid email']
+      default: '',
+      validate: {
+        validator: function(v) { return !v || /^\S+@\S+\.\S+$/.test(v); },
+        message: 'Please add a valid email'
+      }
     },
     // ✅ NEW: Fax
     fax: {

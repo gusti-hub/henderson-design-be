@@ -93,18 +93,20 @@ const createVendor = async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (!name || !phone || !email) {
-      return res.status(400).json({ 
-        message: 'Please provide all required fields' 
+    if (!name || !phone) {
+      return res.status(400).json({
+        message: 'Please provide all required fields'
       });
     }
 
     // Check if email already exists (before generating code)
-    const emailExists = await Vendor.findOne({ 'contactInfo.email': email });
-    if (emailExists) {
-      return res.status(400).json({ 
-        message: 'Email already exists' 
-      });
+    if (email) {
+      const emailExists = await Vendor.findOne({ 'contactInfo.email': email });
+      if (emailExists) {
+        return res.status(400).json({
+          message: 'Email already exists'
+        });
+      }
     }
 
     // ✅ Auto-generate vendor code (optimized - single query)
