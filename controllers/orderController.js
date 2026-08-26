@@ -470,7 +470,7 @@ const getOrderById = async (req, res) => {
     const order = await Order.findById(req.params.id)
       .populate({
         path: 'user',
-        select: 'name email clientCode unitNumber'
+        select: 'name email clientCode unitNumber pricingYear'
       })
       .populate({
         path: 'selectedProducts.vendor',
