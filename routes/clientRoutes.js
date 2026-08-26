@@ -16,7 +16,7 @@ const {
   exportClientsToExcel,
   updateProjectSummary
 } = require('../controllers/clientController');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, authorize, hasPermission } = require('../middleware/auth');
 
 // ⚠️ SEMUA specific routes HARUS sebelum /:id
 
@@ -24,9 +24,9 @@ router.get('/stats',         getClientStats);
 router.get('/pending',       getPendingClients);
 router.get('/pending-count', getPendingCount);
 router.get('/floor-plans',   getFloorPlans);
-router.get('/export',        protect, authorize('admin'), exportClientsToExcel); // ✅ PINDAH KE SINI
+router.get('/export',        protect, authorize('admin'), exportClientsToExcel);
 
-router.get('/',  protect, authorize('admin'), getAllClients);
+router.get('/',  protect, hasPermission('view_clients'), getAllClients);
 router.post('/', protect, authorize('admin'), createClient);
 
 router.post('/:id/record-payment', protect, authorize('admin'), recordPayment);
