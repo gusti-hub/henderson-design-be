@@ -24,13 +24,13 @@ router.get('/stats',         getClientStats);
 router.get('/pending',       getPendingClients);
 router.get('/pending-count', getPendingCount);
 router.get('/floor-plans',   getFloorPlans);
-router.get('/export',        protect, authorize('admin'), exportClientsToExcel);
+router.get('/export',        protect, exportClientsToExcel);
 
 router.get('/',  protect, hasPermission('view_clients'), getAllClients);
-router.post('/', protect, authorize('admin'), createClient);
+router.post('/', protect, createClient);
 
-router.post('/:id/record-payment', protect, authorize('admin'), recordPayment);
-router.put('/:id/project-summary', protect, authorize('admin'), updateProjectSummary);
+router.post('/:id/record-payment', protect, recordPayment);
+router.put('/:id/project-summary', protect, updateProjectSummary);
 
 // Parameterized routes PALING BAWAH
 router.route('/:id')

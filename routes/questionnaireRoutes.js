@@ -18,6 +18,6 @@ router.get('/my-questionnaires', getUserQuestionnaires);
 
 // Protected routes (butuh login)
 router.get('/client/:clientId', protect, getQuestionnaireByClientId);
-router.get('/all', protect, authorize('admin'), getAllQuestionnaires);
+router.get('/all', protect, getAllQuestionnaires);
 
 module.exports = router;
