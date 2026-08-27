@@ -588,14 +588,16 @@ const updatePurchaseOrder = async (req, res) => {
         const order = await Order.findById(orderId);
         if (order) {
           let changed = false;
-          products.forEach((poProduct) => {
-            const orderProduct = order.selectedProducts.find(
-              (p) => p.product_id === poProduct.product_id && p.name === poProduct.name
-            );
-            if (orderProduct) {
-              if (!orderProduct.selectedOptions) orderProduct.selectedOptions = {};
-              if (orderProduct.selectedOptions.poNumber !== poNumber) {
-                orderProduct.selectedOptions.poNumber = poNumber;
+          // Build a set of (product_id, name) pairs from PO products
+          const poProductKeys = new Set(
+            products.map(pp => `${pp.product_id || ''}||${pp.name || ''}`)
+          );
+          order.selectedProducts.forEach((p) => {
+            const key = `${p.product_id || ''}||${p.name || ''}`;
+            if (poProductKeys.has(key)) {
+              if (!p.selectedOptions) p.selectedOptions = {};
+              if (p.selectedOptions.poNumber !== poNumber) {
+                p.selectedOptions.poNumber = poNumber;
                 changed = true;
               }
             }

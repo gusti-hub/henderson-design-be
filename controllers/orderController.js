@@ -2000,19 +2000,22 @@ const generateInstallBinderExcel = async (req, res) => {
     });
 
     const getPoNumber = (p) => {
-      // Primary: look up by product_id
+      // 1. Exact match by product_id in any PO version
       if (p.product_id && productPoMap.has(p.product_id)) {
         return productPoMap.get(p.product_id);
       }
-      // Fallback: vendor-level latest PO
+      // 2. Directly synced on the order product (handles duplicates with same product_id)
+      if (p.selectedOptions?.poNumber) {
+        return p.selectedOptions.poNumber;
+      }
+      // 3. Vendor-level fallback (any product from this vendor's PO)
       let vid = null;
       if (p.vendor) {
         if (typeof p.vendor === 'object' && p.vendor._id) vid = p.vendor._id.toString();
         else vid = p.vendor.toString();
       }
       if (vid && byVendor.has(vid)) return byVendor.get(vid);
-      // Last resort: selectedOptions
-      return p.selectedOptions?.poNumber || '';
+      return '';
     };
     // ─────────────────────────────────────────────────────────────────────
 
@@ -2252,34 +2255,59 @@ const generateStatusReport = async (req, res) => {
       .sort({ version: -1 })
       .lean();
 
-    // vendorId → { poNumber, productIds: Set<product_id>, nameKeys: Set<"name::..."> }
-    // Only take the latest version per vendor (sort desc, skip if already seen)
-    const vendorPoMap = new Map();
+    // Build lookup maps from all PO versions (sorted DESC so latest version wins)
+    const poByOrderVendor = new Map(); // "orderId::vendorId" → poNumber  (most specific)
+    const poByVendor      = new Map(); // vendorId → poNumber             (vendor fallback)
+    const poByProductId   = new Map(); // product_id → poNumber           (exact item match)
+    const poByName        = new Map(); // "name::lower" → poNumber        (name match)
+
     poVersions.forEach(po => {
-      const key = po.vendorId?.toString();
-      if (!key || vendorPoMap.has(key)) return;
-      const productIds = new Set();
-      const nameKeys   = new Set();
+      const vid = po.vendorId?.toString();
+      const oid = po.orderId?.toString();
+
+      if (vid && oid) {
+        const key = `${oid}::${vid}`;
+        if (!poByOrderVendor.has(key)) poByOrderVendor.set(key, po.poNumber || '');
+      }
+      if (vid && !poByVendor.has(vid)) poByVendor.set(vid, po.poNumber || '');
+
       (po.products || []).forEach(pp => {
-        if (pp.product_id) productIds.add(pp.product_id);
-        if (pp.name)       nameKeys.add('name::' + pp.name.trim().toLowerCase());
+        if (pp.product_id && !poByProductId.has(pp.product_id))
+          poByProductId.set(pp.product_id, po.poNumber || '');
+        if (pp.name) {
+          const nk = 'name::' + pp.name.trim().toLowerCase();
+          if (!poByName.has(nk)) poByName.set(nk, po.poNumber || '');
+        }
       });
-      vendorPoMap.set(key, { poNumber: po.poNumber || '', productIds, nameKeys });
     });
 
-    // Returns PO# for a product without mixing up duplicates:
-    // 1. Use selectedOptions.poNumber if already set on the product
-    // 2. Else look up from POVersion, but only if this product_id/name exists in that PO
+    // Priority chain for resolving PO# per product:
+    // 1. Direct sync on order product  (exact, stored when PO was saved)
+    // 2. orderId + vendorId match       (correct PO for this order-vendor pair)
+    // 3. product_id match in any PO     (exact item in a PO)
+    // 4. name match in any PO           (same item name in a PO)
+    // 5. any PO for this vendor         (broad fallback)
     const resolvePoNumber = (p) => {
       if (p.selectedOptions?.poNumber) return p.selectedOptions.poNumber;
+
+      const pid      = p.product_id;
+      const nameKey  = 'name::' + (p.name || '').trim().toLowerCase();
       const vendorId = p.vendor?._id?.toString() || (typeof p.vendor === 'string' ? p.vendor : null);
-      if (!vendorId) return '';
-      const entry = vendorPoMap.get(vendorId);
-      if (!entry) return '';
-      const pid     = p.product_id;
-      const nameKey = 'name::' + (p.name || '').trim().toLowerCase();
-      if ((pid && entry.productIds.has(pid)) || entry.nameKeys.has(nameKey)) {
-        return entry.poNumber;
+      const orderId  = p._orderId?.toString();
+
+      if (orderId && vendorId) {
+        const pno = poByOrderVendor.get(`${orderId}::${vendorId}`);
+        if (pno) return pno;
+      }
+      if (pid) {
+        const pno = poByProductId.get(pid);
+        if (pno) return pno;
+      }
+      const pno = poByName.get(nameKey);
+      if (pno) return pno;
+      if (vendorId) {
+        const pno2 = poByVendor.get(vendorId);
+        if (pno2) return pno2;
       }
       return '';
     };
@@ -2333,11 +2361,23 @@ const generateStatusReport = async (req, res) => {
     };
 
     // ── Helper: build vendor description (for internal sheet col F) ──
+    const stripHtmlInline = (str) => {
+      if (!str) return '';
+      return str
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
     const buildVendorDescription = (p) => {
       const parts = [];
       if (p.name) parts.push(p.name);
       if (p.product_id) parts.push(`Product ID: ${p.product_id}`);
-      if (p.selectedOptions?.specifications) parts.push(p.selectedOptions.specifications);
+      if (p.selectedOptions?.specifications) parts.push(stripHtmlInline(p.selectedOptions.specifications));
       if (p.selectedOptions?.finish) parts.push(`Finish: ${p.selectedOptions.finish}`);
       if (p.selectedOptions?.fabric) parts.push(`Fabric: ${p.selectedOptions.fabric}`);
       if (p.selectedOptions?.size) parts.push(`Size: ${p.selectedOptions.size}`);
