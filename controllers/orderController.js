@@ -3708,18 +3708,13 @@ const generateBulkExport = async (req, res) => {
       (a.clientInfo?.unitNumber || '').localeCompare(b.clientInfo?.unitNumber || '', undefined, { numeric: true })
     );
 
-    // Fetch latest active PO version per vendor per order,
-    // cross-referenced with vendors that currently have products in the order.
+    // Fetch latest active PO version per vendor per order.
+    // For orders with no saved POVersions, fall back to selectedProducts grouped by vendor.
     const posByOrder = new Map();
+    const Vendor = require('../models/Vendor');
+
     await Promise.all(orders.map(async (order) => {
       const oid = mongoose.Types.ObjectId.isValid(order._id) ? new mongoose.Types.ObjectId(order._id) : order._id;
-
-      // Build set of vendorIds that currently exist in the order's product list
-      const activeVendorIds = new Set(
-        (order.selectedProducts || [])
-          .map(p => p.vendor?._id?.toString() || p.vendor?.toString())
-          .filter(Boolean)
-      );
 
       const latestPOs = await POVersion.aggregate([
         { $match: { orderId: oid, status: { $ne: 'cancelled' } } },
@@ -3729,12 +3724,55 @@ const generateBulkExport = async (req, res) => {
         { $sort: { 'vendorInfo.name': 1 } },
       ]);
 
-      // Only keep POs whose vendor still has products in the order
-      const filtered = latestPOs.filter(po =>
-        po.vendorId && activeVendorIds.has(po.vendorId.toString())
-      );
+      if (latestPOs.length > 0) {
+        posByOrder.set(order._id.toString(), latestPOs);
+        return;
+      }
 
-      posByOrder.set(order._id.toString(), filtered);
+      // No saved POVersions — build temp entries from selectedProducts grouped by vendor
+      const fullOrder = await Order.findById(oid).populate('selectedProducts.vendor').lean();
+      if (!fullOrder) return;
+
+      const vendorProductsMap = new Map();
+      for (const p of (fullOrder.selectedProducts || [])) {
+        if (!p.vendor) continue;
+        const vid = p.vendor?._id?.toString() || p.vendor?.toString();
+        if (!vid) continue;
+        if (!vendorProductsMap.has(vid)) {
+          const vendorDoc = p.vendor?._id ? p.vendor : await Vendor.findById(vid).lean();
+          vendorProductsMap.set(vid, { vendor: vendorDoc, products: [] });
+        }
+        vendorProductsMap.get(vid).products.push(p);
+      }
+
+      const tempPOs = Array.from(vendorProductsMap.entries()).map(([vid, { vendor: vd, products: vProds }]) => {
+        const subTotal = vProds.reduce((s, p) => {
+          const opts = p.selectedOptions || {};
+          const cost = (opts.netCostOverride != null && opts.netCostOverride !== '')
+            ? parseFloat(opts.netCostOverride)
+            : parseFloat(opts.msrp || 0);
+          return s + cost * (p.quantity || 1);
+        }, 0);
+        return {
+          _id: null,
+          orderId: oid,
+          vendorId: vid,
+          version: null,
+          poNumber: '',
+          orderDate: null,
+          status: 'draft',
+          shipping: 0,
+          others: 0,
+          subTotal,
+          total: subTotal,
+          accountNumber: vd?.accountNumber || '',
+          repName: vd?.loginCredentials?.vendorRepName || vd?.representativeName || '',
+          vendorInfo: { name: vd?.name || 'Unknown Vendor' },
+          products: vProds,
+        };
+      });
+
+      posByOrder.set(order._id.toString(), tempPOs);
     }));
 
     const wb = new ExcelJS.Workbook();
@@ -3850,25 +3888,28 @@ const generateBulkExport = async (req, res) => {
       for (const po of pos) {
         const vendorName = po.vendorInfo?.name || 'Unknown Vendor';
         const poNumber = po.poNumber || '';
-        const poVersion = po.version || 1;
+        const poVersion = po.version;
         const poStatus = po.status || 'draft';
         const orderDate = po.orderDate ? new Date(po.orderDate).toLocaleDateString('en-US') : '';
 
         // Vendor/version sub-header in Detail
         detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length);
         const vhCell = detailWs.getCell(detailRow, 1);
-        vhCell.value = `  ${vendorName}${poNumber ? '  ·  PO #: ' + poNumber : ''}  ·  v${poVersion}  ·  ${poStatus.toUpperCase()}`;
+        vhCell.value = `  ${vendorName}${poNumber ? '  ·  PO #: ' + poNumber : ''}${poVersion ? '  ·  v' + poVersion : '  ·  No saved PO'}  ·  ${poStatus.toUpperCase()}`;
         vhCell.font = { name: 'Arial', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
         vhCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
         vhCell.alignment = { vertical: 'middle', horizontal: 'left' };
         detailWs.getRow(detailRow).height = 18;
         detailRow++;
 
-        // Use live order products for this vendor (same logic as single PO view)
-        const liveProducts = (order.selectedProducts || []).filter(p => {
-          const pVid = p.vendor?._id?.toString() || p.vendor?.toString();
-          return pVid === po.vendorId?.toString();
-        });
+        // For temp POs (no saved version), products are already on po.products.
+        // For saved POVersions, use live order products filtered by vendor.
+        const liveProducts = (po.version == null)
+          ? (po.products || [])
+          : (order.selectedProducts || []).filter(p => {
+              const pVid = p.vendor?._id?.toString() || p.vendor?.toString();
+              return pVid === po.vendorId?.toString();
+            });
 
         let poTotal = 0;
         for (const p of liveProducts) {
