@@ -2,7 +2,7 @@ name: Deploy Backend to Digital Ocean
 
 on:
   push:
-    branches: [ main, main-stable, refactor/order-source-of-truth ]
+    branches: [ main, refactor/order-source-of-truth ]
 
 env:
   REGISTRY: "registry.digitalocean.com/hale-project"

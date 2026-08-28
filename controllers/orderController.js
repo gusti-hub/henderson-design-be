@@ -3726,15 +3726,7 @@ const generateBulkExport = async (req, res) => {
         const vid = po.vendorId?.toString();
         if (vid && !latestByVendor.has(vid)) latestByVendor.set(vid, po);
       }
-      const latestPOs = Array.from(latestByVendor.values())
-        .sort((a, b) => (a.vendorInfo?.name || '').localeCompare(b.vendorInfo?.name || ''));
-
-      if (latestPOs.length > 0) {
-        posByOrder.set(order._id.toString(), latestPOs);
-        return;
-      }
-
-      // No saved POVersions — build temp entries from selectedProducts grouped by vendor
+      // Also load selectedProducts to cover vendors without a saved POVersion
       const fullOrder = await Order.findById(order._id).populate('selectedProducts.vendor').lean();
       if (!fullOrder) return;
 
@@ -3750,7 +3742,10 @@ const generateBulkExport = async (req, res) => {
         vendorProductsMap.get(vid).products.push(p);
       }
 
-      const tempPOs = Array.from(vendorProductsMap.entries()).map(([vid, { vendor: vd, products: vProds }]) => {
+      // Build temp entries only for vendors NOT already in a saved POVersion
+      const tempPOs = [];
+      for (const [vid, { vendor: vd, products: vProds }] of vendorProductsMap.entries()) {
+        if (latestByVendor.has(vid)) continue;
         const subTotal = vProds.reduce((s, p) => {
           const opts = p.selectedOptions || {};
           const cost = (opts.netCostOverride != null && opts.netCostOverride !== '')
@@ -3758,7 +3753,7 @@ const generateBulkExport = async (req, res) => {
             : parseFloat(opts.msrp || 0);
           return s + cost * (p.quantity || 1);
         }, 0);
-        return {
+        tempPOs.push({
           _id: null,
           orderId: order._id,
           vendorId: vid,
@@ -3774,10 +3769,16 @@ const generateBulkExport = async (req, res) => {
           repName: vd?.loginCredentials?.vendorRepName || vd?.representativeName || '',
           vendorInfo: { name: vd?.name || 'Unknown Vendor' },
           products: vProds,
-        };
-      });
+        });
+      }
 
-      posByOrder.set(order._id.toString(), tempPOs);
+      // Merge saved POVersions + temp entries for vendors without a saved PO
+      const combinedPOs = [
+        ...Array.from(latestByVendor.values()),
+        ...tempPOs,
+      ].sort((a, b) => (a.vendorInfo?.name || '').localeCompare(b.vendorInfo?.name || ''));
+
+      posByOrder.set(order._id.toString(), combinedPOs);
     }));
 
     const wb = new ExcelJS.Workbook();
