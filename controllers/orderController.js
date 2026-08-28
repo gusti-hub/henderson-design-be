@@ -4303,12 +4303,13 @@ const generateBulkPO = async (req, res) => {
       const pos = posByOrder.get(order._id.toString()) || [];
       const unit = order.clientInfo?.unitNumber || order._id.toString().slice(-6);
       const client = order.clientInfo?.name || '—';
+      const ordId = order._id.toString();
       if (pos.length > 0) {
         const po = pos[0];
-        debugRows.push(`<tr style="background:#f0fff4"><td>${unit}</td><td>${client}</td><td style="color:green">✅ ${po.version ? `Saved PO v${po.version}` : 'Temp PO (no saved version)'}</td><td>${po.products?.length || 0} products</td></tr>`);
+        debugRows.push(`<tr style="background:#f0fff4"><td>${unit}</td><td>${client}</td><td style="color:green">✅ ${po.version ? `Saved PO v${po.version}` : 'Temp PO (built from products)'}</td><td>${po.products?.length || 0} products</td><td style="font-size:10px;color:#666">${ordId}</td></tr>`);
         pos.forEach(po => poPages.push(buildPoPage(po, order)));
       } else {
-        debugRows.push(`<tr style="background:#fff5f5"><td>${unit}</td><td>${client}</td><td style="color:red">❌ Skipped — no products for this vendor</td><td>0</td></tr>`);
+        debugRows.push(`<tr style="background:#fff5f5"><td>${unit}</td><td>${client}</td><td style="color:red">❌ Skipped — no POVersion & no products for this vendor in selectedProducts</td><td>0</td><td style="font-size:10px;color:#666">${ordId}</td></tr>`);
       }
     });
 
@@ -4327,10 +4328,15 @@ const generateBulkPO = async (req, res) => {
     @media print {
       body { background: white; }
       .no-print { display: none !important; }
+      .debug-block { display: none !important; }
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     }
     .no-print { position: fixed; top: 0; left: 0; right: 0; z-index: 999; background: #005670; color: white; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; font-family: Arial, sans-serif; }
     .print-btn { padding: 8px 18px; background: white; color: #005670; border: none; border-radius: 6px; font-weight: 700; font-size: 13px; cursor: pointer; }
+    .debug-block { background: #fff; border: 2px solid #005670; border-radius: 8px; padding: 16px; margin: 0 auto 20px; max-width: 8.5in; font-family: Arial, sans-serif; font-size: 12px; }
+    .debug-block table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    .debug-block th { background: #005670; color: white; padding: 6px 8px; text-align: left; font-size: 11px; }
+    .debug-block td { padding: 5px 8px; border-bottom: 1px solid #eee; }
     .pages-wrap { padding: 60px 0 20px; }
     .po-page { background: white; width: 8.5in; min-height: 11in; padding: 0.5in; margin: 0 auto 20px; box-shadow: 0 0 10px rgba(0,0,0,0.15); page-break-after: always; }
     .po-page:last-child { page-break-after: avoid; }
@@ -4372,14 +4378,14 @@ const generateBulkPO = async (req, res) => {
       <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
     </div>
   </div>
-  <div style="padding:70px 20px 10px;font-family:Arial;font-size:12px" class="no-print">
-    <b>Debug — Order Coverage (${totalPOs} of ${orders.length} orders have POs for selected vendor):</b>
-    <table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse;margin-top:6px;width:100%">
-      <tr style="background:#eee"><th>Unit</th><th>Client</th><th>Status</th><th>Products</th></tr>
-      ${debugRows.join('')}
-    </table>
-  </div>
   <div class="pages-wrap">
+    <div class="debug-block">
+      <b>Debug — Order Coverage: ${totalPOs} of ${orders.length} orders have POs for selected vendor (vendorId: ${vendorId})</b>
+      <table>
+        <thead><tr><th>Unit</th><th>Client</th><th>Status</th><th>Products</th><th>Order ID</th></tr></thead>
+        <tbody>${debugRows.join('')}</tbody>
+      </table>
+    </div>
     ${poPages.join('\n')}
   </div>
 </body>
