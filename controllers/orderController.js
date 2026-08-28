@@ -4043,6 +4043,7 @@ const generateBulkPO = async (req, res) => {
   try {
     const mongoose = require('mongoose');
     const { orderIds, vendorId } = req.body;
+    console.log(`🚀 [BulkPO] called — ${orderIds?.length || 0} orders, vendorId: ${vendorId}`);
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ message: 'No order IDs provided' });
     }
