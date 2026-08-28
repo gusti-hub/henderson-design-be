@@ -3735,11 +3735,9 @@ const generateBulkExport = async (req, res) => {
 
       const vendorProductsMap = new Map();
       for (const p of (fullOrder.selectedProducts || [])) {
-        if (!p.vendor) continue;
-        const vid = p.vendor?._id?.toString() || p.vendor?.toString();
-        if (!vid) continue;
+        const vid = p.vendor?._id?.toString() || p.vendor?.toString() || 'no-vendor';
         if (!vendorProductsMap.has(vid)) {
-          const vendorDoc = p.vendor?._id ? p.vendor : await Vendor.findById(vid).lean();
+          const vendorDoc = (p.vendor?._id || p.vendor) ? (p.vendor?._id ? p.vendor : await Vendor.findById(p.vendor?.toString()).lean().catch(() => null)) : null;
           vendorProductsMap.set(vid, { vendor: vendorDoc, products: [] });
         }
         vendorProductsMap.get(vid).products.push(p);
@@ -3756,7 +3754,7 @@ const generateBulkExport = async (req, res) => {
         return {
           _id: null,
           orderId: oid,
-          vendorId: vid,
+          vendorId: vid === 'no-vendor' ? null : vid,
           version: null,
           poNumber: '',
           orderDate: null,
@@ -3767,7 +3765,7 @@ const generateBulkExport = async (req, res) => {
           total: subTotal,
           accountNumber: vd?.accountNumber || '',
           repName: vd?.loginCredentials?.vendorRepName || vd?.representativeName || '',
-          vendorInfo: { name: vd?.name || 'Unknown Vendor' },
+          vendorInfo: { name: vd?.name || 'No Vendor Assigned' },
           products: vProds,
         };
       });
