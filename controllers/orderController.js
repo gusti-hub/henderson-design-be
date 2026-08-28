@@ -4298,11 +4298,18 @@ const generateBulkPO = async (req, res) => {
     };
 
     const poPages = [];
+    const debugRows = [];
     orders.forEach(order => {
       const pos = posByOrder.get(order._id.toString()) || [];
-      pos.forEach(po => {
-        poPages.push(buildPoPage(po, order));
-      });
+      const unit = order.clientInfo?.unitNumber || order._id.toString().slice(-6);
+      const client = order.clientInfo?.name || '—';
+      if (pos.length > 0) {
+        const po = pos[0];
+        debugRows.push(`<tr style="background:#f0fff4"><td>${unit}</td><td>${client}</td><td style="color:green">✅ ${po.version ? `Saved PO v${po.version}` : 'Temp PO (no saved version)'}</td><td>${po.products?.length || 0} products</td></tr>`);
+        pos.forEach(po => poPages.push(buildPoPage(po, order)));
+      } else {
+        debugRows.push(`<tr style="background:#fff5f5"><td>${unit}</td><td>${client}</td><td style="color:red">❌ Skipped — no products for this vendor</td><td>0</td></tr>`);
+      }
     });
 
     const totalPOs = poPages.length;
@@ -4364,6 +4371,13 @@ const generateBulkPO = async (req, res) => {
       <span style="font-size:11px;opacity:0.8">Margins: None · Background Graphics: On · Orientation: Portrait</span>
       <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
     </div>
+  </div>
+  <div style="padding:70px 20px 10px;font-family:Arial;font-size:12px" class="no-print">
+    <b>Debug — Order Coverage (${totalPOs} of ${orders.length} orders have POs for selected vendor):</b>
+    <table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse;margin-top:6px;width:100%">
+      <tr style="background:#eee"><th>Unit</th><th>Client</th><th>Status</th><th>Products</th></tr>
+      ${debugRows.join('')}
+    </table>
   </div>
   <div class="pages-wrap">
     ${poPages.join('\n')}
