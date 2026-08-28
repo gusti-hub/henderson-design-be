@@ -3714,15 +3714,20 @@ const generateBulkExport = async (req, res) => {
     const Vendor = require('../models/Vendor');
 
     await Promise.all(orders.map(async (order) => {
-      const oid = mongoose.Types.ObjectId.isValid(order._id) ? new mongoose.Types.ObjectId(order._id) : order._id;
+      // Use find() instead of aggregate() so Mongoose schema-casts orderId correctly
+      const allPOs = await POVersion.find({
+        orderId: order._id,
+        status: { $ne: 'cancelled' },
+      }).sort({ version: -1 }).lean();
 
-      const latestPOs = await POVersion.aggregate([
-        { $match: { orderId: oid, status: { $ne: 'cancelled' } } },
-        { $sort: { version: -1 } },
-        { $group: { _id: '$vendorId', doc: { $first: '$$ROOT' } } },
-        { $replaceRoot: { newRoot: '$doc' } },
-        { $sort: { 'vendorInfo.name': 1 } },
-      ]);
+      // Keep only the latest version per vendor
+      const latestByVendor = new Map();
+      for (const po of allPOs) {
+        const vid = po.vendorId?.toString();
+        if (vid && !latestByVendor.has(vid)) latestByVendor.set(vid, po);
+      }
+      const latestPOs = Array.from(latestByVendor.values())
+        .sort((a, b) => (a.vendorInfo?.name || '').localeCompare(b.vendorInfo?.name || ''));
 
       if (latestPOs.length > 0) {
         posByOrder.set(order._id.toString(), latestPOs);
