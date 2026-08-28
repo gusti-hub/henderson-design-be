@@ -3714,9 +3714,9 @@ const generateBulkExport = async (req, res) => {
     const Vendor = require('../models/Vendor');
 
     await Promise.all(orders.map(async (order) => {
-      // Use find() instead of aggregate() so Mongoose schema-casts orderId correctly
+      // Pass orderId as string so Mongoose schema-casts it (same as getOrderVendors)
       const allPOs = await POVersion.find({
-        orderId: order._id,
+        orderId: order._id.toString(),
         status: { $ne: 'cancelled' },
       }).sort({ version: -1 }).lean();
 
@@ -3735,7 +3735,7 @@ const generateBulkExport = async (req, res) => {
       }
 
       // No saved POVersions — build temp entries from selectedProducts grouped by vendor
-      const fullOrder = await Order.findById(oid).populate('selectedProducts.vendor').lean();
+      const fullOrder = await Order.findById(order._id).populate('selectedProducts.vendor').lean();
       if (!fullOrder) return;
 
       const vendorProductsMap = new Map();
@@ -3760,7 +3760,7 @@ const generateBulkExport = async (req, res) => {
         }, 0);
         return {
           _id: null,
-          orderId: oid,
+          orderId: order._id,
           vendorId: vid,
           version: null,
           poNumber: '',
@@ -3907,14 +3907,8 @@ const generateBulkExport = async (req, res) => {
         detailWs.getRow(detailRow).height = 18;
         detailRow++;
 
-        // For temp POs (no saved version), products are already on po.products.
-        // For saved POVersions, use live order products filtered by vendor.
-        const liveProducts = (po.version == null)
-          ? (po.products || [])
-          : (order.selectedProducts || []).filter(p => {
-              const pVid = p.vendor?._id?.toString() || p.vendor?.toString();
-              return pVid === po.vendorId?.toString();
-            });
+        // Use products stored in the POVersion directly (both saved and temp POs).
+        const liveProducts = po.products || [];
 
         let poTotal = 0;
         for (const p of liveProducts) {
