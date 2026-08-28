@@ -95,6 +95,7 @@ app.use('/api/qc',       qcRoutes);
 app.use('/api/logistic', logisticRoutes);
 app.use('/api/financial-review', require('./routes/financialReviewRoutes'));
 app.use('/api/roles', require('./routes/roleRoutes'));
+app.use('/api/image-library', require('./routes/imageLibraryRoutes'));
 
 // Enhanced error handling
 app.use((err, req, res, next) => {
