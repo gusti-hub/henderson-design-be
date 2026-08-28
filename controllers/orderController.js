@@ -4082,19 +4082,22 @@ const generateBulkPO = async (req, res) => {
         .lean();
 
       if (latestPo) {
+        console.log(`✅ [BulkPO] order ${oid} → found saved PO v${latestPo.version}`);
         posByOrder.set(order._id.toString(), [latestPo]);
         return;
       }
 
       // No saved PO — build a temporary one from order products
+      console.log(`⚠️ [BulkPO] order ${oid} → no saved PO, checking products...`);
       const fullOrder = await Order.findById(oid)
         .populate('selectedProducts.vendor')
         .lean();
-      if (!fullOrder) return;
+      if (!fullOrder) { console.log(`❌ [BulkPO] order ${oid} not found`); return; }
 
       const vendorProducts = (fullOrder.selectedProducts || []).filter(
         p => p.vendor?._id?.toString() === vendorId || p.vendor?.toString() === vendorId
       );
+      console.log(`🔍 [BulkPO] order ${oid} → ${fullOrder.selectedProducts?.length || 0} total products, ${vendorProducts.length} for vendor ${vendorId}`);
       if (vendorProducts.length === 0) return;
 
       const products = vendorProducts.map(p => {
