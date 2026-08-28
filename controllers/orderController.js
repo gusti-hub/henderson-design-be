@@ -3783,6 +3783,26 @@ const generateBulkExport = async (req, res) => {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Henderson Design Group';
 
+    // ── Debug Sheet ───────────────────────────────────────────────────────────
+    const dbgWs = wb.addWorksheet('DEBUG');
+    dbgWs.getColumn(1).width = 28; dbgWs.getColumn(2).width = 14; dbgWs.getColumn(3).width = 14;
+    dbgWs.getColumn(4).width = 12; dbgWs.getColumn(5).width = 32;
+    dbgWs.getRow(1).values = ['Order _id', 'Client', 'Unit', 'POVersions found', 'Vendors in PO'];
+    dbgWs.getRow(1).font = { bold: true };
+    let dbgRow = 2;
+    for (const order of orders) {
+      const pos = posByOrder.get(order._id.toString()) || [];
+      dbgWs.getRow(dbgRow).values = [
+        order._id.toString(),
+        order.clientInfo?.name || '',
+        order.clientInfo?.unitNumber || '',
+        pos.length,
+        pos.map(p => p.vendorInfo?.name || p.vendorId || '?').join(', '),
+      ];
+      dbgRow++;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const thinBorder = {
       top: { style: 'thin' }, left: { style: 'thin' },
       bottom: { style: 'thin' }, right: { style: 'thin' },
