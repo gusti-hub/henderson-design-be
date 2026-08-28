@@ -3693,17 +3693,58 @@ const generateAllProductsReport = async (req, res) => {
   }
 };
 
+// ─── Bulk Export — vendor list (for vendor picker modal) ────────────────────
+const getBulkExportVendors = async (req, res) => {
+  try {
+    const { orderIds } = req.body;
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ message: 'No order IDs provided' });
+    }
+    const selectedOrders = await Order.find({ _id: { $in: orderIds } }).lean();
+    const userIds = [...new Set(selectedOrders.map(o => o.user?.toString()).filter(Boolean))];
+    const allOrders = await Order.find({ user: { $in: userIds } }).lean();
+
+    const vendorMap = new Map();
+    for (const order of allOrders) {
+      const pos = await POVersion.find({ orderId: order._id.toString(), status: { $ne: 'cancelled' } }).lean();
+      for (const po of pos) {
+        const vid = po.vendorId?.toString();
+        if (vid && !vendorMap.has(vid)) vendorMap.set(vid, { vendorId: vid, vendorName: po.vendorInfo?.name || 'Unknown' });
+      }
+      const fullOrder = await Order.findById(order._id).populate('selectedProducts.vendor', 'name').lean();
+      for (const p of (fullOrder?.selectedProducts || [])) {
+        if (!p.vendor) continue;
+        const vid = p.vendor?._id?.toString() || p.vendor?.toString();
+        const vname = p.vendor?.name;
+        if (vid && vname && !vendorMap.has(vid)) vendorMap.set(vid, { vendorId: vid, vendorName: vname });
+      }
+    }
+    const vendors = Array.from(vendorMap.values()).sort((a, b) => a.vendorName.localeCompare(b.vendorName));
+    res.json({ vendors });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // ─── Bulk PO Export — Excel (2 sheets: Summary + Detail) ────────────────────
 const generateBulkExport = async (req, res) => {
   try {
     const ExcelJS = require('exceljs');
     const mongoose = require('mongoose');
-    const { orderIds } = req.body;
+    const { orderIds, vendorIds: vendorFilter } = req.body;
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ message: 'No order IDs provided' });
     }
+    const vendorIdSet = Array.isArray(vendorFilter) && vendorFilter.length > 0
+      ? new Set(vendorFilter)
+      : null;
 
-    const orders = await Order.find({ _id: { $in: orderIds } }).lean();
+    // Admin list groups by client and shows only the latest order per client.
+    // Expand: for each selected order, include ALL orders for the same user so
+    // that older orders' POs are captured in the export.
+    const selectedOrders = await Order.find({ _id: { $in: orderIds } }).lean();
+    const userIds = [...new Set(selectedOrders.map(o => o.user?.toString()).filter(Boolean))];
+    const orders = await Order.find({ user: { $in: userIds } }).lean();
     orders.sort((a, b) =>
       (a.clientInfo?.unitNumber || '').localeCompare(b.clientInfo?.unitNumber || '', undefined, { numeric: true })
     );
@@ -3784,25 +3825,6 @@ const generateBulkExport = async (req, res) => {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Henderson Design Group';
 
-    // ── Debug Sheet ───────────────────────────────────────────────────────────
-    const dbgWs = wb.addWorksheet('DEBUG');
-    dbgWs.getColumn(1).width = 28; dbgWs.getColumn(2).width = 14; dbgWs.getColumn(3).width = 14;
-    dbgWs.getColumn(4).width = 12; dbgWs.getColumn(5).width = 32;
-    dbgWs.getRow(1).values = ['Order _id', 'Client', 'Unit', 'POVersions found', 'Vendors in PO'];
-    dbgWs.getRow(1).font = { bold: true };
-    let dbgRow = 2;
-    for (const order of orders) {
-      const pos = posByOrder.get(order._id.toString()) || [];
-      dbgWs.getRow(dbgRow).values = [
-        order._id.toString(),
-        order.clientInfo?.name || '',
-        order.clientInfo?.unitNumber || '',
-        pos.length,
-        pos.map(p => p.vendorInfo?.name || p.vendorId || '?').join(', '),
-      ];
-      dbgRow++;
-    }
-    // ─────────────────────────────────────────────────────────────────────────
 
     const thinBorder = {
       top: { style: 'thin' }, left: { style: 'thin' },
@@ -3848,14 +3870,14 @@ const generateBulkExport = async (req, res) => {
 
     // ── Sheet 2: Detail ───────────────────────────────────────────────────────
     const DCOLS = [
-      'Client', 'Unit', 'Vendor', 'PO #', 'Order Date', 'Account #', 'Rep Name',
+      'Client', 'Unit', 'Vendor', 'PO #', 'PO Status', 'Order Date', 'Account #', 'Rep Name',
       'Product Name', 'SKU', 'Qty',
       'Vendor Description', 'Specs / Description', 'Color / Finish', 'Fabric', 'Materials',
       'Dimensions', 'Lead Time', 'Sidemark',
       'Image',
       'Unit Cost', 'Total Cost',
     ];
-    const DWIDTHS = [20, 8, 22, 14, 13, 14, 18, 28, 14, 6, 32, 30, 16, 16, 18, 14, 12, 20, 22, 13, 13];
+    const DWIDTHS = [20, 8, 22, 14, 10, 13, 14, 18, 28, 14, 6, 32, 30, 16, 16, 18, 14, 12, 20, 22, 13, 13];
 
     const detailWs = wb.addWorksheet('Detail');
     DWIDTHS.forEach((w, i) => { detailWs.getColumn(i + 1).width = w; });
@@ -3891,14 +3913,17 @@ const generateBulkExport = async (req, res) => {
     };
 
     // ── Populate both sheets ──────────────────────────────────────────────────
-    const IMG_COL_IDX = 18; // 0-based index of 'Image' column
+    const IMG_COL_IDX = 19; // 0-based index of 'Image' column (PO Status added at pos 4)
     const IMG_PX = 75;      // image size in pixels
     const IMG_ROW_H = 58;   // row height in Excel points (~75px)
 
     for (const order of orders) {
       const clientName = order.clientInfo?.name || 'Unknown';
       const unitNumber = order.clientInfo?.unitNumber || '';
-      const pos = posByOrder.get(order._id.toString()) || [];
+      const allPos = posByOrder.get(order._id.toString()) || [];
+      const pos = vendorIdSet
+        ? allPos.filter(po => vendorIdSet.has(po.vendorId?.toString()))
+        : allPos;
       let orderTotal = 0;
 
       // Client separator row in Detail sheet
@@ -3944,7 +3969,7 @@ const generateBulkExport = async (req, res) => {
 
           const imageUrl = opts.uploadedImages?.[0]?.url || opts.images?.[0] || opts.image || '';
           const rowData = [
-            clientName, unitNumber, vendorName, poNumber, orderDate,
+            clientName, unitNumber, vendorName, poNumber, poStatus.toUpperCase(), orderDate,
             po.accountNumber || '', po.repName || '',
             p.name || '', p.product_id || '', qty,
             stripHtml(opts.vendorDescription || ''),
@@ -4103,12 +4128,14 @@ const getAvailablePOVendors = async (req, res) => {
 const generateBulkPO = async (req, res) => {
   try {
     const mongoose = require('mongoose');
-    const { orderIds, vendorId } = req.body;
-    console.log(`🚀 [BulkPO] called — ${orderIds?.length || 0} orders, vendorId: ${vendorId}`);
+    const { orderIds, vendorId, vendorIds: vendorIdsArr } = req.body;
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ message: 'No order IDs provided' });
     }
-    if (!vendorId) {
+    const targetVendorIds = Array.isArray(vendorIdsArr) && vendorIdsArr.length > 0
+      ? vendorIdsArr
+      : (vendorId ? [vendorId] : []);
+    if (targetVendorIds.length === 0) {
       return res.status(400).json({ message: 'No vendor selected' });
     }
 
@@ -4128,109 +4155,83 @@ const generateBulkPO = async (req, res) => {
       return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
-    // Fetch latest PO version per order for the selected vendor.
-    // If no saved PO exists, build a temporary one from the order's products.
-    const vendorOid = new mongoose.Types.ObjectId(vendorId);
+    // Fetch POs for each selected vendor across all orders.
     const Vendor = require('../models/Vendor');
-    const vendorDoc = await Vendor.findById(vendorId).lean();
+    // key: `${orderId}___${vendorId}` → PO object
+    const posByKey = new Map();
 
-    const posByOrder = new Map();
-    await Promise.all(orders.map(async (order) => {
-      const oid = mongoose.Types.ObjectId.isValid(order._id) ? new mongoose.Types.ObjectId(order._id) : order._id;
+    for (const vid of targetVendorIds) {
+      if (!mongoose.Types.ObjectId.isValid(vid)) continue;
+      const vendorOid = new mongoose.Types.ObjectId(vid);
+      const vendorDoc = await Vendor.findById(vid).lean();
 
-      // Try latest saved PO version first
-      const latestPo = await POVersion.findOne({ orderId: oid, vendorId: vendorOid })
-        .sort({ version: -1 })
-        .lean();
+      await Promise.all(orders.map(async (order) => {
+        const oid = mongoose.Types.ObjectId.isValid(order._id) ? new mongoose.Types.ObjectId(order._id) : order._id;
+        const key = `${order._id}___${vid}`;
 
-      if (latestPo) {
-        console.log(`✅ [BulkPO] order ${oid} → found saved PO v${latestPo.version}`);
-        posByOrder.set(order._id.toString(), [latestPo]);
-        return;
-      }
+        const latestPo = await POVersion.findOne({ orderId: oid, vendorId: vendorOid })
+          .sort({ version: -1 }).lean();
 
-      // No saved PO — build a temporary one from order products
-      console.log(`⚠️ [BulkPO] order ${oid} → no saved PO, checking products...`);
-      const fullOrder = await Order.findById(oid)
-        .populate('selectedProducts.vendor')
-        .lean();
-      if (!fullOrder) { console.log(`❌ [BulkPO] order ${oid} not found`); return; }
+        if (latestPo) { posByKey.set(key, latestPo); return; }
 
-      const vendorProducts = (fullOrder.selectedProducts || []).filter(
-        p => p.vendor?._id?.toString() === vendorId || p.vendor?.toString() === vendorId
-      );
-      console.log(`🔍 [BulkPO] order ${oid} → ${fullOrder.selectedProducts?.length || 0} total products, ${vendorProducts.length} for vendor ${vendorId}`);
-      if (vendorProducts.length === 0) return;
+        const fullOrder = await Order.findById(oid).populate('selectedProducts.vendor').lean();
+        if (!fullOrder) return;
 
-      const products = vendorProducts.map(p => {
-        const opts = p.selectedOptions || {};
-        const qty = p.quantity || 1;
-        const unitCost = parseFloat(opts.netCost || opts.unitCost || 0);
-        return {
-          product_id: p.product_id || '',
-          name: p.name || '',
-          category: p.category || '',
-          spotName: p.spotName || '',
-          quantity: qty,
-          unitPrice: unitCost,
-          totalPrice: unitCost * qty,
-          description: p.description || '',
-          selectedOptions: {
-            finish: opts.finish || '',
-            fabric: opts.fabric || '',
-            size: opts.size || '',
-            specifications: opts.specifications || '',
-            image: opts.image || '',
-            images: opts.images || [],
-            uploadedImages: opts.uploadedImages || [],
-            sidemark: opts.sidemark || opts.spotName || p.spotName || '',
-            leadTime: opts.leadTime || '',
-            notes: opts.notes || '',
-          }
-        };
-      });
+        const vendorProducts = (fullOrder.selectedProducts || []).filter(
+          p => p.vendor?._id?.toString() === vid || p.vendor?.toString() === vid
+        );
+        if (vendorProducts.length === 0) return;
 
-      const subTotal = products.reduce((s, p) => s + p.totalPrice, 0);
-      const vi = vendorDoc ? {
-        name: vendorDoc.name || '',
-        vendorCode: vendorDoc.vendorCode || '',
-        representativeName: vendorDoc.loginCredentials?.vendorRepName || vendorDoc.representativeName || '',
-        website: vendorDoc.website || '',
-        address: {
-          street: vendorDoc.address?.street || '',
-          city: vendorDoc.address?.city || '',
-          state: vendorDoc.address?.state || '',
-          zip: vendorDoc.address?.zip || '',
-          country: vendorDoc.address?.country || '',
-        },
-        contactInfo: {
-          phone: vendorDoc.contactInfo?.phone || '',
-          email: vendorDoc.contactInfo?.email || '',
-          fax: vendorDoc.contactInfo?.fax || '',
-        },
-        accountNumber: vendorDoc.accountNumber || '',
-      } : {};
+        const products = vendorProducts.map(p => {
+          const opts = p.selectedOptions || {};
+          const qty = p.quantity || 1;
+          const unitCost = parseFloat(opts.netCostOverride != null && opts.netCostOverride !== '' ? opts.netCostOverride : opts.msrp || 0);
+          return {
+            product_id: p.product_id || '',
+            name: p.name || '',
+            category: p.category || '',
+            spotName: p.spotName || '',
+            quantity: qty,
+            unitPrice: unitCost,
+            totalPrice: unitCost * qty,
+            description: p.description || '',
+            selectedOptions: {
+              finish: opts.finish || '',
+              fabric: opts.fabric || '',
+              size: opts.size || '',
+              specifications: opts.specifications || '',
+              image: opts.image || '',
+              images: opts.images || [],
+              uploadedImages: opts.uploadedImages || [],
+              sidemark: opts.sidemark || opts.spotName || p.spotName || '',
+              leadTime: opts.leadTime || '',
+              notes: opts.notes || '',
+              units: opts.units || 'Each',
+            }
+          };
+        });
 
-      const tempPo = {
-        _id: null,
-        orderId: oid,
-        vendorId: vendorOid,
-        version: null,
-        poNumber: '',
-        orderDate: null,
-        shipTo: { name: '', address: '', city: '', attention: '', phone: '' },
-        clientInfo: fullOrder.clientInfo || {},
-        vendorInfo: vi,
-        products,
-        additionalLines: [],
-        subTotal,
-        shipping: 0,
-        others: 0,
-        total: subTotal,
-        status: 'draft',
-      };
-      posByOrder.set(order._id.toString(), [tempPo]);
-    }));
+        const subTotal = products.reduce((s, p) => s + p.totalPrice, 0);
+        const vi = vendorDoc ? {
+          name: vendorDoc.name || '',
+          vendorCode: vendorDoc.vendorCode || '',
+          representativeName: vendorDoc.loginCredentials?.vendorRepName || vendorDoc.representativeName || '',
+          website: vendorDoc.website || '',
+          address: vendorDoc.address || {},
+          contactInfo: vendorDoc.contactInfo || {},
+          accountNumber: vendorDoc.accountNumber || '',
+        } : { name: 'Unknown Vendor' };
+
+        posByKey.set(key, {
+          _id: null, orderId: oid, vendorId: vendorOid, version: null,
+          poNumber: '', orderDate: null,
+          shipTo: { name: '', address: '', city: '', attention: '', phone: '' },
+          clientInfo: fullOrder.clientInfo || {},
+          vendorInfo: vi, products, additionalLines: [],
+          subTotal, shipping: 0, others: 0, total: subTotal, status: 'draft',
+        });
+      }));
+    }
 
     const printedDate = new Date().toLocaleDateString('en-US');
 
@@ -4359,20 +4360,12 @@ const generateBulkPO = async (req, res) => {
     };
 
     const poPages = [];
-    const debugRows = [];
-    orders.forEach(order => {
-      const pos = posByOrder.get(order._id.toString()) || [];
-      const unit = order.clientInfo?.unitNumber || order._id.toString().slice(-6);
-      const client = order.clientInfo?.name || '—';
-      const ordId = order._id.toString();
-      if (pos.length > 0) {
-        const po = pos[0];
-        debugRows.push(`<tr style="background:#f0fff4"><td>${unit}</td><td>${client}</td><td style="color:green">✅ ${po.version ? `Saved PO v${po.version}` : 'Temp PO (built from products)'}</td><td>${po.products?.length || 0} products</td><td style="font-size:10px;color:#666">${ordId}</td></tr>`);
-        pos.forEach(po => poPages.push(buildPoPage(po, order)));
-      } else {
-        debugRows.push(`<tr style="background:#fff5f5"><td>${unit}</td><td>${client}</td><td style="color:red">❌ Skipped — no POVersion & no products for this vendor in selectedProducts</td><td>0</td><td style="font-size:10px;color:#666">${ordId}</td></tr>`);
+    for (const vid of targetVendorIds) {
+      for (const order of orders) {
+        const po = posByKey.get(`${order._id}___${vid}`);
+        if (po) poPages.push(buildPoPage(po, order));
       }
-    });
+    }
 
     const totalPOs = poPages.length;
     const origin = req.headers.origin || req.headers.referer?.replace(/\/$/, '') || '';
@@ -4433,20 +4426,13 @@ const generateBulkPO = async (req, res) => {
 </head>
 <body>
   <div class="no-print">
-    <span style="font-size:14px;font-weight:bold">Combined Purchase Orders — ${totalPOs} PO${totalPOs !== 1 ? 's' : ''} (${orders.length} unit${orders.length !== 1 ? 's' : ''})</span>
+    <span style="font-size:14px;font-weight:bold">Combined Purchase Orders — ${poPages.length} PO${poPages.length !== 1 ? 's' : ''} (${orders.length} unit${orders.length !== 1 ? 's' : ''})</span>
     <div style="display:flex;align-items:center;gap:16px">
       <span style="font-size:11px;opacity:0.8">Margins: None · Background Graphics: On · Orientation: Portrait</span>
       <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
     </div>
   </div>
   <div class="pages-wrap">
-    <div class="debug-block">
-      <b>Debug — Order Coverage: ${totalPOs} of ${orders.length} orders have POs for selected vendor (vendorId: ${vendorId})</b>
-      <table>
-        <thead><tr><th>Unit</th><th>Client</th><th>Status</th><th>Products</th><th>Order ID</th></tr></thead>
-        <tbody>${debugRows.join('')}</tbody>
-      </table>
-    </div>
     ${poPages.join('\n')}
   </div>
 </body>
@@ -4560,6 +4546,7 @@ module.exports = {
   getLinkedDocuments,
   saveCurrentVersion,
   generateAllProductsReport,
+  getBulkExportVendors,
   generateBulkExport,
   generateBulkPO,
   getAvailablePOVendors,

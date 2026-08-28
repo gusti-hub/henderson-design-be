@@ -25,6 +25,7 @@ const {
   getLatestConfirmedPOs,
   getLinkedDocuments,
   generateAllProductsReport,
+  getBulkExportVendors,
   generateBulkExport,
   generateBulkPO,
   getAvailablePOVendors,
@@ -59,6 +60,7 @@ router.use(protect);
 // ===================================
 
 router.get('/all-products-report', generateAllProductsReport);
+router.post('/bulk-export-vendors', getBulkExportVendors);
 router.post('/bulk-export', generateBulkExport);
 router.post('/bulk-po', generateBulkPO);
 router.post('/bulk-po-vendors', getAvailablePOVendors);
