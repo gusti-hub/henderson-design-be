@@ -4004,14 +4004,32 @@ const getAvailablePOVendors = async (req, res) => {
       return res.status(400).json({ message: 'No order IDs provided' });
     }
     const oids = orderIds.map(id => new mongoose.Types.ObjectId(id));
-    const allPOs = await POVersion.find({ orderId: { $in: oids } }).sort({ version: -1 }).lean();
     const vendorMap = new Map();
+
+    // 1. Vendors from saved PO versions
+    const allPOs = await POVersion.find({ orderId: { $in: oids } }).sort({ version: -1 }).lean();
     allPOs.forEach(po => {
       const vid = po.vendorId?.toString();
       if (vid && !vendorMap.has(vid)) {
         vendorMap.set(vid, { vendorId: vid, vendorName: po.vendorInfo?.name || 'Unknown Vendor' });
       }
     });
+
+    // 2. Vendors from order products (for orders that have no PO yet)
+    const orders = await Order.find({ _id: { $in: oids } })
+      .populate('selectedProducts.vendor', 'name')
+      .lean();
+    orders.forEach(order => {
+      (order.selectedProducts || []).forEach(p => {
+        const vendor = p.vendor;
+        if (!vendor) return;
+        const vid = (vendor._id || vendor).toString();
+        if (vid && !vendorMap.has(vid)) {
+          vendorMap.set(vid, { vendorId: vid, vendorName: vendor.name || 'Unknown Vendor' });
+        }
+      });
+    });
+
     const vendors = Array.from(vendorMap.values()).sort((a, b) => a.vendorName.localeCompare(b.vendorName));
     res.json({ success: true, vendors });
   } catch (error) {
@@ -4048,13 +4066,105 @@ const generateBulkPO = async (req, res) => {
       return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
-    // Fetch ALL PO versions for the selected vendor per order (sorted oldest→newest)
+    // Fetch latest PO version per order for the selected vendor.
+    // If no saved PO exists, build a temporary one from the order's products.
     const vendorOid = new mongoose.Types.ObjectId(vendorId);
+    const Vendor = require('../models/Vendor');
+    const vendorDoc = await Vendor.findById(vendorId).lean();
+
     const posByOrder = new Map();
     await Promise.all(orders.map(async (order) => {
       const oid = mongoose.Types.ObjectId.isValid(order._id) ? new mongoose.Types.ObjectId(order._id) : order._id;
-      const pos = await POVersion.find({ orderId: oid, vendorId: vendorOid }).sort({ version: 1 }).lean();
-      posByOrder.set(order._id.toString(), pos);
+
+      // Try latest saved PO version first
+      const latestPo = await POVersion.findOne({ orderId: oid, vendorId: vendorOid })
+        .sort({ version: -1 })
+        .lean();
+
+      if (latestPo) {
+        posByOrder.set(order._id.toString(), [latestPo]);
+        return;
+      }
+
+      // No saved PO — build a temporary one from order products
+      const fullOrder = await Order.findById(oid)
+        .populate('selectedProducts.vendor')
+        .lean();
+      if (!fullOrder) return;
+
+      const vendorProducts = (fullOrder.selectedProducts || []).filter(
+        p => p.vendor?._id?.toString() === vendorId || p.vendor?.toString() === vendorId
+      );
+      if (vendorProducts.length === 0) return;
+
+      const products = vendorProducts.map(p => {
+        const opts = p.selectedOptions || {};
+        const qty = p.quantity || 1;
+        const unitCost = parseFloat(opts.netCost || opts.unitCost || 0);
+        return {
+          product_id: p.product_id || '',
+          name: p.name || '',
+          category: p.category || '',
+          spotName: p.spotName || '',
+          quantity: qty,
+          unitPrice: unitCost,
+          totalPrice: unitCost * qty,
+          description: p.description || '',
+          selectedOptions: {
+            finish: opts.finish || '',
+            fabric: opts.fabric || '',
+            size: opts.size || '',
+            specifications: opts.specifications || '',
+            image: opts.image || '',
+            images: opts.images || [],
+            uploadedImages: opts.uploadedImages || [],
+            sidemark: opts.sidemark || opts.spotName || p.spotName || '',
+            leadTime: opts.leadTime || '',
+            notes: opts.notes || '',
+          }
+        };
+      });
+
+      const subTotal = products.reduce((s, p) => s + p.totalPrice, 0);
+      const vi = vendorDoc ? {
+        name: vendorDoc.name || '',
+        vendorCode: vendorDoc.vendorCode || '',
+        representativeName: vendorDoc.loginCredentials?.vendorRepName || vendorDoc.representativeName || '',
+        website: vendorDoc.website || '',
+        address: {
+          street: vendorDoc.address?.street || '',
+          city: vendorDoc.address?.city || '',
+          state: vendorDoc.address?.state || '',
+          zip: vendorDoc.address?.zip || '',
+          country: vendorDoc.address?.country || '',
+        },
+        contactInfo: {
+          phone: vendorDoc.contactInfo?.phone || '',
+          email: vendorDoc.contactInfo?.email || '',
+          fax: vendorDoc.contactInfo?.fax || '',
+        },
+        accountNumber: vendorDoc.accountNumber || '',
+      } : {};
+
+      const tempPo = {
+        _id: null,
+        orderId: oid,
+        vendorId: vendorOid,
+        version: null,
+        poNumber: '',
+        orderDate: null,
+        shipTo: { name: '', address: '', city: '', attention: '', phone: '' },
+        clientInfo: fullOrder.clientInfo || {},
+        vendorInfo: vi,
+        products,
+        additionalLines: [],
+        subTotal,
+        shipping: 0,
+        others: 0,
+        total: subTotal,
+        status: 'draft',
+      };
+      posByOrder.set(order._id.toString(), [tempPo]);
     }));
 
     const printedDate = new Date().toLocaleDateString('en-US');
