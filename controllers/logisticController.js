@@ -3,9 +3,8 @@
 // Data source: Order.selectedProducts[] joined with POVersion for PO-level info.
 // Scope: iteration 1 — investor orders only. Retail/Custom to follow in future iterations.
 
-const Order           = require('../models/Order');
-const POVersion       = require('../models/POVersion');
-const ProposalVersion = require('../models/ProposalVersion');
+const Order      = require('../models/Order');
+const POVersion  = require('../models/POVersion');
 
 // ─── Status Category options (TODO: replace with final list before production) ─
 // These are placeholder values — confirm full list with operations team.
@@ -24,6 +23,53 @@ const STATUS_CATEGORIES = [
 const computeShipped = (poQty, logPacking) => (logPacking === 5 ? poQty : 0);
 const computeBalance = (poQty, logPacking) => poQty - computeShipped(poQty, logPacking);
 
+// ─── Helper: build a row for a POVersion product that has no matching selectedProduct ──
+const buildRowFromPO = (order, poProd, po) => {
+  const poQty = poProd.quantity ?? 1;
+  return {
+    orderId:     order._id,
+    productId:   null,          // no selectedProduct — row is read-only
+    poVersionId: po._id,
+    poProductId: poProd._id,
+    _readOnly:   true,
+
+    poNumber:    po.poNumber || '',
+    poStatus:    po.status || '',
+    poDate:      po.orderDate || '',
+    skuNo:       poProd.product_id || '',
+    itemName:    poProd.name || '',
+    unitPrice:   poProd.unitPrice ?? 0,
+    totalPrice:  (poProd.unitPrice ?? 0) * poQty,
+    poQuantity:  poQty,
+    shippedQuantity: 0,
+    balanceQuantity: poQty,
+    vendor:      po.vendorInfo?.name || '',
+    description: poProd.description || '',
+
+    projectCode: order.projectCode || '',
+    unitNumber:  order.clientInfo?.unitNumber || '',
+    clientName:  order.clientInfo?.name || '',
+    orderNumber: order.orderNumber,
+
+    location:            '',
+    cargoReadyDate:      '',
+    shipmentDate:        '',
+    logDrawing:          0,
+    logMachining:        0,
+    logAssembly:         0,
+    logFinishing:        0,
+    logQcChecking:       0,
+    logPacking:          0,
+    packingList:         '',
+    containerNumber:     '',
+    statusCategory:      '',
+    expectedShipDate:    '',
+    expectedArrivalDate: '',
+    remark:              '',
+    dateInspected:       '',
+  };
+};
+
 // ─── Helper: map product from order + poVersion into a logistic row ──────────
 // orderProd (Order.selectedProducts entry) is always set — vendor-based matching guarantees it.
 // poProd is the matching entry in POVersion.products (best-effort, may be null).
@@ -38,16 +84,20 @@ const buildRow = (order, orderProd, poProd, po) => {
   const poQty   = poProd?.quantity ?? orderProd.quantity ?? 1;
   const packing = opts.logPacking ?? 0;
 
+  // Vendor name: prefer PO vendorInfo, fallback to product's populated vendor object
+  const vendorName = po?.vendorInfo?.name || orderProd.vendor?.name || '';
+
   return {
     // ── Identifiers ──
     orderId:     order._id,
     productId:   orderProd._id,   // always set — all rows are editable
-    poVersionId: po._id,
-    poProductId: poProd?._id,
+    poVersionId: po?._id || null,
+    poProductId: poProd?._id || null,
 
     // ── Read-only from CPM ──
-    poNumber:    po.poNumber || '',
-    poDate:      po.orderDate || '',
+    poNumber:    po?.poNumber || '',
+    poStatus:    po?.status || '',
+    poDate:      po?.orderDate || '',
     skuNo:       orderProd.product_id || poProd?.product_id || '',
     itemName:    orderProd.name || '',
     unitPrice:   poProd?.unitPrice ?? orderProd.unitPrice ?? 0,
@@ -55,7 +105,7 @@ const buildRow = (order, orderProd, poProd, po) => {
     poQuantity:  poQty,
     shippedQuantity: computeShipped(poQty, packing),
     balanceQuantity: computeBalance(poQty, packing),
-    vendor:      po.vendorInfo?.name || '',
+    vendor:      vendorName,
     description: opts.specifications || opts.vendorDescription || poProd?.description || '',
     woodFinish:  opts.woodFinish || '',
     fabricFinish: opts.fabric || '',
@@ -87,69 +137,98 @@ const buildRow = (order, orderProd, poProd, po) => {
 };
 
 // ─── GET /api/logistic — list all entries ────────────────────────────────────
-// Logic mirrors PurchaseOrderEditor:
-//   - Group by (orderId, vendorId) → find latest POVersion for that pair
-//   - Show ALL Order.selectedProducts whose vendor matches (no name/SKU matching)
-// This guarantees no cross-PO mixing and productId is always set (always editable).
+// 2-query approach: one Order fetch + one POVersion $in fetch (no N+1).
+// JS groups results; O(n+m) instead of O(n×m).
 exports.listEntries = async (req, res) => {
   try {
-    const { projectCode, vendor, statusCategory, expectedArrivalDate, search,
-            page = '1', limit = '50' } = req.query;
+    const { projectCode, vendor, statusCategory, poStatus, expectedArrivalDate, search,
+            page = '1', limit = '200' } = req.query;
 
-    // Developer Orders (No Proposal) = orders that have NO associated ProposalVersion.
-    const orderIdsWithProposal = await ProposalVersion.distinct('orderId');
-    const orders = await Order.find({
-      _id: { $nin: orderIdsWithProposal },
-    })
-      .select('_id clientInfo projectCode orderNumber selectedProducts')
+    // 1. Fetch orders — project only the fields we actually use
+    const orders = await Order.find({})
+      .select([
+        '_id', 'clientInfo.name', 'clientInfo.unitNumber',
+        'projectCode', 'orderNumber',
+        'selectedProducts._id', 'selectedProducts.isParent',
+        'selectedProducts.product_id', 'selectedProducts.name',
+        'selectedProducts.quantity', 'selectedProducts.unitPrice',
+        'selectedProducts.vendor', 'selectedProducts.parentId',
+        'selectedProducts.selectedOptions',
+      ].join(' '))
+      .populate('selectedProducts.vendor', 'name')
       .lean();
 
-    console.log(`[logistic] developer orders (no proposal): ${orders.length}`);
-    if (!orders.length) return res.json({ data: [] });
+    if (!orders.length) return res.json({ data: [], total: 0, totalPages: 1 });
 
     const orderIds = orders.map(o => o._id);
-    const orderMap = {};
-    orders.forEach(o => { orderMap[o._id.toString()] = o; });
 
-    // Get latest POVersion per (orderId, vendorId) — same as POEditor approach.
-    // Sort version desc so first-seen per key = latest.
-    const allPoVersions = await POVersion.find({ orderId: { $in: orderIds } })
+    // 2. One POVersion query for all orders — project only needed fields
+    const allPoVersions = await POVersion.find({
+      orderId: { $in: orderIds },
+      status:  { $ne: 'cancelled' },
+    })
+      .select('orderId vendorId vendorInfo.name poNumber orderDate status version products')
       .sort({ version: -1 })
       .lean();
 
-    // latestPo: `${orderId}__${vendorId}` → latest POVersion
-    const latestPo = {};
-    allPoVersions.forEach(po => {
-      const key = `${po.orderId}__${po.vendorId}`;
-      if (!latestPo[key]) latestPo[key] = po; // first = latest version
-    });
+    // Build latestByVendor: `orderId__vendorId` → latest PO (sorted desc, so first = latest)
+    const latestPoFlat = new Map(); // `orderId__vendorId` → PO
+    for (const po of allPoVersions) {
+      const key = `${po.orderId?.toString()}__${po.vendorId?.toString()}`;
+      if (!latestPoFlat.has(key)) latestPoFlat.set(key, po);
+    }
 
-    console.log(`[logistic] found ${allPoVersions.length} POVersions (${Object.keys(latestPo).length} latest)`);
+    // Group by orderId → O(n+m) instead of O(n×m) startsWith scan
+    const orderPOsMap = new Map(); // orderId_str → PO[]
+    for (const po of latestPoFlat.values()) {
+      const oid = po.orderId?.toString();
+      if (!orderPOsMap.has(oid)) orderPOsMap.set(oid, []);
+      orderPOsMap.get(oid).push(po);
+    }
 
-    // For each Order product, look up the latest POVersion for its vendor.
-    // poProd is used for reference quantity/price; sp is the authoritative source.
+    // 3. Build rows
     const rows = [];
-    orders.forEach(order => {
-      (order.selectedProducts || []).forEach(sp => {
-        if (sp.isParent) return;
-        const vendorId = sp.vendor?._id?.toString() || sp.vendor?.toString() || '';
-        if (!vendorId) return; // no vendor → no PO
 
-        const key = `${order._id}__${vendorId}`;
-        const po = latestPo[key];
-        if (!po) return; // no POVersion for this order+vendor combination
+    for (const order of orders) {
+      const oid    = order._id.toString();
+      const sps    = order.selectedProducts || [];
+      const orderPOs = orderPOsMap.get(oid) || [];
 
-        // Look up the matching PO product for reference price/qty (best-effort, not required)
-        const poProd = (po.products || []).find(p =>
-          (sp.name && p.name === sp.name) ||
-          (sp.product_id && sp.product_id !== '' && p.product_id === sp.product_id)
-        ) || null;
+      // Build a quick name→sp and product_id→sp lookup to avoid O(n²) inner loop
+      const spByProductId = new Map();
+      const spByName      = new Map();
+      for (const sp of sps) {
+        if (!sp.isParent) {
+          if (sp.product_id) spByProductId.set(sp.product_id, sp);
+          if (sp.name)       spByName.set(sp.name, sp);
+        }
+      }
 
-        rows.push(buildRow(order, sp, poProd, po));
-      });
-    });
+      const coveredSpIds = new Set();
 
-    // Apply server-side filters (including search)
+      // Step 1: rows from POVersion.products[]
+      for (const po of orderPOs) {
+        for (const poProd of (po.products || [])) {
+          const sp = (poProd.product_id && spByProductId.get(poProd.product_id))
+                  || (poProd.name      && spByName.get(poProd.name))
+                  || null;
+          if (sp) {
+            coveredSpIds.add(sp._id?.toString());
+            rows.push(buildRow(order, sp, poProd, po));
+          } else {
+            rows.push(buildRowFromPO(order, poProd, po));
+          }
+        }
+      }
+
+      // Step 2: selectedProducts not covered by any PO
+      for (const sp of sps) {
+        if (coveredSpIds.has(sp._id?.toString())) continue;
+        rows.push(buildRow(order, sp, null, null));
+      }
+    }
+
+    // 4. Apply filters
     let filtered = rows;
     if (search) {
       const q = search.toLowerCase();
@@ -157,27 +236,17 @@ exports.listEntries = async (req, res) => {
         r.itemName?.toLowerCase().includes(q) ||
         r.poNumber?.toLowerCase().includes(q) ||
         r.vendor?.toLowerCase().includes(q) ||
-        r.projectCode?.toLowerCase().includes(q)
+        r.projectCode?.toLowerCase().includes(q) ||
+        r.clientName?.toLowerCase().includes(q)
       );
     }
-    if (projectCode) {
-      filtered = filtered.filter(r =>
-        r.projectCode.toLowerCase().includes(projectCode.toLowerCase())
-      );
-    }
-    if (vendor) {
-      filtered = filtered.filter(r =>
-        r.vendor.toLowerCase().includes(vendor.toLowerCase())
-      );
-    }
-    if (statusCategory) {
-      filtered = filtered.filter(r => r.statusCategory === statusCategory);
-    }
-    if (expectedArrivalDate) {
-      filtered = filtered.filter(r => r.expectedArrivalDate === expectedArrivalDate);
-    }
+    if (projectCode)         filtered = filtered.filter(r => r.projectCode?.toLowerCase().includes(projectCode.toLowerCase()));
+    if (vendor)              filtered = filtered.filter(r => r.vendor?.toLowerCase().includes(vendor.toLowerCase()));
+    if (statusCategory)      filtered = filtered.filter(r => r.statusCategory === statusCategory);
+    if (poStatus)            filtered = filtered.filter(r => r.poStatus === poStatus);
+    if (expectedArrivalDate) filtered = filtered.filter(r => r.expectedArrivalDate === expectedArrivalDate);
 
-    // Paginate
+    // 5. Paginate
     const total    = filtered.length;
     const pageNum  = Math.max(1, parseInt(page, 10));
     const limitNum = Math.min(10000, Math.max(1, parseInt(limit, 10)));
@@ -383,12 +452,10 @@ exports.updatePoEntry = async (req, res) => {
   }
 };
 
-// ─── GET /api/logistic/clients — distinct client names across all developer orders ──
+// ─── GET /api/logistic/clients — distinct client names across all orders ────────
 exports.listClients = async (_req, res) => {
   try {
-    const orderIdsWithProposal = await ProposalVersion.distinct('orderId');
     const clients = await Order.distinct('clientInfo.name', {
-      _id: { $nin: orderIdsWithProposal },
       'clientInfo.name': { $exists: true, $ne: '' },
     });
     res.json({ clients: clients.filter(Boolean).sort() });
@@ -399,6 +466,12 @@ exports.listClients = async (_req, res) => {
 };
 
 // ─── GET /api/logistic/config — return dropdown configs ─────────────────────
-exports.getConfig = (_req, res) => {
-  res.json({ statusCategories: STATUS_CATEGORIES });
+exports.getConfig = async (_req, res) => {
+  try {
+    const rawStatuses = await POVersion.distinct('status', { status: { $exists: true, $ne: null } });
+    const poStatuses  = rawStatuses.filter(Boolean).sort();
+    res.json({ statusCategories: STATUS_CATEGORIES, poStatuses });
+  } catch (err) {
+    res.json({ statusCategories: STATUS_CATEGORIES, poStatuses: [] });
+  }
 };
