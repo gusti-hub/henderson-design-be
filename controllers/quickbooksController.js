@@ -621,8 +621,11 @@ const syncProposalToQuickBooks = async (req, res) => {
       const qty       = parseFloat(p.quantity) || 1;
       let subtotal;
       if (p.isParent) {
-        // Group parent: finalPrice is auto-summed from children (already a subtotal)
-        subtotal = round2(parseFloat(p.finalPrice) || 0);
+        // Group parent: finalPrice includes tax — back-calculate pre-tax subtotal
+        // (same logic as ProposalTemplate: groupFinalPrice / (1 + taxRate/100))
+        const taxRate    = parseFloat(p._avgChildTaxRate) || 0;
+        const finalPrice = round2(parseFloat(p.finalPrice) || 0);
+        subtotal = taxRate > 0 ? round2(finalPrice / (1 + taxRate / 100)) : finalPrice;
       } else {
         const msrp      = parseFloat(opts.msrp) || 0;
         const markupPct = parseFloat(opts.markupPercent) || 0;
