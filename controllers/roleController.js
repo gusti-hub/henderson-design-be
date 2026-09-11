@@ -5,6 +5,7 @@ const ALL_ACTIONS = [
   'view_orders',
   'view_expenses',
   'view_vendors',
+  'manage_vendors',
   'view_users',
   'view_clients',
   'view_products',

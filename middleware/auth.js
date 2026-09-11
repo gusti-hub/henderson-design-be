@@ -3,7 +3,7 @@ const User = require('../models/User');
 const Role = require('../models/Role');
 
 const ALL_PERMISSIONS = [
-  'view_dashboard', 'view_orders', 'view_expenses', 'view_vendors',
+  'view_dashboard', 'view_orders', 'view_expenses', 'view_vendors', 'manage_vendors',
   'view_users', 'view_clients', 'view_products', 'view_product_mapping',
   'view_financial_review', 'view_role_management', 'view_logistic_tracker',
 ];
