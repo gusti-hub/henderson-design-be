@@ -14,67 +14,6 @@ const ALL_ACTIONS = [
   'view_logistic_tracker',
 ];
 
-const SEED_ROLES = [
-  {
-    name: 'admin_temporary',
-    description: 'Full access except Role Management — for existing staff during transition',
-    isSystem: true,
-    permissions: ALL_ACTIONS.filter(a => a !== 'view_role_management'),
-  },
-  {
-    name: 'Tim PM',
-    description: 'Project Manager team',
-    isSystem: false,
-    permissions: ['view_dashboard', 'view_orders', 'view_clients', 'view_products'],
-  },
-  {
-    name: 'Procurement',
-    description: 'Procurement team',
-    isSystem: false,
-    permissions: ['view_dashboard', 'view_orders', 'view_vendors', 'view_products', 'view_expenses'],
-  },
-  {
-    name: 'Logistics',
-    description: 'Logistics team',
-    isSystem: false,
-    permissions: ['view_dashboard', 'view_orders', 'view_vendors', 'view_products', 'view_logistic_tracker'],
-  },
-  {
-    name: 'Designer',
-    description: 'Design team',
-    isSystem: false,
-    permissions: ['view_dashboard', 'view_orders', 'view_clients', 'view_products', 'view_product_mapping'],
-  },
-  {
-    name: 'Software',
-    description: 'Software & IT team — full access including role management',
-    isSystem: true,
-    permissions: [...ALL_ACTIONS],
-  },
-  {
-    name: 'Finance',
-    description: 'Finance team',
-    isSystem: false,
-    permissions: ['view_dashboard', 'view_orders', 'view_expenses', 'view_financial_review'],
-  },
-];
-
-// Auto-seed on startup — called from server.js
-// Uses $set so system-role permissions stay in sync with code changes
-const autoSeedRoles = async () => {
-  try {
-    for (const role of SEED_ROLES) {
-      await Role.findOneAndUpdate(
-        { name: role.name },
-        { $set: { description: role.description, isSystem: role.isSystem, permissions: role.permissions } },
-        { upsert: true, new: true }
-      );
-    }
-    console.log('✅ Roles seeded');
-  } catch (err) {
-    console.error('Role seed error:', err.message);
-  }
-};
 
 const getRoles = async (req, res) => {
   try {
@@ -129,4 +68,4 @@ const deleteRole = async (req, res) => {
   }
 };
 
-module.exports = { autoSeedRoles, getRoles, getAllActions, createRole, updateRole, deleteRole };
+module.exports = { getRoles, getAllActions, createRole, updateRole, deleteRole };

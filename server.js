@@ -38,11 +38,8 @@ const initializeQuickBooks = async () => {
   }
 };
 
-const { autoSeedRoles } = require('./controllers/roleController');
-
 setTimeout(() => {
   initializeQuickBooks();
-  autoSeedRoles();
 }, 1000); // Wait 1 second for DB connection
 
 // CORS — harus sebelum semua middleware lain

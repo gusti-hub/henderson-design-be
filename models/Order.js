@@ -245,6 +245,9 @@ const orderSchema = new mongoose.Schema({
       logQcChecking:   { type: Number, default: 0, min: 0, max: 5 },
       logPacking:      { type: Number, default: 0, min: 0, max: 5 },
       packingList:     { type: String, default: '' },
+      packingListQty:  { type: Number, default: 0 },
+      shippedQty:      { type: Number, default: 0 },
+      poQtyOverride:   { type: Number, default: null },
       containerNumber: { type: String, default: '' },
 
       // ── Vendor / Client variant fields (from Excel sub-header columns) ──

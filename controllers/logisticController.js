@@ -17,15 +17,18 @@ const STATUS_CATEGORIES = [
   'Cancelled',
 ];
 
-// ─── Helper: compute shipped/balance from packing stage ──────────────────────
-// Shipped Quantity = full qty only when Packing = 5 (100%); otherwise 0.
-// Per spec: "Shipped Quantity = Lookup dari kolom Packing"
-const computeShipped = (poQty, logPacking) => (logPacking === 5 ? poQty : 0);
-const computeBalance = (poQty, logPacking) => poQty - computeShipped(poQty, logPacking);
+// ─── Helper: compute poQty / shippedQty / balanceQty from stored opts ────────
+const resolveQty = (opts, poProd, orderProd) => {
+  const poQty   = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (poProd?.quantity ?? orderProd?.quantity ?? 1);
+  const shipped = Math.max(0, Number(opts.shippedQty ?? 0));
+  const balance = Math.max(0, poQty - shipped);
+  return { poQty, shipped, balance };
+};
 
 // ─── Helper: build a row for a POVersion product that has no matching selectedProduct ──
 const buildRowFromPO = (order, poProd, po) => {
-  const poQty = poProd.quantity ?? 1;
+  const poProdOpts = poProd.selectedOptions || {};
+  const { poQty, shipped, balance } = resolveQty(poProdOpts, poProd, null);
   return {
     orderId:     order._id,
     productId:   null,          // no selectedProduct — row is read-only
@@ -41,8 +44,8 @@ const buildRowFromPO = (order, poProd, po) => {
     unitPrice:   poProd.unitPrice ?? 0,
     totalPrice:  (poProd.unitPrice ?? 0) * poQty,
     poQuantity:  poQty,
-    shippedQuantity: 0,
-    balanceQuantity: poQty,
+    shippedQuantity: shipped,
+    balanceQuantity: balance,
     vendor:      po.vendorInfo?.name || '',
     description: poProd.description || '',
 
@@ -51,22 +54,22 @@ const buildRowFromPO = (order, poProd, po) => {
     clientName:  order.clientInfo?.name || '',
     orderNumber: order.orderNumber,
 
-    location:            '',
-    cargoReadyDate:      '',
-    shipmentDate:        '',
-    logDrawing:          0,
-    logMachining:        0,
-    logAssembly:         0,
-    logFinishing:        0,
-    logQcChecking:       0,
-    logPacking:          0,
-    packingList:         '',
-    containerNumber:     '',
-    statusCategory:      '',
-    expectedShipDate:    '',
-    expectedArrivalDate: '',
-    remark:              '',
-    dateInspected:       '',
+    location:            poProdOpts.location || '',
+    cargoReadyDate:      poProdOpts.cargoReadyDate || '',
+    shipmentDate:        poProdOpts.shipmentDate || '',
+    logDrawing:          poProdOpts.logDrawing ?? 0,
+    logMachining:        poProdOpts.logMachining ?? 0,
+    logAssembly:         poProdOpts.logAssembly ?? 0,
+    logFinishing:        poProdOpts.logFinishing ?? 0,
+    logQcChecking:       poProdOpts.logQcChecking ?? 0,
+    logPacking:          poProdOpts.logPacking ?? 0,
+    packingList:         Number(poProdOpts.packingListQty ?? 0),
+    containerNumber:     poProdOpts.containerNumber || '',
+    statusCategory:      poProdOpts.statusCategory || '',
+    expectedShipDate:    poProdOpts.expectedShipDate || '',
+    expectedArrivalDate: poProdOpts.expectedArrivalDate || '',
+    remark:              poProdOpts.remark || '',
+    dateInspected:       poProdOpts.dateInspected || '',
   };
 };
 
@@ -80,8 +83,8 @@ const buildRow = (order, orderProd, poProd, po) => {
     ? Object.fromEntries(opts.customAttributes)
     : (typeof opts.customAttributes === 'object' ? opts.customAttributes || {} : {});
 
-  // Quantity: prefer PO product quantity (what was actually ordered), fallback to Order
-  const poQty   = poProd?.quantity ?? orderProd.quantity ?? 1;
+  // Quantity, shipped, balance — resolved from stored overrides
+  const { poQty, shipped, balance } = resolveQty(opts, poProd, orderProd);
   const packing = opts.logPacking ?? 0;
 
   // Vendor name: prefer PO vendorInfo, fallback to product's populated vendor object
@@ -103,8 +106,8 @@ const buildRow = (order, orderProd, poProd, po) => {
     unitPrice:   poProd?.unitPrice ?? orderProd.unitPrice ?? 0,
     totalPrice:  (poProd?.unitPrice ?? orderProd.unitPrice ?? 0) * poQty,
     poQuantity:  poQty,
-    shippedQuantity: computeShipped(poQty, packing),
-    balanceQuantity: computeBalance(poQty, packing),
+    shippedQuantity: shipped,
+    balanceQuantity: balance,
     vendor:      vendorName,
     description: opts.specifications || opts.vendorDescription || poProd?.description || '',
     woodFinish:  opts.woodFinish || '',
@@ -126,7 +129,7 @@ const buildRow = (order, orderProd, poProd, po) => {
     logFinishing:        opts.logFinishing ?? 0,
     logQcChecking:       opts.logQcChecking ?? 0,
     logPacking:          packing,
-    packingList:         opts.packingList || '',
+    packingList:         Number(opts.packingListQty ?? 0),
     containerNumber:     opts.containerNumber || '',
     statusCategory:      opts.statusCategory || '',
     expectedShipDate:    opts.expectedShipDate || '',
@@ -324,6 +327,7 @@ exports.updateEntry = async (req, res) => {
       expectedShipDate,
       expectedArrivalDate,
       remark,
+      poQuantity,
     } = req.body;
 
     const order = await Order.findById(orderId);
@@ -350,12 +354,27 @@ exports.updateEntry = async (req, res) => {
     setIfDefined('logAssembly',        logAssembly != null ? Number(logAssembly) : undefined);
     setIfDefined('logFinishing',       logFinishing != null ? Number(logFinishing) : undefined);
     setIfDefined('logPacking',         logPacking != null ? Number(logPacking) : undefined);
-    setIfDefined('packingList',        packingList);
     setIfDefined('containerNumber',    containerNumber);
     setIfDefined('statusCategory',     statusCategory);
     setIfDefined('expectedShipDate',   expectedShipDate);
     setIfDefined('expectedArrivalDate',expectedArrivalDate);
     setIfDefined('notes',              remark);
+
+    // PO QTY override — syncs to CPM product quantity as well
+    if (poQuantity !== undefined) {
+      const qty = Number(poQuantity);
+      opts.poQtyOverride = qty;
+      order.selectedProducts[prodIdx].quantity = qty;
+    }
+
+    // Packing list: additive accumulation of shipped qty
+    if (packingList !== undefined) {
+      const batchQty = Number(packingList);
+      if (batchQty > 0) {
+        opts.shippedQty = Math.max(0, Number(opts.shippedQty ?? 0)) + batchQty;
+        opts.packingListQty = batchQty;
+      }
+    }
 
     // QC Checking business logic: auto-fill dateInspected when reaches 100%
     if (logQcChecking !== undefined) {
@@ -371,7 +390,19 @@ exports.updateEntry = async (req, res) => {
     order.markModified('selectedProducts');
     await order.save();
 
-    res.json({ message: 'Updated', dateInspected: opts.dateInspected || '' });
+    // Compute and return updated quantities for the frontend to reflect immediately
+    const sp = order.selectedProducts[prodIdx];
+    const resolvedPoQty = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (sp.quantity ?? 1);
+    const resolvedShipped = Math.max(0, Number(opts.shippedQty ?? 0));
+    const resolvedBalance = Math.max(0, resolvedPoQty - resolvedShipped);
+
+    res.json({
+      message: 'Updated',
+      dateInspected: opts.dateInspected || '',
+      poQuantity: resolvedPoQty,
+      shippedQuantity: resolvedShipped,
+      balanceQuantity: resolvedBalance,
+    });
   } catch (err) {
     console.error('logistic updateEntry error:', err);
     res.status(500).json({ message: err.message });
@@ -401,6 +432,7 @@ exports.updatePoEntry = async (req, res) => {
       expectedShipDate,
       expectedArrivalDate,
       remark,
+      poQuantity,
     } = req.body;
 
     const po = await POVersion.findById(poVersionId);
@@ -411,8 +443,7 @@ exports.updatePoEntry = async (req, res) => {
     );
     if (prodIdx === -1) return res.status(404).json({ message: 'Product not found in POVersion' });
 
-    const poOpts = po.products[prodIdx].selectedOptions;
-    if (!poOpts) po.products[prodIdx].selectedOptions = {};
+    if (!po.products[prodIdx].selectedOptions) po.products[prodIdx].selectedOptions = {};
     const opts = po.products[prodIdx].selectedOptions;
 
     const setIfDefined = (key, val) => { if (val !== undefined) opts[key] = val; };
@@ -426,12 +457,27 @@ exports.updatePoEntry = async (req, res) => {
     setIfDefined('logAssembly',         logAssembly != null ? Number(logAssembly) : undefined);
     setIfDefined('logFinishing',        logFinishing != null ? Number(logFinishing) : undefined);
     setIfDefined('logPacking',          logPacking != null ? Number(logPacking) : undefined);
-    setIfDefined('packingList',         packingList);
     setIfDefined('containerNumber',     containerNumber);
     setIfDefined('statusCategory',      statusCategory);
     setIfDefined('expectedShipDate',    expectedShipDate);
     setIfDefined('expectedArrivalDate', expectedArrivalDate);
     setIfDefined('remark',              remark);
+
+    // PO QTY override — syncs to PO product quantity as well
+    if (poQuantity !== undefined) {
+      const qty = Number(poQuantity);
+      opts.poQtyOverride = qty;
+      po.products[prodIdx].quantity = qty;
+    }
+
+    // Packing list: additive accumulation of shipped qty
+    if (packingList !== undefined) {
+      const batchQty = Number(packingList);
+      if (batchQty > 0) {
+        opts.shippedQty = Math.max(0, Number(opts.shippedQty ?? 0)) + batchQty;
+        opts.packingListQty = batchQty;
+      }
+    }
 
     // QC Checking business logic
     if (logQcChecking !== undefined) {
@@ -445,7 +491,18 @@ exports.updatePoEntry = async (req, res) => {
     po.markModified('products');
     await po.save();
 
-    res.json({ message: 'Updated', dateInspected: opts.dateInspected || '' });
+    const poProd = po.products[prodIdx];
+    const resolvedPoQty = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (poProd.quantity ?? 1);
+    const resolvedShipped = Math.max(0, Number(opts.shippedQty ?? 0));
+    const resolvedBalance = Math.max(0, resolvedPoQty - resolvedShipped);
+
+    res.json({
+      message: 'Updated',
+      dateInspected: opts.dateInspected || '',
+      poQuantity: resolvedPoQty,
+      shippedQuantity: resolvedShipped,
+      balanceQuantity: resolvedBalance,
+    });
   } catch (err) {
     console.error('logistic updatePoEntry error:', err);
     res.status(500).json({ message: err.message });
