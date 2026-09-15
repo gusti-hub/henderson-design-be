@@ -19,7 +19,8 @@ const STATUS_CATEGORIES = [
 
 // ─── Helper: compute poQty / shippedQty / balanceQty from stored opts ────────
 const resolveQty = (opts, poProd, orderProd) => {
-  const poQty   = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (poProd?.quantity ?? orderProd?.quantity ?? 1);
+  // Prefer orderProd qty so Order-tab changes are reflected; fall back to poProd qty
+  const poQty   = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (orderProd?.quantity ?? poProd?.quantity ?? 1);
   const shipped = Math.max(0, Number(opts.shippedQty ?? 0));
   const balance = Math.max(0, poQty - shipped);
   return { poQty, shipped, balance };
@@ -224,11 +225,7 @@ exports.listEntries = async (req, res) => {
         }
       }
 
-      // Step 2: selectedProducts not covered by any PO
-      for (const sp of sps) {
-        if (coveredSpIds.has(sp._id?.toString())) continue;
-        rows.push(buildRow(order, sp, null, null));
-      }
+      // Step 2: intentionally omitted — only show PO-linked items
     }
 
     // 4. Apply filters
@@ -338,67 +335,66 @@ exports.updateEntry = async (req, res) => {
     );
     if (prodIdx === -1) return res.status(404).json({ message: 'Product not found in order' });
 
-    const opts = order.selectedProducts[prodIdx].selectedOptions;
+    const opts   = order.selectedProducts[prodIdx].selectedOptions || {};
+    const sp     = order.selectedProducts[prodIdx];
+    const prefix = `selectedProducts.${prodIdx}.selectedOptions`;
+    const $set   = {};
 
-    // Update order-level field
-    if (projectCode !== undefined) order.projectCode = projectCode;
-
-    // Update product-level logistic fields
-    const setIfDefined = (key, val) => { if (val !== undefined) opts[key] = val; };
-
-    setIfDefined('room',               location);
-    setIfDefined('cargoReadyDate',     cargoReadyDate);
-    setIfDefined('shipmentDate',       shipmentDate);
-    setIfDefined('logDrawing',         logDrawing != null ? Number(logDrawing) : undefined);
-    setIfDefined('logMachining',       logMachining != null ? Number(logMachining) : undefined);
-    setIfDefined('logAssembly',        logAssembly != null ? Number(logAssembly) : undefined);
-    setIfDefined('logFinishing',       logFinishing != null ? Number(logFinishing) : undefined);
-    setIfDefined('logPacking',         logPacking != null ? Number(logPacking) : undefined);
-    setIfDefined('containerNumber',    containerNumber);
-    setIfDefined('statusCategory',     statusCategory);
-    setIfDefined('expectedShipDate',   expectedShipDate);
-    setIfDefined('expectedArrivalDate',expectedArrivalDate);
-    setIfDefined('notes',              remark);
+    if (projectCode !== undefined)        $set['projectCode'] = projectCode;
+    if (location !== undefined)           $set[`${prefix}.room`] = location;
+    if (cargoReadyDate !== undefined)     $set[`${prefix}.cargoReadyDate`] = cargoReadyDate;
+    if (shipmentDate !== undefined)       $set[`${prefix}.shipmentDate`] = shipmentDate;
+    if (logDrawing != null)               $set[`${prefix}.logDrawing`] = Number(logDrawing);
+    if (logMachining != null)             $set[`${prefix}.logMachining`] = Number(logMachining);
+    if (logAssembly != null)              $set[`${prefix}.logAssembly`] = Number(logAssembly);
+    if (logFinishing != null)             $set[`${prefix}.logFinishing`] = Number(logFinishing);
+    if (logPacking != null)               $set[`${prefix}.logPacking`] = Number(logPacking);
+    if (containerNumber !== undefined)    $set[`${prefix}.containerNumber`] = containerNumber;
+    if (statusCategory !== undefined)     $set[`${prefix}.statusCategory`] = statusCategory;
+    if (expectedShipDate !== undefined)   $set[`${prefix}.expectedShipDate`] = expectedShipDate;
+    if (expectedArrivalDate !== undefined)$set[`${prefix}.expectedArrivalDate`] = expectedArrivalDate;
+    if (remark !== undefined)             $set[`${prefix}.notes`] = remark;
 
     // PO QTY override — syncs to CPM product quantity as well
+    let resolvedPoQty = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (sp.quantity ?? 1);
     if (poQuantity !== undefined) {
-      const qty = Number(poQuantity);
-      opts.poQtyOverride = qty;
-      order.selectedProducts[prodIdx].quantity = qty;
+      resolvedPoQty = Number(poQuantity);
+      $set[`${prefix}.poQtyOverride`] = resolvedPoQty;
+      $set[`selectedProducts.${prodIdx}.quantity`] = resolvedPoQty;
     }
 
     // Packing list: additive accumulation of shipped qty
+    let resolvedShipped = Math.max(0, Number(opts.shippedQty ?? 0));
     if (packingList !== undefined) {
       const batchQty = Number(packingList);
       if (batchQty > 0) {
-        opts.shippedQty = Math.max(0, Number(opts.shippedQty ?? 0)) + batchQty;
-        opts.packingListQty = batchQty;
+        resolvedShipped += batchQty;
+        $set[`${prefix}.shippedQty`]      = resolvedShipped;
+        $set[`${prefix}.packingListQty`]  = batchQty;
       }
     }
 
     // QC Checking business logic: auto-fill dateInspected when reaches 100%
+    let newDateInspected = opts.dateInspected || '';
     if (logQcChecking !== undefined) {
       const prev = opts.logQcChecking ?? 0;
-      opts.logQcChecking = Number(logQcChecking);
-      if (opts.logQcChecking === 5 && prev < 5 && !opts.dateInspected) {
-        opts.dateInspected = new Date().toISOString().split('T')[0];
+      $set[`${prefix}.logQcChecking`] = Number(logQcChecking);
+      if (Number(logQcChecking) === 5 && prev < 5 && !opts.dateInspected) {
+        newDateInspected = new Date().toISOString().split('T')[0];
+        $set[`${prefix}.dateInspected`] = newDateInspected;
       }
     }
 
-    order.updatedAt  = Date.now();
-    order.updatedBy  = req.user._id;
-    order.markModified('selectedProducts');
-    await order.save();
+    $set['updatedAt'] = Date.now();
+    $set['updatedBy'] = req.user._id;
 
-    // Compute and return updated quantities for the frontend to reflect immediately
-    const sp = order.selectedProducts[prodIdx];
-    const resolvedPoQty = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (sp.quantity ?? 1);
-    const resolvedShipped = Math.max(0, Number(opts.shippedQty ?? 0));
+    await Order.updateOne({ _id: orderId }, { $set });
+
     const resolvedBalance = Math.max(0, resolvedPoQty - resolvedShipped);
 
     res.json({
       message: 'Updated',
-      dateInspected: opts.dateInspected || '',
+      dateInspected: newDateInspected,
       poQuantity: resolvedPoQty,
       shippedQuantity: resolvedShipped,
       balanceQuantity: resolvedBalance,
