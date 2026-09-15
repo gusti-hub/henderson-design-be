@@ -13,6 +13,7 @@ const STATUS_CATEGORIES = [
   'Delayed',
   'In Transit',
   'Delivered',
+  'Installed',
   'On Hold',
   'Cancelled',
 ];
