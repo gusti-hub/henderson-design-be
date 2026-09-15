@@ -2484,11 +2484,7 @@ const generateStatusReport = async (req, res) => {
     const groupByCategory = (items) => {
       const groups = {};
       items.forEach(p => {
-        const cat = p.selectedOptions?.statusCategory
-          || p.selectedOptions?.room
-          || p.category
-          || p.spotName
-          || 'Uncategorized';
+        const cat = p.selectedOptions?.statusCategory || 'Uncategorized';
         if (!groups[cat]) groups[cat] = [];
         groups[cat].push(p);
       });
