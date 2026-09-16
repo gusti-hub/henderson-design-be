@@ -389,7 +389,7 @@ exports.updateEntry = async (req, res) => {
     $set['updatedAt'] = Date.now();
     $set['updatedBy'] = req.user._id;
 
-    await Order.updateOne({ _id: orderId }, { $set });
+    await Order.updateOne({ _id: orderId }, { $set }, { strict: false });
 
     const resolvedBalance = Math.max(0, resolvedPoQty - resolvedShipped);
 
