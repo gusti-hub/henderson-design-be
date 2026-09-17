@@ -9,10 +9,22 @@ const getVendors = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || '';
     const status = req.query.status || '';
+    const sortBy = req.query.sortBy || 'createdAt';
+    const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
     const skip = (page - 1) * limit;
 
+    const sortFieldMap = {
+      vendorCode:    'vendorCode',
+      name:          'name',
+      email:         'contactInfo.email',
+      defaultMarkup: 'defaultMarkup',
+      status:        'status',
+      createdAt:     'createdAt',
+    };
+    const sortField = sortFieldMap[sortBy] || 'createdAt';
+
     let searchQuery = {};
-    
+
     if (search) {
       searchQuery.$or = [
         { vendorCode: { $regex: search, $options: 'i' } },
@@ -32,7 +44,7 @@ const getVendors = async (req, res) => {
       .populate('modifiedBy', 'name email')
       .skip(skip)
       .limit(limit)
-      .sort({ createdAt: -1 });
+      .sort({ [sortField]: sortOrder });
 
     res.json({
       vendors,
@@ -97,16 +109,6 @@ const createVendor = async (req, res) => {
       return res.status(400).json({
         message: 'Please provide all required fields'
       });
-    }
-
-    // Check if email already exists (before generating code)
-    if (email) {
-      const emailExists = await Vendor.findOne({ 'contactInfo.email': email });
-      if (emailExists) {
-        return res.status(400).json({
-          message: 'Email already exists'
-        });
-      }
     }
 
     // ✅ Auto-generate vendor code (optimized - single query)
@@ -218,17 +220,6 @@ const updateVendor = async (req, res) => {
       notes,
       status
     } = req.body;
-
-    // Check email uniqueness if it's being changed
-    if (email && email !== vendor.contactInfo.email) {
-      const emailExists = await Vendor.findOne({ 
-        'contactInfo.email': email,
-        _id: { $ne: vendor._id }
-      });
-      if (emailExists) {
-        return res.status(400).json({ message: 'Email already in use' });
-      }
-    }
 
     // Update basic fields (vendor code is never updated)
     if (name) vendor.name = name;
