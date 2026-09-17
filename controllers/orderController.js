@@ -3163,13 +3163,24 @@ const generateCogWithBill = async (req, res) => {
     const lotLabel     = unitNumber ? ` - Lot ${unitNumber}` : '';
     const projectLabel = `Project: ${clientName}${lotLabel} - ${shortId}`;
 
-    const products = order.selectedProducts || [];
+    // Find ALL orders for the same client (same user + clientInfo.name + unitNumber)
+    // so COG Bill covers every order in the project, not just the one clicked
+    const relatedOrderQuery = { user: order.user };
+    if (clientName) relatedOrderQuery['clientInfo.name'] = clientName;
+    if (unitNumber)  relatedOrderQuery['clientInfo.unitNumber'] = unitNumber;
+
+    const relatedOrders = await Order.find(relatedOrderQuery)
+      .populate('selectedProducts.vendor')
+      .lean();
+
+    const allOrderIds = relatedOrders.map(o => o._id);
+    const products    = relatedOrders.flatMap(o => o.selectedProducts || []);
 
     // poVersions sorted desc — first hit per key = latest version
-    const poVersions = await POVersion.find({ orderId: req.params.id }).sort({ version: -1 }).lean();
+    const poVersions = await POVersion.find({ orderId: { $in: allOrderIds } }).sort({ version: -1 }).lean();
 
     // poVersionId → BillInvoice (1:1 via poVersionId)
-    const bills = await BillInvoice.find({ orderId: req.params.id }).lean();
+    const bills = await BillInvoice.find({ orderId: { $in: allOrderIds } }).lean();
     const billByPOVersionId = new Map();
     bills.forEach(b => {
       const pvid = b.poVersionId?.toString();
