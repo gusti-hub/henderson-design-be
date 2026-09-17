@@ -199,33 +199,30 @@ exports.listEntries = async (req, res) => {
       const sps    = order.selectedProducts || [];
       const orderPOs = orderPOsMap.get(oid) || [];
 
-      // Build a quick name→sp and product_id→sp lookup to avoid O(n²) inner loop
-      const spByProductId = new Map();
-      const spByName      = new Map();
-      for (const sp of sps) {
-        if (!sp.isParent) {
-          if (sp.product_id) spByProductId.set(sp.product_id, sp);
-          if (sp.name)       spByName.set(sp.name, sp);
-        }
+      // Build PO lookup by vendorId — same vendor-grouping as POEditor
+      const poByVendorId = new Map();
+      for (const po of orderPOs) {
+        poByVendorId.set(po.vendorId?.toString(), po);
       }
 
-      const coveredSpIds = new Set();
+      // Iterate over Order's selectedProducts (mirrors POEditor logic):
+      // show every non-parent product that has a vendor with a PO
+      for (const sp of sps) {
+        if (sp.isParent) continue;
 
-      // Step 1: rows from POVersion.products[]
-      for (const po of orderPOs) {
-        for (const poProd of (po.products || [])) {
-          const sp = (poProd.product_id && spByProductId.get(poProd.product_id))
-                  || (poProd.name      && spByName.get(poProd.name))
-                  || null;
-          if (sp) {
-            // Skip duplicate — same selectedProduct already added from this PO
-            if (coveredSpIds.has(sp._id?.toString())) continue;
-            coveredSpIds.add(sp._id?.toString());
-            rows.push(buildRow(order, sp, poProd, po));
-          } else {
-            rows.push(buildRowFromPO(order, poProd, po));
-          }
-        }
+        const vendorId = sp.vendor?._id?.toString() || sp.vendor?.toString();
+        if (!vendorId) continue;
+
+        const po = poByVendorId.get(vendorId);
+        if (!po) continue; // no PO for this vendor — only show PO-linked items
+
+        // Find matching poProd for unitPrice / description etc. (optional)
+        const poProd = (po.products || []).find(pp =>
+          (pp.product_id && pp.product_id === sp.product_id) ||
+          (pp.name       && pp.name       === sp.name)
+        ) || null;
+
+        rows.push(buildRow(order, sp, poProd, po));
       }
 
       // Step 2: intentionally omitted — only show PO-linked items
@@ -338,32 +335,31 @@ exports.updateEntry = async (req, res) => {
     );
     if (prodIdx === -1) return res.status(404).json({ message: 'Product not found in order' });
 
-    const opts   = order.selectedProducts[prodIdx].selectedOptions || {};
-    const sp     = order.selectedProducts[prodIdx];
-    const prefix = `selectedProducts.${prodIdx}.selectedOptions`;
-    const $set   = {};
+    const sp   = order.selectedProducts[prodIdx];
+    // Spread into a plain object so Mongoose sees it as a full replacement (same pattern as orderController)
+    const opts = sp.selectedOptions?.toObject ? sp.selectedOptions.toObject() : { ...(sp.selectedOptions || {}) };
 
-    if (projectCode !== undefined)        $set['projectCode'] = projectCode;
-    if (location !== undefined)           $set[`${prefix}.room`] = location;
-    if (cargoReadyDate !== undefined)     $set[`${prefix}.cargoReadyDate`] = cargoReadyDate;
-    if (shipmentDate !== undefined)       $set[`${prefix}.shipmentDate`] = shipmentDate;
-    if (logDrawing != null)               $set[`${prefix}.logDrawing`] = Number(logDrawing);
-    if (logMachining != null)             $set[`${prefix}.logMachining`] = Number(logMachining);
-    if (logAssembly != null)              $set[`${prefix}.logAssembly`] = Number(logAssembly);
-    if (logFinishing != null)             $set[`${prefix}.logFinishing`] = Number(logFinishing);
-    if (logPacking != null)               $set[`${prefix}.logPacking`] = Number(logPacking);
-    if (containerNumber !== undefined)    $set[`${prefix}.containerNumber`] = containerNumber;
-    if (statusCategory !== undefined)     $set[`${prefix}.statusCategory`] = statusCategory;
-    if (expectedShipDate !== undefined)   $set[`${prefix}.expectedShipDate`] = expectedShipDate;
-    if (expectedArrivalDate !== undefined)$set[`${prefix}.expectedArrivalDate`] = expectedArrivalDate;
-    if (remark !== undefined)             $set[`${prefix}.notes`] = remark;
+    if (projectCode !== undefined)         order.projectCode = projectCode;
+    if (location !== undefined)            opts.room               = location;
+    if (cargoReadyDate !== undefined)      opts.cargoReadyDate     = cargoReadyDate;
+    if (shipmentDate !== undefined)        opts.shipmentDate       = shipmentDate;
+    if (logDrawing != null)                opts.logDrawing         = Number(logDrawing);
+    if (logMachining != null)              opts.logMachining       = Number(logMachining);
+    if (logAssembly != null)               opts.logAssembly        = Number(logAssembly);
+    if (logFinishing != null)              opts.logFinishing       = Number(logFinishing);
+    if (logPacking != null)                opts.logPacking         = Number(logPacking);
+    if (containerNumber !== undefined)     opts.containerNumber    = containerNumber;
+    if (statusCategory !== undefined)      opts.statusCategory     = statusCategory;
+    if (expectedShipDate !== undefined)    opts.expectedShipDate   = expectedShipDate;
+    if (expectedArrivalDate !== undefined) opts.expectedArrivalDate = expectedArrivalDate;
+    if (remark !== undefined)              opts.notes              = remark;
 
     // PO QTY override — syncs to CPM product quantity as well
     let resolvedPoQty = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (sp.quantity ?? 1);
     if (poQuantity !== undefined) {
       resolvedPoQty = Number(poQuantity);
-      $set[`${prefix}.poQtyOverride`] = resolvedPoQty;
-      $set[`selectedProducts.${prodIdx}.quantity`] = resolvedPoQty;
+      opts.poQtyOverride = resolvedPoQty;
+      sp.quantity        = resolvedPoQty;
     }
 
     // Packing list: additive accumulation of shipped qty
@@ -371,9 +367,9 @@ exports.updateEntry = async (req, res) => {
     if (packingList !== undefined) {
       const batchQty = Number(packingList);
       if (batchQty > 0) {
-        resolvedShipped += batchQty;
-        $set[`${prefix}.shippedQty`]      = resolvedShipped;
-        $set[`${prefix}.packingListQty`]  = batchQty;
+        resolvedShipped        += batchQty;
+        opts.shippedQty         = resolvedShipped;
+        opts.packingListQty     = batchQty;
       }
     }
 
@@ -381,17 +377,19 @@ exports.updateEntry = async (req, res) => {
     let newDateInspected = opts.dateInspected || '';
     if (logQcChecking !== undefined) {
       const prev = opts.logQcChecking ?? 0;
-      $set[`${prefix}.logQcChecking`] = Number(logQcChecking);
-      if (Number(logQcChecking) === 5 && prev < 5 && !opts.dateInspected) {
-        newDateInspected = new Date().toISOString().split('T')[0];
-        $set[`${prefix}.dateInspected`] = newDateInspected;
+      opts.logQcChecking = Number(logQcChecking);
+      if (opts.logQcChecking === 5 && prev < 5 && !opts.dateInspected) {
+        newDateInspected   = new Date().toISOString().split('T')[0];
+        opts.dateInspected = newDateInspected;
       }
     }
 
-    $set['updatedAt'] = Date.now();
-    $set['updatedBy'] = req.user._id;
-
-    await Order.updateOne({ _id: orderId }, { $set }, { strict: false });
+    // Replace selectedOptions wholesale so Mongoose detects the change (same as orderController)
+    sp.selectedOptions = opts;
+    order.updatedAt    = Date.now();
+    order.updatedBy    = req.user._id;
+    order.markModified('selectedProducts');
+    await order.save();
 
     const resolvedBalance = Math.max(0, resolvedPoQty - resolvedShipped);
 
