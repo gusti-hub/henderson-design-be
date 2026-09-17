@@ -218,6 +218,8 @@ exports.listEntries = async (req, res) => {
                   || (poProd.name      && spByName.get(poProd.name))
                   || null;
           if (sp) {
+            // Skip duplicate — same selectedProduct already added from this PO
+            if (coveredSpIds.has(sp._id?.toString())) continue;
             coveredSpIds.add(sp._id?.toString());
             rows.push(buildRow(order, sp, poProd, po));
           } else {
