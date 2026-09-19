@@ -93,6 +93,7 @@ app.use('/api/logistic', logisticRoutes);
 app.use('/api/financial-review', require('./routes/financialReviewRoutes'));
 app.use('/api/roles', require('./routes/roleRoutes'));
 app.use('/api/image-library', require('./routes/imageLibraryRoutes'));
+app.use('/api/floor-plans',  require('./routes/floorPlanRoutes'));
 
 // Enhanced error handling
 app.use((err, req, res, next) => {
