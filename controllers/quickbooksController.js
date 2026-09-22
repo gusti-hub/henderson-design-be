@@ -796,11 +796,24 @@ const getProjectFinanceSummary = async (req, res) => {
       { sort: { version: -1 } }
     ).lean();
 
-    const allVersionsFlat = await POVersion.find(
-      { orderId: oid },
-      { _id: 1, poNumber: 1, version: 1, vendorId: 1, 'vendorInfo.name': 1,
-        status: 1, quickbooksId: 1, quickbooksSyncedAt: 1, quickbooksStatus: 1 }
-    ).sort({ 'vendorInfo.name': 1, version: -1 }).lean();
+    const [allVersionsRaw, order] = await Promise.all([
+      POVersion.find(
+        { orderId: oid },
+        { _id: 1, poNumber: 1, version: 1, vendorId: 1, 'vendorInfo.name': 1,
+          status: 1, quickbooksId: 1, quickbooksSyncedAt: 1, quickbooksStatus: 1 }
+      ).sort({ 'vendorInfo.name': 1, version: -1 }).lean(),
+      Order.findById(oid, { 'selectedProducts.vendor': 1 }).lean(),
+    ]);
+
+    // Filter to only vendors that have products in the order
+    const vendorsWithProducts = new Set(
+      (order?.selectedProducts || [])
+        .map(p => p.vendor?._id?.toString() || p.vendor?.toString())
+        .filter(Boolean)
+    );
+    const allVersionsFlat = allVersionsRaw.filter(v =>
+      !v.vendorId || vendorsWithProducts.has(v.vendorId.toString())
+    );
 
     res.json({
       success: true,

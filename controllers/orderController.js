@@ -3257,8 +3257,17 @@ const generateCogWithBill = async (req, res) => {
       return base + shipping + others;
     };
 
+    // Only show PO rows for vendors that have at least one product in the related orders
+    const vendorsWithProducts = new Set(
+      products
+        .map(p => p.vendor?._id?.toString() || p.vendor?.toString())
+        .filter(Boolean)
+    );
+
     const poRows = [
-      ...Array.from(rowMap.values()).map(row => ({
+      ...Array.from(rowMap.values())
+        .filter(row => vendorsWithProducts.has(row.vendorId))
+        .map(row => ({
         poNumber:   row.poNumber,
         vendorName: row.vendorName,
         poStatus:   row.poStatus,
