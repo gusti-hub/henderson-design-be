@@ -2083,15 +2083,16 @@ const generateInstallBinderExcel = async (req, res) => {
     ws.getColumn('A').width = 13;
     ws.getColumn('B').width = 18;
     ws.getColumn('C').width = 20;
-    ws.getColumn('D').width = 38;
-    ws.getColumn('E').width = 16;
-    ws.getColumn('F').width = 10;
-    ws.getColumn('G').width = 20;
-    ws.getColumn('H').width = 18;
-    ws.getColumn('I').width = 24;
-    ws.getColumn('J').width = 20;
-    ws.getColumn('K').width = 26;
-    ws.getColumn('L').width = 22;
+    ws.getColumn('D').width = 22;
+    ws.getColumn('E').width = 38;
+    ws.getColumn('F').width = 16;
+    ws.getColumn('G').width = 10;
+    ws.getColumn('H').width = 20;
+    ws.getColumn('I').width = 18;
+    ws.getColumn('J').width = 24;
+    ws.getColumn('K').width = 20;
+    ws.getColumn('L').width = 26;
+    ws.getColumn('M').width = 24;
 
     const thinBorder = {
       top: { style: 'thin' }, left: { style: 'thin' },
@@ -2101,21 +2102,21 @@ const generateInstallBinderExcel = async (req, res) => {
     const dataFont   = { name: 'Arial', size: 9 };
     const wrapTop    = { vertical: 'top', wrapText: true };
 
-    ws.mergeCells('A1:L1');
+    ws.mergeCells('A1:M1');
     const titleCell = ws.getCell('A1');
     titleCell.value     = 'Henderson Design Group — Install Binder';
     titleCell.font      = { name: 'Arial', bold: true, size: 13, color: { argb: 'FF005670' } };
     titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(1).height = 28;
 
-    ws.mergeCells('A2:L2');
+    ws.mergeCells('A2:M2');
     const projCell = ws.getCell('A2');
     projCell.value     = projectLabel;
     projCell.font      = { name: 'Arial', bold: true, size: 10 };
     projCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(2).height = 20;
 
-    ws.mergeCells('A3:L3');
+    ws.mergeCells('A3:M3');
     const dateCell = ws.getCell('A3');
     dateCell.value = `Printed: ${new Date().toLocaleDateString('en-US', {
       month: '2-digit', day: '2-digit', year: 'numeric'
@@ -2124,8 +2125,8 @@ const generateInstallBinderExcel = async (req, res) => {
     dateCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(3).height = 16;
 
-    ['Photo','Room','Vendor Name','Vendor Description','HDG PO#','Qty',
-     'Vendor Order #','Date Received','Tracking Info','Shipping Carrier','Notes','SKU Code'].forEach((h, i) => {
+    ['Photo','Room','Vendor Name','SKU Code','Vendor Description','HDG PO#','Qty',
+     'Vendor Order #','Date Received','Tracking Info','Shipping Carrier','Notes','Expediting Order Status'].forEach((h, i) => {
       const cell = ws.getCell(4, i + 1);
       cell.value     = h;
       cell.font      = headerFont;
@@ -2145,7 +2146,7 @@ const generateInstallBinderExcel = async (req, res) => {
     let rowNum = 5;
 
     Object.entries(grouped).forEach(([room, roomProducts]) => {
-      ws.mergeCells(`A${rowNum}:L${rowNum}`);
+      ws.mergeCells(`A${rowNum}:M${rowNum}`);
       const roomCell = ws.getCell(`A${rowNum}`);
       roomCell.value     = room;
       roomCell.font      = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF005670' } };
@@ -2194,62 +2195,66 @@ const generateInstallBinderExcel = async (req, res) => {
         cellC.font = dataFont; cellC.border = thinBorder; cellC.alignment = wrapTop;
 
         const cellD = ws.getCell(rowNum, 4);
-        cellD.value = vendorDesc;
+        const skuRoom = p.selectedOptions?.room || p.category || p.spotName || '';
+        const skuRoomCode = getRoomCode(skuRoom);
+        cellD.value = skuRoomCode ? `${skuRoomCode}-${p.product_id || ''}` : (p.product_id || '');
         cellD.font = dataFont; cellD.border = thinBorder; cellD.alignment = wrapTop;
 
         const cellE = ws.getCell(rowNum, 5);
-        cellE.value = getPoNumber(p);
+        cellE.value = vendorDesc;
         cellE.font = dataFont; cellE.border = thinBorder; cellE.alignment = wrapTop;
 
         const cellF = ws.getCell(rowNum, 6);
-        cellF.value = p.quantity || 1;
-        cellF.font = dataFont; cellF.border = thinBorder;
-        cellF.alignment = { ...wrapTop, horizontal: 'center' };
+        cellF.value = getPoNumber(p);
+        cellF.font = dataFont; cellF.border = thinBorder; cellF.alignment = wrapTop;
 
         const cellG = ws.getCell(rowNum, 7);
-        cellG.value = p.selectedOptions?.vendorOrderNumber || '';
-        cellG.font = dataFont; cellG.border = thinBorder; cellG.alignment = wrapTop;
+        cellG.value = p.quantity || 1;
+        cellG.font = dataFont; cellG.border = thinBorder;
+        cellG.alignment = { ...wrapTop, horizontal: 'center' };
 
         const cellH = ws.getCell(rowNum, 8);
-        cellH.value = p.selectedOptions?.dateReceived || '';
+        cellH.value = p.selectedOptions?.vendorOrderNumber || '';
         cellH.font = dataFont; cellH.border = thinBorder; cellH.alignment = wrapTop;
 
         const cellI = ws.getCell(rowNum, 9);
-        cellI.value = p.selectedOptions?.trackingInfo || '';
+        cellI.value = p.selectedOptions?.dateReceived || '';
         cellI.font = dataFont; cellI.border = thinBorder; cellI.alignment = wrapTop;
 
         const cellJ = ws.getCell(rowNum, 10);
-        cellJ.value = p.selectedOptions?.shippingCarrier || '';
+        cellJ.value = p.selectedOptions?.trackingInfo || '';
         cellJ.font = dataFont; cellJ.border = thinBorder; cellJ.alignment = wrapTop;
 
         const cellK = ws.getCell(rowNum, 11);
+        cellK.value = p.selectedOptions?.shippingCarrier || '';
+        cellK.font = dataFont; cellK.border = thinBorder; cellK.alignment = wrapTop;
+
+        const cellL = ws.getCell(rowNum, 12);
         const notesParts = [
           htmlToText(p.selectedOptions?.deliveryStatus),
           htmlToText(p.selectedOptions?.notes),
           htmlToText(p.selectedOptions?.installerNotes),
         ].filter(Boolean);
-        cellK.value = notesParts.join('\n') || '';
-        cellK.font = dataFont; cellK.border = thinBorder; cellK.alignment = wrapTop;
-
-        const cellL = ws.getCell(rowNum, 12);
-        const skuRoom = p.selectedOptions?.room || p.category || p.spotName || '';
-        const skuRoomCode = getRoomCode(skuRoom);
-        cellL.value = skuRoomCode ? `${skuRoomCode}-${p.product_id || ''}` : (p.product_id || '');
+        cellL.value = notesParts.join('\n') || '';
         cellL.font = dataFont; cellL.border = thinBorder; cellL.alignment = wrapTop;
+
+        const cellM = ws.getCell(rowNum, 13);
+        cellM.value = p.selectedOptions?.statusCategory || '';
+        cellM.font = dataFont; cellM.border = thinBorder; cellM.alignment = wrapTop;
 
         rowNum++;
       });
     });
 
     if (products.length === 0) {
-      ws.mergeCells(`A${rowNum}:L${rowNum}`);
+      ws.mergeCells(`A${rowNum}:M${rowNum}`);
       ws.getCell(`A${rowNum}`).value     = 'No products in this order';
       ws.getCell(`A${rowNum}`).font      = { ...dataFont, italic: true };
       ws.getCell(`A${rowNum}`).alignment = { horizontal: 'center' };
       rowNum++;
     }
 
-    ws.mergeCells(`A${rowNum}:L${rowNum}`);
+    ws.mergeCells(`A${rowNum}:M${rowNum}`);
     const footerCell = ws.getCell(`A${rowNum}`);
     footerCell.value = 'Henderson Design Group  |  4343 Royal Place, Honolulu, HI 96816  |  (808) 315-8782';
     footerCell.font  = { name: 'Arial', size: 8, color: { argb: 'FF999999' }, italic: true };
@@ -4255,7 +4260,7 @@ const generateBulkPO = async (req, res) => {
               image: opts.image || '',
               images: opts.images || [],
               uploadedImages: opts.uploadedImages || [],
-              sidemark: opts.sidemark || opts.spotName || p.spotName || '',
+              sidemark: opts.sidemark || opts.room || opts.spotName || p.spotName || '',
               leadTime: opts.leadTime || '',
               notes: opts.notes || '',
               units: opts.units || 'Each',
@@ -4305,7 +4310,7 @@ const generateBulkPO = async (req, res) => {
         const totalCost = parseFloat(p.totalPrice) || unitCost * qty;
         const imgSrc = opts.uploadedImages?.[0]?.url || opts.image || opts.images?.[0] || null;
         const specs = opts.specifications || p.description || '';
-        const sidemark = opts.sidemark || opts.spotName || p.spotName || '';
+        const sidemark = opts.sidemark || opts.room || opts.spotName || p.spotName || '';
 
         return `<tr>
             <td class="img-cell">
