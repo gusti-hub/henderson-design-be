@@ -24,7 +24,7 @@ const parseSku = (sku) => {
 // ─── Schema ────────────────────────────────────────────────────────────────
 const productSchema = new mongoose.Schema({
   // Identity
-  product_id:  { type: String, required: true, unique: true },
+  product_id:  { type: String, required: true },
   name:        { type: String, required: true },
   description: { type: String, default: '' },
   category:    { type: String, default: 'General' },
@@ -112,7 +112,17 @@ productSchema.pre('save', function (next) {
   next();
 });
 
+productSchema.index({ product_id: 1, vendor: 1 });
+
 const Product = mongoose.model('Product', productSchema);
+
+// Drop the legacy unique single-field index so duplicate SKUs with different vendors are allowed
+const _dropLegacyIndex = () => Product.collection.dropIndex('product_id_1').catch(() => {});
+if (mongoose.connection.readyState === 1) {
+  _dropLegacyIndex();
+} else {
+  mongoose.connection.once('open', _dropLegacyIndex);
+}
 
 module.exports             = Product;
 module.exports.parseSku     = parseSku;

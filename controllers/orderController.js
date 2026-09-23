@@ -1639,6 +1639,28 @@ const REPORT_ROOM_ORDER = [
   'REVEAL PREPARATION',
 ];
 
+const ROOM_CODES = {
+  'COURTYARD': 'COU', 'EXTERIOR ENTRY': 'EXT', 'INTERIOR ENTRY': 'INT',
+  'FOYER': 'FOY', 'KITCHEN': 'KIT', 'PANTRY': 'PAN', 'BREAKFAST NOOK': 'BRK',
+  'DINING ROOM': 'DIN', 'LIVING ROOM': 'LIV', 'GREAT ROOM': 'GRE',
+  'FAMILY ROOM': 'FAM', 'DEN': 'DEN', 'WET BAR': 'WET', 'MEDIA ROOM': 'MED',
+  'HALLWAY': 'HAL', 'HALLWAY 1': 'HA1', 'HALLWAY 2': 'HA2',
+  'LANAI': 'LAN', 'LANAI 1': 'LA1', 'LANAI 2': 'LA2', 'LANAI 3': 'LA3',
+  'MAIN LANAI': 'MAI', 'BBQ AREA': 'BBQ', 'POOL LANAI': 'POL',
+  'POWDER ROOM': 'POW', 'PULL AREA': 'PUL', 'PULL BATH': 'PUB',
+  'PAVILLION': 'PAV', 'GYM': 'GYM', 'OFFICE': 'OFF', 'OFFICE 1': 'OF1',
+  'OFFICE 2': 'OF2', 'WINE ROOM': 'WIN', 'REC ROOM': 'REC', 'GARAGE': 'GAR',
+  'PRIMARY BEDROOM': 'PRB', 'PRIMARY BATHROOM': 'PBA', 'PRIMARY CLOSET': 'PRC',
+  'PRIMARY BEDROOM LANAI': 'PBL',
+  'BEDROOM 2': 'BE2', 'BATHROOM 2': 'BA2', 'BEDROOM 2 CLOSET': 'BC2', 'BEDROOM 2 LANAI': 'BL2',
+  'BEDROOM 3': 'BE3', 'BATHROOM 3': 'BA3', 'BEDROOM 3 CLOSET': 'BC3', 'BEDROOM 3 LANAI': 'BL3',
+  'BEDROOM 4': 'BE4', 'BATHROOM 4': 'BA4', 'BEDROOM 4 CLOSET': 'BC4', 'BEDROOM 4 LANAI': 'BL4',
+  'SITTING ROOM': 'SIT', 'FLEX SPACE': 'FLE', 'LAUNDRY ROOM': 'LAU',
+  'MUD ROOM': 'MUD', 'TERRACE': 'TER', 'BALCONY': 'BAL',
+  'OUTDOOR DINING': 'ODI', 'OUTDOOR LIVING': 'ODL', 'GUEST SUITE': 'GUE',
+};
+const getRoomCode = (room) => ROOM_CODES[(room || '').trim().toUpperCase()] || '';
+
 const roomSortKey = (room) => {
   if (!room) return 9999;
   const idx = REPORT_ROOM_ORDER.indexOf(room.trim().toUpperCase());
@@ -2069,6 +2091,7 @@ const generateInstallBinderExcel = async (req, res) => {
     ws.getColumn('I').width = 24;
     ws.getColumn('J').width = 20;
     ws.getColumn('K').width = 26;
+    ws.getColumn('L').width = 22;
 
     const thinBorder = {
       top: { style: 'thin' }, left: { style: 'thin' },
@@ -2078,21 +2101,21 @@ const generateInstallBinderExcel = async (req, res) => {
     const dataFont   = { name: 'Arial', size: 9 };
     const wrapTop    = { vertical: 'top', wrapText: true };
 
-    ws.mergeCells('A1:K1');
+    ws.mergeCells('A1:L1');
     const titleCell = ws.getCell('A1');
     titleCell.value     = 'Henderson Design Group — Install Binder';
     titleCell.font      = { name: 'Arial', bold: true, size: 13, color: { argb: 'FF005670' } };
     titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(1).height = 28;
 
-    ws.mergeCells('A2:K2');
+    ws.mergeCells('A2:L2');
     const projCell = ws.getCell('A2');
     projCell.value     = projectLabel;
     projCell.font      = { name: 'Arial', bold: true, size: 10 };
     projCell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(2).height = 20;
 
-    ws.mergeCells('A3:K3');
+    ws.mergeCells('A3:L3');
     const dateCell = ws.getCell('A3');
     dateCell.value = `Printed: ${new Date().toLocaleDateString('en-US', {
       month: '2-digit', day: '2-digit', year: 'numeric'
@@ -2102,7 +2125,7 @@ const generateInstallBinderExcel = async (req, res) => {
     ws.getRow(3).height = 16;
 
     ['Photo','Room','Vendor Name','Vendor Description','HDG PO#','Qty',
-     'Vendor Order #','Date Received','Tracking Info','Shipping Carrier','Notes'].forEach((h, i) => {
+     'Vendor Order #','Date Received','Tracking Info','Shipping Carrier','Notes','SKU Code'].forEach((h, i) => {
       const cell = ws.getCell(4, i + 1);
       cell.value     = h;
       cell.font      = headerFont;
@@ -2122,7 +2145,7 @@ const generateInstallBinderExcel = async (req, res) => {
     let rowNum = 5;
 
     Object.entries(grouped).forEach(([room, roomProducts]) => {
-      ws.mergeCells(`A${rowNum}:K${rowNum}`);
+      ws.mergeCells(`A${rowNum}:L${rowNum}`);
       const roomCell = ws.getCell(`A${rowNum}`);
       roomCell.value     = room;
       roomCell.font      = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF005670' } };
@@ -2208,19 +2231,25 @@ const generateInstallBinderExcel = async (req, res) => {
         cellK.value = notesParts.join('\n') || '';
         cellK.font = dataFont; cellK.border = thinBorder; cellK.alignment = wrapTop;
 
+        const cellL = ws.getCell(rowNum, 12);
+        const skuRoom = p.selectedOptions?.room || p.category || p.spotName || '';
+        const skuRoomCode = getRoomCode(skuRoom);
+        cellL.value = skuRoomCode ? `${skuRoomCode}-${p.product_id || ''}` : (p.product_id || '');
+        cellL.font = dataFont; cellL.border = thinBorder; cellL.alignment = wrapTop;
+
         rowNum++;
       });
     });
 
     if (products.length === 0) {
-      ws.mergeCells(`A${rowNum}:K${rowNum}`);
+      ws.mergeCells(`A${rowNum}:L${rowNum}`);
       ws.getCell(`A${rowNum}`).value     = 'No products in this order';
       ws.getCell(`A${rowNum}`).font      = { ...dataFont, italic: true };
       ws.getCell(`A${rowNum}`).alignment = { horizontal: 'center' };
       rowNum++;
     }
 
-    ws.mergeCells(`A${rowNum}:K${rowNum}`);
+    ws.mergeCells(`A${rowNum}:L${rowNum}`);
     const footerCell = ws.getCell(`A${rowNum}`);
     footerCell.value = 'Henderson Design Group  |  4343 Royal Place, Honolulu, HI 96816  |  (808) 315-8782';
     footerCell.font  = { name: 'Arial', size: 8, color: { argb: 'FF999999' }, italic: true };

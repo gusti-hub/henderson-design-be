@@ -151,11 +151,12 @@ const createProduct = async (req, res) => {
     const allowUpsert = req.query.upsert === 'true';
 
     if (skuToCheck && allowUpsert) {
-      // Bulk import path: create or update existing by SKU
+      // Bulk import path: upsert by (product_id + vendor) so same SKU with different vendor creates a separate product
       const uploadedFile = req.file || null;
       const data = buildProductData(req.body, uploadedFile);
+      const vendorKey = (req.body.vendor || '').trim();
       const product = await Product.findOneAndUpdate(
-        { product_id: skuToCheck },
+        { product_id: new RegExp(`^${skuToCheck.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), vendor: vendorKey },
         { $set: { ...data, sourceType: 'admin-created' } },
         { new: true, upsert: true, setDefaultsOnInsert: true }
       );
@@ -489,28 +490,29 @@ const bulkUpdatePreview = async (req, res) => {
     if (!Array.isArray(rows) || !rows.length)
       return res.status(400).json({ message: 'rows array is required' });
 
-    const skuMap = {};
-    rows.forEach(r => { if (r.product_id) skuMap[r.product_id.trim()] = r; });
-    const uniqueRows = Object.values(skuMap);
+    const validRows = rows.filter(r => r.product_id);
 
-    const skus = uniqueRows.map(r => r.product_id.trim());
-    // Case-insensitive lookup so Excel-edited SKUs still match
+    // Lookup existing docs by product_id + vendor compound key
     const existing = await Product.find({
-      product_id: { $in: skus.map(s => new RegExp(`^${escapeRegex(s)}$`, 'i')) }
+      $or: validRows.map(r => ({
+        product_id: new RegExp(`^${escapeRegex(r.product_id.trim())}$`, 'i'),
+        vendor: (r.vendor || '').trim(),
+      })),
     }).lean();
     const existingMap = {};
-    // Key the map by UPPERCASE so lookup is always case-insensitive
-    existing.forEach(p => { existingMap[p.product_id.toUpperCase()] = p; });
+    existing.forEach(p => {
+      existingMap[`${p.product_id.toUpperCase()}::${p.vendor || ''}`] = p;
+    });
 
-    const preview = uniqueRows.map(row => {
-      const sku = row.product_id.trim();
-      const doc = existingMap[sku.toUpperCase()];
+    const preview = validRows.map(row => {
+      const sku    = row.product_id.trim();
+      const vendor = (row.vendor || '').trim();
+      const doc    = existingMap[`${sku.toUpperCase()}::${vendor}`];
       if (!doc) return { product_id: sku, name: row.name || '', notFound: true, changes: {} };
 
       const payload = buildUpdatePayloadFromRow(row);
       const changes = diffProduct(doc, payload);
 
-      // For skipped rows: include the identical field values so the UI can explain why
       let identical = null;
       if (!Object.keys(changes).length) {
         identical = {};
@@ -539,30 +541,39 @@ const bulkUpdateProducts = async (req, res) => {
     if (!Array.isArray(rows) || !rows.length)
       return res.status(400).json({ message: 'rows array is required' });
 
-    const skuMap = {};
-    rows.forEach(r => { if (r.product_id) skuMap[r.product_id.trim()] = r; });
-    const uniqueRows = Object.values(skuMap);
+    const validRows = rows.filter(r => r.product_id);
 
-    const skus = uniqueRows.map(r => r.product_id.trim());
-    // Case-insensitive lookup
+    // Lookup existing docs by product_id + vendor compound key
     const existing = await Product.find({
-      product_id: { $in: skus.map(s => new RegExp(`^${escapeRegex(s)}$`, 'i')) }
+      $or: validRows.map(r => ({
+        product_id: new RegExp(`^${escapeRegex(r.product_id.trim())}$`, 'i'),
+        vendor: (r.vendor || '').trim(),
+      })),
     }).lean();
     const existingMap = {};
-    existing.forEach(p => { existingMap[p.product_id.toUpperCase()] = p; });
+    existing.forEach(p => {
+      existingMap[`${p.product_id.toUpperCase()}::${p.vendor || ''}`] = p;
+    });
 
     let updatedCount  = 0;
+    let createdCount  = 0;
     let skippedCount  = 0;
-    let notFoundCount = 0;
     const errors      = [];
 
-    await Promise.all(uniqueRows.map(async (row) => {
-      const sku = row.product_id.trim();
-      const doc = existingMap[sku.toUpperCase()];
-
-      if (!doc) { notFoundCount++; return; }
+    await Promise.all(validRows.map(async (row) => {
+      const sku    = row.product_id.trim();
+      const vendor = (row.vendor || '').trim();
+      const doc    = existingMap[`${sku.toUpperCase()}::${vendor}`];
 
       try {
+        if (!doc) {
+          // New product — create it
+          const newData = buildProductData({ ...row, product_id: sku });
+          await Product.create(newData);
+          createdCount++;
+          return;
+        }
+
         const payload = buildUpdatePayloadFromRow(row);
         const changes = diffProduct(doc, payload);
 
@@ -582,7 +593,7 @@ const bulkUpdateProducts = async (req, res) => {
       }
     }));
 
-    res.json({ message: 'Bulk update complete', updatedCount, skippedCount, notFoundCount, errors });
+    res.json({ message: 'Bulk update complete', updatedCount, createdCount, skippedCount, notFoundCount: 0, errors });
   } catch (error) {
     console.error('bulkUpdateProducts error:', error);
     res.status(500).json({ message: error.message });
