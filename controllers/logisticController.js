@@ -138,6 +138,7 @@ const buildRow = (order, orderProd, poProd, po) => {
     expectedArrivalDate: opts.expectedArrivalDate || '',
     remark:              opts.notes || '',
     dateInspected:       opts.dateInspected || '',
+    orderDate:           opts.orderDate || '',
   };
 };
 
