@@ -325,6 +325,7 @@ exports.updateEntry = async (req, res) => {
       expectedArrivalDate,
       remark,
       poQuantity,
+      orderDate,
     } = req.body;
 
     const order = await Order.findById(orderId);
@@ -353,6 +354,7 @@ exports.updateEntry = async (req, res) => {
     if (expectedShipDate !== undefined)    opts.expectedShipDate   = expectedShipDate;
     if (expectedArrivalDate !== undefined) opts.expectedArrivalDate = expectedArrivalDate;
     if (remark !== undefined)              opts.notes              = remark;
+    if (orderDate !== undefined)           opts.orderDate          = orderDate;
 
     // PO QTY override — syncs to CPM product quantity as well
     let resolvedPoQty = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (sp.quantity ?? 1);
