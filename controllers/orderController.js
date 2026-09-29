@@ -2991,10 +2991,20 @@ const generateCogExcel = async (req, res) => {
     const lotLabel     = unitNumber ? ` - Lot ${unitNumber}` : '';
     const projectLabel = `Project: ${clientName}${lotLabel} - ${shortId}`;
 
-    const products = order.selectedProducts || [];
+    // Find ALL orders for the same client so COG covers every order in the project
+    const relatedOrderQuery = { user: order.user };
+    if (clientName) relatedOrderQuery['clientInfo.name'] = clientName;
+    if (unitNumber)  relatedOrderQuery['clientInfo.unitNumber'] = unitNumber;
+
+    const relatedOrders = await Order.find(relatedOrderQuery)
+      .populate('selectedProducts.vendor')
+      .lean();
+
+    const allOrderIds = relatedOrders.map(o => o._id);
+    const products    = relatedOrders.flatMap(o => o.selectedProducts || []);
 
     // ✅ Fetch latest POVersion per vendor — for PO number lookup
-    const poVersions = await POVersion.find({ orderId: req.params.id })
+    const poVersions = await POVersion.find({ orderId: { $in: allOrderIds } })
       .sort({ version: -1 })
       .lean();
 
@@ -3071,15 +3081,24 @@ const generateCogExcel = async (req, res) => {
 
     console.log('[COG] vendorCalcTotals:', JSON.stringify([...vendorCalcTotals.entries()]));
 
+    // Only show PO rows for vendors that have at least one product in the related orders
+    const vendorsWithProducts = new Set(
+      products
+        .map(p => p.vendor?._id?.toString() || p.vendor?.toString())
+        .filter(Boolean)
+    );
+
     // Build final rows
     const poRows = [
-      ...Array.from(rowMap.values()).map(row => ({
-        poNumber:   row.poNumber,
-        vendorName: row.vendorName,
-        poStatus:   row.poStatus,
-        poEntry:    row.poEntry,
-        total:      getPOTotal(row),
-      })),
+      ...Array.from(rowMap.values())
+        .filter(row => vendorsWithProducts.has(row.vendorId))
+        .map(row => ({
+          poNumber:   row.poNumber,
+          vendorName: row.vendorName,
+          poStatus:   row.poStatus,
+          poEntry:    row.poEntry,
+          total:      getPOTotal(row),
+        })),
       ...Array.from(noPoVendors.values()).map(row => ({
         poNumber:   '(No PO# yet)',
         vendorName: row.vendorName,
