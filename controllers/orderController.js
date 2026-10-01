@@ -3776,6 +3776,7 @@ const getBulkExportVendors = async (req, res) => {
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ message: 'No order IDs provided' });
     }
+    // Expand to all orders for the same users so all packages/phases are included
     const selectedOrders = await Order.find({ _id: { $in: orderIds } }).lean();
     const userIds = [...new Set(selectedOrders.map(o => o.user?.toString()).filter(Boolean))];
     const allOrders = await Order.find({ user: { $in: userIds } }).lean();
@@ -3815,9 +3816,8 @@ const generateBulkExport = async (req, res) => {
       ? new Set(vendorFilter)
       : null;
 
-    // Admin list groups by client and shows only the latest order per client.
     // Expand: for each selected order, include ALL orders for the same user so
-    // that older orders' POs are captured in the export.
+    // that POs across multiple orders (packages/phases) for a client are combined.
     const selectedOrders = await Order.find({ _id: { $in: orderIds } }).lean();
     const userIds = [...new Set(selectedOrders.map(o => o.user?.toString()).filter(Boolean))];
     const orders = await Order.find({ user: { $in: userIds } }).lean();
@@ -3848,7 +3848,18 @@ const generateBulkExport = async (req, res) => {
       if (!fullOrder) return;
 
       const vendorProductsMap = new Map();
+      // orderCostMap: product_id → unitCost from Order.selectedProducts
+      // (same source of truth as the single PO view — handles old POVersions
+      //  where p.unitPrice was not stored / stored as 0)
+      const orderCostMap = new Map();
       for (const p of (fullOrder.selectedProducts || [])) {
+        const opts = p.selectedOptions || {};
+        const unitCost = (opts.netCostOverride != null && opts.netCostOverride !== '')
+          ? parseFloat(opts.netCostOverride)
+          : parseFloat(opts.msrp || 0);
+        const pid = p.product_id || p._id?.toString();
+        if (pid) orderCostMap.set(pid, unitCost);
+
         if (!p.vendor) continue;
         const vid = p.vendor?._id?.toString() || p.vendor?.toString();
         if (!vid) continue;
@@ -3895,7 +3906,7 @@ const generateBulkExport = async (req, res) => {
         ...tempPOs,
       ].sort((a, b) => (a.vendorInfo?.name || '').localeCompare(b.vendorInfo?.name || ''));
 
-      posByOrder.set(order._id.toString(), combinedPOs);
+      posByOrder.set(order._id.toString(), { pos: combinedPOs, costMap: orderCostMap });
     }));
 
     const wb = new ExcelJS.Workbook();
@@ -3996,10 +4007,11 @@ const generateBulkExport = async (req, res) => {
     for (const order of orders) {
       const clientName = order.clientInfo?.name || 'Unknown';
       const unitNumber = order.clientInfo?.unitNumber || '';
-      const allPos = posByOrder.get(order._id.toString()) || [];
+      const { pos: allPos = [], costMap: orderCostMap = new Map() } = posByOrder.get(order._id.toString()) || {};
       const pos = vendorIdSet
         ? allPos.filter(po => vendorIdSet.has(po.vendorId?.toString()))
         : allPos;
+      if (pos.length === 0) continue; // skip orders with no PO rows
       let orderTotal = 0;
 
       // Client separator row in Detail sheet
@@ -4036,10 +4048,17 @@ const generateBulkExport = async (req, res) => {
         for (const p of liveProducts) {
           const opts = p.selectedOptions || {};
           const qty = parseFloat(p.quantity) || 1;
-          // Mirror computeNetCost from poController
-          const unitCost = (opts.netCostOverride != null && opts.netCostOverride !== '')
-            ? parseFloat(opts.netCostOverride)
-            : parseFloat(opts.msrp || 0);
+          // Primary: look up from Order.selectedProducts (same source as the single PO view).
+          // This handles old POVersions where p.unitPrice was never stored / stored as 0.
+          // Fall back to p.unitPrice (correctly-saved newer POs), then opts values (temp POs).
+          const pid = p.product_id || p._id?.toString();
+          const unitCost = orderCostMap.has(pid)
+            ? orderCostMap.get(pid)
+            : (parseFloat(p.unitPrice) > 0
+                ? parseFloat(p.unitPrice)
+                : ((opts.netCostOverride != null && opts.netCostOverride !== '')
+                    ? parseFloat(opts.netCostOverride)
+                    : parseFloat(opts.msrp || 0)));
           const totalCost = unitCost * qty;
           poTotal += totalCost;
 
