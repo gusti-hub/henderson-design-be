@@ -639,7 +639,7 @@ const syncProposalToQuickBooks = async (req, res) => {
       if (opts.room)              descParts.push(`Room: ${opts.room}`);
       if (p.name)                 descParts.push(p.name);
       if (opts.specifications)    descParts.push(stripHtml(opts.specifications));
-      if (opts.vendorDescription) descParts.push(stripHtml(opts.vendorDescription));
+      if (opts.clientDescription) descParts.push(stripHtml(opts.clientDescription));
       if (opts.finish)            descParts.push(`Finish: ${opts.finish}`);
       if (opts.fabric)            descParts.push(`Fabric: ${opts.fabric}`);
       if (opts.size)              descParts.push(`Size: ${opts.size}`);

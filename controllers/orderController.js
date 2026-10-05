@@ -725,7 +725,7 @@ const generateProposal = async (req, res) => {
     });
 
     const products = order.selectedProducts || [];
-    
+
     const productPages = [];
     productPages.push(products.slice(0, 2));
     for (let i = 2; i < products.length; i += 3) {
@@ -924,8 +924,8 @@ const generateProposal = async (req, res) => {
                           <div class="section-content">
                               <div class="product-box">
                                   <div class="product-image">
-                                      ${product.selectedOptions?.image ? 
-                                          `<img src="${product.selectedOptions.image}" alt="${product.name}">` 
+                                      ${product.selectedOptions?.image ?
+                                          `<img src="${product.selectedOptions.image}" alt="${product.name}">`
                                           : '<div style="width:120px;height:120px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;">No Image</div>'}
                                   </div>
                                   <div class="product-details">

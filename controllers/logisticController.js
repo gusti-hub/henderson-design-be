@@ -329,71 +329,81 @@ exports.updateEntry = async (req, res) => {
       orderDate,
     } = req.body;
 
-    const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: 'Order not found' });
+    const mongoose = require('mongoose');
+    const elemId = new mongoose.Types.ObjectId(productId);
+    const pf     = (f) => `selectedProducts.$[elem].selectedOptions.${f}`;
 
-    const prodIdx = order.selectedProducts.findIndex(
-      sp => sp._id?.toString() === productId
-    );
-    if (prodIdx === -1) return res.status(404).json({ message: 'Product not found in order' });
+    // Read current product state (needed for QC logic and resolvedPoQty)
+    const orderSnap = await Order.findOne(
+      { _id: orderId, 'selectedProducts._id': elemId },
+      { 'selectedProducts.$': 1 }
+    ).lean();
+    if (!orderSnap) return res.status(404).json({ message: 'Order not found' });
+    const sp   = orderSnap.selectedProducts?.[0];
+    if (!sp)   return res.status(404).json({ message: 'Product not found in order' });
+    const opts = sp.selectedOptions || {};
 
-    const sp   = order.selectedProducts[prodIdx];
-    // Spread into a plain object so Mongoose sees it as a full replacement (same pattern as orderController)
-    const opts = sp.selectedOptions?.toObject ? sp.selectedOptions.toObject() : { ...(sp.selectedOptions || {}) };
+    // Per-field $set — each field is independent so concurrent saves of different fields
+    // on the same product never overwrite each other
+    const setFields = { updatedAt: Date.now(), updatedBy: req.user._id };
+    const incFields = {};
 
-    if (projectCode !== undefined)         order.projectCode = projectCode;
-    if (location !== undefined)            opts.room               = location;
-    if (cargoReadyDate !== undefined)      opts.cargoReadyDate     = cargoReadyDate;
-    if (shipmentDate !== undefined)        opts.shipmentDate       = shipmentDate;
-    if (logDrawing != null)                opts.logDrawing         = Number(logDrawing);
-    if (logMachining != null)              opts.logMachining       = Number(logMachining);
-    if (logAssembly != null)               opts.logAssembly        = Number(logAssembly);
-    if (logFinishing != null)              opts.logFinishing       = Number(logFinishing);
-    if (logPacking != null)                opts.logPacking         = Number(logPacking);
-    if (containerNumber !== undefined)     opts.containerNumber    = containerNumber;
-    if (statusCategory !== undefined)      opts.statusCategory     = statusCategory;
-    if (expectedShipDate !== undefined)    opts.expectedShipDate   = expectedShipDate;
-    if (expectedArrivalDate !== undefined) opts.expectedArrivalDate = expectedArrivalDate;
-    if (remark !== undefined)              opts.notes              = remark;
-    if (orderDate !== undefined)           opts.orderDate          = orderDate;
+    if (projectCode !== undefined)         setFields.projectCode             = projectCode;
+    // location/room is not editable via Logistic tracker
+    if (cargoReadyDate !== undefined)      setFields[pf('cargoReadyDate')]   = cargoReadyDate;
+    if (shipmentDate !== undefined)        setFields[pf('shipmentDate')]      = shipmentDate;
+    if (logDrawing != null)                setFields[pf('logDrawing')]        = Number(logDrawing);
+    if (logMachining != null)              setFields[pf('logMachining')]      = Number(logMachining);
+    if (logAssembly != null)               setFields[pf('logAssembly')]       = Number(logAssembly);
+    if (logFinishing != null)              setFields[pf('logFinishing')]      = Number(logFinishing);
+    if (logPacking != null)                setFields[pf('logPacking')]        = Number(logPacking);
+    if (containerNumber !== undefined)     setFields[pf('containerNumber')]   = containerNumber;
+    if (statusCategory !== undefined)      setFields[pf('statusCategory')]    = statusCategory;
+    if (expectedShipDate !== undefined)    setFields[pf('expectedShipDate')]  = expectedShipDate;
+    if (expectedArrivalDate !== undefined) setFields[pf('expectedArrivalDate')] = expectedArrivalDate;
+    if (remark !== undefined)              setFields[pf('notes')]             = remark;
+    if (orderDate !== undefined)           setFields[pf('orderDate')]         = orderDate;
 
-    // PO QTY override — syncs to CPM product quantity as well
+    // PO QTY
     let resolvedPoQty = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (sp.quantity ?? 1);
     if (poQuantity !== undefined) {
       resolvedPoQty = Number(poQuantity);
-      opts.poQtyOverride = resolvedPoQty;
-      sp.quantity        = resolvedPoQty;
+      setFields[pf('poQtyOverride')]                      = resolvedPoQty;
+      setFields['selectedProducts.$[elem].quantity']      = resolvedPoQty;
     }
 
-    // Packing list: additive accumulation of shipped qty
-    let resolvedShipped = Math.max(0, Number(opts.shippedQty ?? 0));
+    // Packing list: $inc for atomic accumulation — prevents double-count on concurrent saves
     if (packingList !== undefined) {
       const batchQty = Number(packingList);
       if (batchQty > 0) {
-        resolvedShipped        += batchQty;
-        opts.shippedQty         = resolvedShipped;
-        opts.packingListQty     = batchQty;
+        incFields[pf('shippedQty')]    = batchQty;
+        setFields[pf('packingListQty')] = batchQty;
       }
     }
 
-    // QC Checking business logic: auto-fill dateInspected when reaches 100%
+    // QC Checking: auto-fill dateInspected when reaches 100%
     let newDateInspected = opts.dateInspected || '';
     if (logQcChecking !== undefined) {
       const prev = opts.logQcChecking ?? 0;
-      opts.logQcChecking = Number(logQcChecking);
-      if (opts.logQcChecking === 5 && prev < 5 && !opts.dateInspected) {
-        newDateInspected   = new Date().toISOString().split('T')[0];
-        opts.dateInspected = newDateInspected;
+      setFields[pf('logQcChecking')] = Number(logQcChecking);
+      if (Number(logQcChecking) === 5 && prev < 5 && !opts.dateInspected) {
+        newDateInspected = new Date().toISOString().split('T')[0];
+        setFields[pf('dateInspected')] = newDateInspected;
       }
     }
 
-    // Replace selectedOptions wholesale so Mongoose detects the change (same as orderController)
-    sp.selectedOptions = opts;
-    order.updatedAt    = Date.now();
-    order.updatedBy    = req.user._id;
-    order.markModified('selectedProducts');
-    await order.save();
+    const updateOp = { $set: setFields };
+    if (Object.keys(incFields).length > 0) updateOp.$inc = incFields;
 
+    const updated = await Order.findOneAndUpdate(
+      { _id: orderId },
+      updateOp,
+      { arrayFilters: [{ 'elem._id': elemId }], new: true }
+    );
+
+    const updatedProduct = (updated?.selectedProducts || []).find(p => p._id?.equals(elemId));
+    const updatedOpts    = updatedProduct?.selectedOptions || {};
+    const resolvedShipped = Math.max(0, Number(updatedOpts.shippedQty ?? 0));
     const resolvedBalance = Math.max(0, resolvedPoQty - resolvedShipped);
 
     res.json({
@@ -435,65 +445,77 @@ exports.updatePoEntry = async (req, res) => {
       poQuantity,
     } = req.body;
 
-    const po = await POVersion.findById(poVersionId);
-    if (!po) return res.status(404).json({ message: 'POVersion not found' });
+    const mongoose = require('mongoose');
+    const poElemId = new mongoose.Types.ObjectId(poProductId);
+    const ppf      = (f) => `products.$[elem].selectedOptions.${f}`;
 
-    const prodIdx = (po.products || []).findIndex(
-      p => p._id?.toString() === poProductId
-    );
-    if (prodIdx === -1) return res.status(404).json({ message: 'Product not found in POVersion' });
+    // Read current product state (needed for QC logic and resolvedPoQty)
+    const poSnap = await POVersion.findOne(
+      { _id: poVersionId, 'products._id': poElemId },
+      { 'products.$': 1 }
+    ).lean();
+    if (!poSnap) return res.status(404).json({ message: 'POVersion not found' });
+    const poProd = poSnap.products?.[0];
+    if (!poProd) return res.status(404).json({ message: 'Product not found in POVersion' });
+    const opts   = poProd.selectedOptions || {};
 
-    if (!po.products[prodIdx].selectedOptions) po.products[prodIdx].selectedOptions = {};
-    const opts = po.products[prodIdx].selectedOptions;
+    const poSetFields = {};
+    const poIncFields = {};
 
-    const setIfDefined = (key, val) => { if (val !== undefined) opts[key] = val; };
+    // location is not editable via Logistic tracker
+    if (cargoReadyDate !== undefined)      poSetFields[ppf('cargoReadyDate')]     = cargoReadyDate;
+    if (shipmentDate !== undefined)        poSetFields[ppf('shipmentDate')]        = shipmentDate;
+    if (logDrawing != null)                poSetFields[ppf('logDrawing')]          = Number(logDrawing);
+    if (logMachining != null)              poSetFields[ppf('logMachining')]        = Number(logMachining);
+    if (logAssembly != null)               poSetFields[ppf('logAssembly')]         = Number(logAssembly);
+    if (logFinishing != null)              poSetFields[ppf('logFinishing')]        = Number(logFinishing);
+    if (logPacking != null)                poSetFields[ppf('logPacking')]          = Number(logPacking);
+    if (containerNumber !== undefined)     poSetFields[ppf('containerNumber')]     = containerNumber;
+    if (statusCategory !== undefined)      poSetFields[ppf('statusCategory')]      = statusCategory;
+    if (expectedShipDate !== undefined)    poSetFields[ppf('expectedShipDate')]    = expectedShipDate;
+    if (expectedArrivalDate !== undefined) poSetFields[ppf('expectedArrivalDate')] = expectedArrivalDate;
+    if (remark !== undefined)              poSetFields[ppf('remark')]              = remark;
 
-    setIfDefined('projectCode',         projectCode);
-    setIfDefined('location',            location);
-    setIfDefined('cargoReadyDate',      cargoReadyDate);
-    setIfDefined('shipmentDate',        shipmentDate);
-    setIfDefined('logDrawing',          logDrawing != null ? Number(logDrawing) : undefined);
-    setIfDefined('logMachining',        logMachining != null ? Number(logMachining) : undefined);
-    setIfDefined('logAssembly',         logAssembly != null ? Number(logAssembly) : undefined);
-    setIfDefined('logFinishing',        logFinishing != null ? Number(logFinishing) : undefined);
-    setIfDefined('logPacking',          logPacking != null ? Number(logPacking) : undefined);
-    setIfDefined('containerNumber',     containerNumber);
-    setIfDefined('statusCategory',      statusCategory);
-    setIfDefined('expectedShipDate',    expectedShipDate);
-    setIfDefined('expectedArrivalDate', expectedArrivalDate);
-    setIfDefined('remark',              remark);
-
-    // PO QTY override — syncs to PO product quantity as well
+    // PO QTY
+    let resolvedPoQty = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (poProd.quantity ?? 1);
     if (poQuantity !== undefined) {
-      const qty = Number(poQuantity);
-      opts.poQtyOverride = qty;
-      po.products[prodIdx].quantity = qty;
+      resolvedPoQty = Number(poQuantity);
+      poSetFields[ppf('poQtyOverride')]         = resolvedPoQty;
+      poSetFields['products.$[elem].quantity']  = resolvedPoQty;
     }
 
-    // Packing list: additive accumulation of shipped qty
+    // Packing list: $inc for atomic accumulation
     if (packingList !== undefined) {
       const batchQty = Number(packingList);
       if (batchQty > 0) {
-        opts.shippedQty = Math.max(0, Number(opts.shippedQty ?? 0)) + batchQty;
-        opts.packingListQty = batchQty;
+        poIncFields[ppf('shippedQty')]    = batchQty;
+        poSetFields[ppf('packingListQty')] = batchQty;
       }
     }
 
-    // QC Checking business logic
+    // QC Checking: auto-fill dateInspected when reaches 100%
+    let newDateInspected = opts.dateInspected || '';
     if (logQcChecking !== undefined) {
       const prev = opts.logQcChecking ?? 0;
-      opts.logQcChecking = Number(logQcChecking);
-      if (opts.logQcChecking === 5 && prev < 5 && !opts.dateInspected) {
-        opts.dateInspected = new Date().toISOString().split('T')[0];
+      poSetFields[ppf('logQcChecking')] = Number(logQcChecking);
+      if (Number(logQcChecking) === 5 && prev < 5 && !opts.dateInspected) {
+        newDateInspected = new Date().toISOString().split('T')[0];
+        poSetFields[ppf('dateInspected')] = newDateInspected;
       }
     }
 
-    po.markModified('products');
-    await po.save();
+    const poUpdateOp = { $set: poSetFields };
+    if (Object.keys(poIncFields).length > 0) poUpdateOp.$inc = poIncFields;
 
-    const poProd = po.products[prodIdx];
-    const resolvedPoQty = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (poProd.quantity ?? 1);
-    const resolvedShipped = Math.max(0, Number(opts.shippedQty ?? 0));
+    const poUpdated = await POVersion.findOneAndUpdate(
+      { _id: poVersionId },
+      poUpdateOp,
+      { arrayFilters: [{ 'elem._id': poElemId }], new: true }
+    );
+
+    const updatedPoProd   = (poUpdated?.products || []).find(p => p._id?.equals(poElemId));
+    const updatedPoOpts   = updatedPoProd?.selectedOptions || {};
+    const resolvedShipped = Math.max(0, Number(updatedPoOpts.shippedQty ?? 0));
     const resolvedBalance = Math.max(0, resolvedPoQty - resolvedShipped);
 
     res.json({
