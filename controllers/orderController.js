@@ -3036,31 +3036,32 @@ const generateCogExcel = async (req, res) => {
       }
     });
 
-    // Build per-vendor calculated total from order products (same formula as PO Editor)
-    const vendorCalcTotals = new Map(); // vendorId → calcTotal
-    const noPoVendors = new Map();      // vendorId → { vendorName, calcTotal }
+    // Build order product lookup (product_id → order product) — PO Editor syncs live from order
+    const orderProductMap = {};
+    const noPoVendors = new Map();
+
+    const computeNetCostFromOrder = (p) => {
+      const opts = p.selectedOptions || {};
+      if (opts.netCostOverride != null && opts.netCostOverride !== '') return parseFloat(opts.netCostOverride) || 0;
+      return parseFloat(opts.msrp || p.unitPrice || 0);
+    };
 
     products.forEach((p) => {
       const vendorId   = p.vendor?._id?.toString() || p.vendor?.toString() || 'no_vendor';
       const vendorName = getVendorName(p);
 
-      const opts    = p.selectedOptions || {};
-      const qty     = parseFloat(p.quantity) || 1;
-      const netCost = (opts.netCostOverride != null && opts.netCostOverride !== '')
-                        ? parseFloat(opts.netCostOverride)
-                        : parseFloat(opts.msrp || p.unitPrice || 0);
-      const calc = netCost * qty;
-      vendorCalcTotals.set(vendorId, (vendorCalcTotals.get(vendorId) || 0) + calc);
+      // Always register in product map for PO product lookup
+      if (p.product_id) orderProductMap[p.product_id] = p;
 
       if (vendorsWithPO.has(vendorId)) {
-        // Update vendorName on all rows for this vendor
         for (const row of rowMap.values()) {
           if (row.vendorId === vendorId) row.vendorName = vendorName;
         }
         return;
       }
 
-      // Vendor has no PO — accumulate into noPoVendors
+      // Vendor has no PO — accumulate from order products
+      const calc = computeNetCostFromOrder(p) * (parseFloat(p.quantity) || 1);
       if (noPoVendors.has(vendorId)) {
         noPoVendors.get(vendorId).calcTotal += calc;
       } else {
@@ -3068,18 +3069,25 @@ const generateCogExcel = async (req, res) => {
       }
     });
 
-    // Use POVersion.total when > 0; otherwise fall back to order-product calculation + shipping/others
-    const getPOTotal = (row) => {
-      const saved = parseFloat(row.poEntry.total);
-      if (saved > 0) return saved;
-      const base     = vendorCalcTotals.get(row.vendorId) || 0;
-      const shipping = parseFloat(row.poEntry.shipping) || 0;
-      const others   = parseFloat(row.poEntry.others)   || 0;
-      console.log(`[COG] ${row.vendorName} | saved=${saved} base=${base} => ${base + shipping + others}`);
-      return base + shipping + others;
+    // PO total mirrors PO Editor's live sync: per-PO-product cost from ORDER (netCostOverride||msrp × qty)
+    // + additionalLines + shipping + others from POVersion
+    const getPOBreakdown = (row) => {
+      if (!row.poEntry) return { prodTotal: 0, addLines: 0, shipping: 0, others: 0, total: 0 };
+      const po        = row.poEntry;
+      const prodTotal = (po.products || []).reduce((sum, poProduct) => {
+        const op = orderProductMap[poProduct.product_id];
+        if (op) return sum + computeNetCostFromOrder(op) * (parseFloat(op.quantity) || 1);
+        // product removed from order — use saved PO data as fallback
+        return sum + (parseFloat(poProduct.unitPrice) || 0) * (parseFloat(poProduct.quantity) || 1);
+      }, 0);
+      const addLines = (po.additionalLines || []).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+      const shipping = parseFloat(po.shipping) || 0;
+      const others   = parseFloat(po.others)   || 0;
+      const total    = prodTotal + addLines + shipping + others;
+      return { prodTotal, addLines, shipping, others, total };
     };
 
-    console.log('[COG] vendorCalcTotals:', JSON.stringify([...vendorCalcTotals.entries()]));
+    const getPOTotal = (row) => getPOBreakdown(row).total;
 
     // Only show PO rows for vendors that have at least one product in the related orders
     const vendorsWithProducts = new Set(
@@ -3092,19 +3100,24 @@ const generateCogExcel = async (req, res) => {
     const poRows = [
       ...Array.from(rowMap.values())
         .filter(row => vendorsWithProducts.has(row.vendorId))
-        .map(row => ({
-          poNumber:   row.poNumber,
-          vendorName: row.vendorName,
-          poStatus:   row.poStatus,
-          poEntry:    row.poEntry,
-          total:      getPOTotal(row),
-        })),
+        .map(row => {
+          const bd = getPOBreakdown(row);
+          return {
+            poNumber:   row.poNumber,
+            vendorName: row.vendorName,
+            poStatus:   row.poStatus,
+            poEntry:    row.poEntry,
+            total:      bd.total,
+            breakdown:  bd,
+          };
+        }),
       ...Array.from(noPoVendors.values()).map(row => ({
         poNumber:   '(No PO# yet)',
         vendorName: row.vendorName,
         poStatus:   null,
         poEntry:    null,
         total:      row.calcTotal,
+        breakdown:  null,
       })),
     ];
 
@@ -3112,8 +3125,8 @@ const generateCogExcel = async (req, res) => {
     wb.creator = 'Henderson Design Group';
     const ws   = wb.addWorksheet('COG Report');
 
-    // Row 1 — project title
-    ws.mergeCells('A1:D1');
+    // Row 1 — project title (spans 5 columns now)
+    ws.mergeCells('A1:E1');
     const r1 = ws.getCell('A1');
     r1.value     = projectLabel;
     r1.font      = { name: 'Arial', bold: true, size: 11 };
@@ -3121,13 +3134,13 @@ const generateCogExcel = async (req, res) => {
     ws.getRow(1).height = 20;
 
     // Row 2 — yellow bar
-    ['A2','B2','C2','D2'].forEach(addr => {
+    ['A2','B2','C2','D2','E2'].forEach(addr => {
       ws.getCell(addr).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
     });
     ws.getRow(2).height = 14;
 
-    // Row 3 — black header (4 columns)
-    ['HDG PO#', 'Vendor', 'Status PO', 'HDG PO Total'].forEach((h, i) => {
+    // Row 3 — black header (5 columns: added Breakdown)
+    ['HDG PO#', 'Vendor', 'Status PO', 'HDG PO Total', 'Breakdown (prod + addl + ship + other)'].forEach((h, i) => {
       const cell = ws.getCell(3, i + 1);
       cell.value     = h;
       cell.font      = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
@@ -3136,31 +3149,49 @@ const generateCogExcel = async (req, res) => {
     });
     ws.getRow(3).height = 28;
 
+    const fmt2 = (n) => n.toFixed(2);
+
     // Data rows
     poRows.forEach((row, i) => {
       const r = i + 4;
       ws.getRow(r).height = 22;
-      const poCell     = ws.getCell(r, 1);
-      const vendorCell = ws.getCell(r, 2);
-      const statusCell = ws.getCell(r, 3);
-      const totalCell  = ws.getCell(r, 4);
+      const poCell        = ws.getCell(r, 1);
+      const vendorCell    = ws.getCell(r, 2);
+      const statusCell    = ws.getCell(r, 3);
+      const totalCell     = ws.getCell(r, 4);
+      const breakdownCell = ws.getCell(r, 5);
+
       poCell.value     = row.poNumber;
       vendorCell.value = row.vendorName;
       statusCell.value = row.poStatus || '—';
       totalCell.value  = row.total;
-      [poCell, vendorCell, statusCell, totalCell].forEach(c => {
+
+      if (row.breakdown) {
+        const bd = row.breakdown;
+        const parts = [`prod $${fmt2(bd.prodTotal)}`];
+        if (bd.addLines) parts.push(`addl $${fmt2(bd.addLines)}`);
+        if (bd.shipping) parts.push(`ship $${fmt2(bd.shipping)}`);
+        if (bd.others)   parts.push(`other $${fmt2(bd.others)}`);
+        breakdownCell.value = parts.join(' + ') + ` = $${fmt2(bd.total)}`;
+      } else if (row.poNumber === '(No PO# yet)') {
+        breakdownCell.value = 'estimated from order';
+      }
+
+      [poCell, vendorCell, statusCell, totalCell, breakdownCell].forEach(c => {
         c.font   = { name: 'Arial', size: 10 };
         c.border = { bottom: { style: 'thin', color: { argb: 'FFEEEEEE' } } };
       });
-      poCell.alignment     = { horizontal: 'left',   vertical: 'middle', indent: 1 };
-      vendorCell.alignment = { horizontal: 'left',   vertical: 'middle', indent: 1 };
-      statusCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      totalCell.alignment  = { horizontal: 'right',  vertical: 'middle' };
-      totalCell.numFmt     = '"$"#,##0.00';
+      poCell.alignment        = { horizontal: 'left',   vertical: 'middle', indent: 1 };
+      vendorCell.alignment    = { horizontal: 'left',   vertical: 'middle', indent: 1 };
+      statusCell.alignment    = { horizontal: 'center', vertical: 'middle' };
+      totalCell.alignment     = { horizontal: 'right',  vertical: 'middle' };
+      breakdownCell.alignment = { horizontal: 'left',   vertical: 'middle', indent: 1 };
+      totalCell.numFmt        = '"$"#,##0.00';
+      breakdownCell.font      = { name: 'Arial', size: 9, color: { argb: 'FF555555' } };
 
-      // Gray out rows without a PO yet — visual indicator for forecast
+      // Gray out rows without a PO yet
       if (row.poNumber === '(No PO# yet)') {
-        [poCell, vendorCell, statusCell, totalCell].forEach(c => {
+        [poCell, vendorCell, statusCell, totalCell, breakdownCell].forEach(c => {
           c.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF999999' } };
           c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
         });
@@ -3182,6 +3213,8 @@ const generateCogExcel = async (req, res) => {
     ws.getColumn(2).width = 34;
     ws.getColumn(3).width = 16;
     ws.getColumn(4).width = 18;
+    ws.getColumn(5).width = 46;
+    ws.getColumn(5).hidden = true; // Breakdown — hidden by default, unhide in Excel to verify
 
     const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
     const filename = `COG_${safeName}_${shortId}.xlsx`;
@@ -3271,21 +3304,21 @@ const generateCogWithBill = async (req, res) => {
       }
     });
 
-    // Build per-vendor calculated total from order products (same formula as PO Editor)
-    const vendorCalcTotals = new Map();
+    // Build order product lookup — PO Editor syncs live from order
+    const orderProductMapB = {};
     const noPoVendors = new Map();
+
+    const computeNetCostB = (p) => {
+      const opts = p.selectedOptions || {};
+      if (opts.netCostOverride != null && opts.netCostOverride !== '') return parseFloat(opts.netCostOverride) || 0;
+      return parseFloat(opts.msrp || p.unitPrice || 0);
+    };
 
     products.forEach((p) => {
       const vendorId   = p.vendor?._id?.toString() || p.vendor?.toString() || 'no_vendor';
       const vendorName = getVendorName(p);
 
-      const opts    = p.selectedOptions || {};
-      const qty     = parseFloat(p.quantity) || 1;
-      const netCost = (opts.netCostOverride != null && opts.netCostOverride !== '')
-                        ? parseFloat(opts.netCostOverride)
-                        : parseFloat(opts.msrp || p.unitPrice || 0);
-      const calc = netCost * qty;
-      vendorCalcTotals.set(vendorId, (vendorCalcTotals.get(vendorId) || 0) + calc);
+      if (p.product_id) orderProductMapB[p.product_id] = p;
 
       if (vendorsWithPO.has(vendorId)) {
         for (const row of rowMap.values()) {
@@ -3294,6 +3327,7 @@ const generateCogWithBill = async (req, res) => {
         return;
       }
 
+      const calc = computeNetCostB(p) * (parseFloat(p.quantity) || 1);
       if (noPoVendors.has(vendorId)) {
         noPoVendors.get(vendorId).calcTotal += calc;
       } else {
@@ -3301,13 +3335,18 @@ const generateCogWithBill = async (req, res) => {
       }
     });
 
-    const getPOTotal = (row) => {
-      const saved = parseFloat(row.poEntry.total);
-      if (saved > 0) return saved;
-      const base     = vendorCalcTotals.get(row.vendorId) || 0;
-      const shipping = parseFloat(row.poEntry.shipping) || 0;
-      const others   = parseFloat(row.poEntry.others)   || 0;
-      return base + shipping + others;
+    const getPOBreakdownB = (row) => {
+      if (!row.poEntry) return { prodTotal: 0, addLines: 0, shipping: 0, others: 0, total: 0 };
+      const po        = row.poEntry;
+      const prodTotal = (po.products || []).reduce((sum, poProduct) => {
+        const op = orderProductMapB[poProduct.product_id];
+        if (op) return sum + computeNetCostB(op) * (parseFloat(op.quantity) || 1);
+        return sum + (parseFloat(poProduct.unitPrice) || 0) * (parseFloat(poProduct.quantity) || 1);
+      }, 0);
+      const addLines = (po.additionalLines || []).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+      const shipping = parseFloat(po.shipping) || 0;
+      const others   = parseFloat(po.others)   || 0;
+      return { prodTotal, addLines, shipping, others, total: prodTotal + addLines + shipping + others };
     };
 
     // Only show PO rows for vendors that have at least one product in the related orders
@@ -3317,19 +3356,25 @@ const generateCogWithBill = async (req, res) => {
         .filter(Boolean)
     );
 
+    const fmt2b = (n) => n.toFixed(2);
+
     const poRows = [
       ...Array.from(rowMap.values())
         .filter(row => vendorsWithProducts.has(row.vendorId))
-        .map(row => ({
-        poNumber:   row.poNumber,
-        vendorName: row.vendorName,
-        poStatus:   row.poStatus,
-        poEntry:    row.poEntry,
-        billTotal:  row.billTotal,
-        billNumber: row.billNumber,
-        billStatus: row.billStatus,
-        total:      getPOTotal(row),
-      })),
+        .map(row => {
+          const bd = getPOBreakdownB(row);
+          return {
+            poNumber:   row.poNumber,
+            vendorName: row.vendorName,
+            poStatus:   row.poStatus,
+            poEntry:    row.poEntry,
+            billTotal:  row.billTotal,
+            billNumber: row.billNumber,
+            billStatus: row.billStatus,
+            total:      bd.total,
+            breakdown:  bd,
+          };
+        }),
       ...Array.from(noPoVendors.values()).map(row => ({
         poNumber:   '(No PO# yet)',
         vendorName: row.vendorName,
@@ -3339,6 +3384,7 @@ const generateCogWithBill = async (req, res) => {
         billNumber: null,
         billStatus: null,
         total:      row.calcTotal,
+        breakdown:  null,
       })),
     ];
 
@@ -3346,8 +3392,8 @@ const generateCogWithBill = async (req, res) => {
     wb.creator = 'Henderson Design Group';
     const ws   = wb.addWorksheet('COG + Bill Comparison');
 
-    // Row 1 — project title
-    ws.mergeCells('A1:F1');
+    // Row 1 — project title (spans 7 columns)
+    ws.mergeCells('A1:G1');
     const r1 = ws.getCell('A1');
     r1.value     = projectLabel;
     r1.font      = { name: 'Arial', bold: true, size: 11 };
@@ -3355,13 +3401,13 @@ const generateCogWithBill = async (req, res) => {
     ws.getRow(1).height = 20;
 
     // Row 2 — yellow bar
-    ['A2','B2','C2','D2','E2','F2'].forEach(addr => {
+    ['A2','B2','C2','D2','E2','F2','G2'].forEach(addr => {
       ws.getCell(addr).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
     });
     ws.getRow(2).height = 14;
 
-    // Row 3 — black header (6 columns)
-    ['HDG PO#', 'Vendor', 'Status PO', 'HDG PO Total', 'Bill Invoice', 'Status Bill'].forEach((h, i) => {
+    // Row 3 — black header (7 columns: added Breakdown)
+    ['HDG PO#', 'Vendor', 'Status PO', 'HDG PO Total', 'Bill Invoice', 'Status Bill', 'Breakdown (prod + addl + ship + other)'].forEach((h, i) => {
       const cell = ws.getCell(3, i + 1);
       cell.value     = h;
       cell.font      = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
@@ -3380,6 +3426,7 @@ const generateCogWithBill = async (req, res) => {
       const totalCell      = ws.getCell(r, 4);
       const billCell       = ws.getCell(r, 5);
       const billStatusCell = ws.getCell(r, 6);
+      const breakdownCell  = ws.getCell(r, 7);
 
       poCell.value         = row.poNumber;
       vendorCell.value     = row.vendorName;
@@ -3388,7 +3435,18 @@ const generateCogWithBill = async (req, res) => {
       billCell.value       = row.billTotal !== null ? row.billTotal : '—';
       billStatusCell.value = row.billStatus || '—';
 
-      [poCell, vendorCell, statusCell, totalCell, billCell, billStatusCell].forEach(c => {
+      if (row.breakdown) {
+        const bd = row.breakdown;
+        const parts = [`prod $${fmt2b(bd.prodTotal)}`];
+        if (bd.addLines) parts.push(`addl $${fmt2b(bd.addLines)}`);
+        if (bd.shipping) parts.push(`ship $${fmt2b(bd.shipping)}`);
+        if (bd.others)   parts.push(`other $${fmt2b(bd.others)}`);
+        breakdownCell.value = parts.join(' + ') + ` = $${fmt2b(bd.total)}`;
+      } else if (row.poNumber === '(No PO# yet)') {
+        breakdownCell.value = 'estimated from order';
+      }
+
+      [poCell, vendorCell, statusCell, totalCell, billCell, billStatusCell, breakdownCell].forEach(c => {
         c.font   = { name: 'Arial', size: 10 };
         c.border = { bottom: { style: 'thin', color: { argb: 'FFEEEEEE' } } };
       });
@@ -3398,18 +3456,19 @@ const generateCogWithBill = async (req, res) => {
       totalCell.alignment      = { horizontal: 'right',  vertical: 'middle' };
       billCell.alignment       = { horizontal: 'right',  vertical: 'middle' };
       billStatusCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      breakdownCell.alignment  = { horizontal: 'left',   vertical: 'middle', indent: 1 };
+      breakdownCell.font       = { name: 'Arial', size: 9, color: { argb: 'FF555555' } };
 
       if (row.billTotal !== null) {
         totalCell.numFmt = '"$"#,##0.00';
         billCell.numFmt  = '"$"#,##0.00';
-        // Highlight amount mismatch in red
         if (Math.abs(row.total - row.billTotal) > 0.01) {
           billCell.font = { name: 'Arial', size: 10, color: { argb: 'FFCC0000' }, bold: true };
         }
       }
 
       if (row.poNumber === '(No PO# yet)') {
-        [poCell, vendorCell, statusCell, totalCell, billCell, billStatusCell].forEach(c => {
+        [poCell, vendorCell, statusCell, totalCell, billCell, billStatusCell, breakdownCell].forEach(c => {
           c.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF999999' } };
           c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
         });
@@ -3434,6 +3493,8 @@ const generateCogWithBill = async (req, res) => {
     ws.getColumn(4).width = 18;
     ws.getColumn(5).width = 18;
     ws.getColumn(6).width = 16;
+    ws.getColumn(7).width = 46;
+    ws.getColumn(7).hidden = true; // Breakdown — hidden by default, unhide in Excel to verify
 
     const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
     const filename = `COG_Bill_${safeName}_${shortId}.xlsx`;

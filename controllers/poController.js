@@ -579,7 +579,8 @@ const updatePurchaseOrder = async (req, res) => {
     }
     if (status) poVersion.status = status;
 
-    poVersion.total = poVersion.subTotal + (poVersion.shipping || 0) + (poVersion.others || 0);
+    const addLinesTotal = (poVersion.additionalLines || []).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+    poVersion.total = poVersion.subTotal + addLinesTotal + (poVersion.shipping || 0) + (poVersion.others || 0);
     await poVersion.save();
 
     // Sync PO number back to order products
