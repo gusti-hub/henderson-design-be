@@ -2,7 +2,7 @@ name: Deploy Backend to Digital Ocean
 
 on:
   push:
-    branches: [ main, refactor/order-source-of-truth ]
+    branches: [ main, main-stable, refactor/order-source-of-truth ]
 
 env:
   REGISTRY: "registry.digitalocean.com/hale-project"
@@ -22,7 +22,7 @@ jobs:
             echo "tag=latest" >> $GITHUB_OUTPUT
             echo "container=hale-be-container" >> $GITHUB_OUTPUT
             echo "port=5000:5000" >> $GITHUB_OUTPUT
-            echo "envfile=/app/production.env" >> $GITHUB_OUTPUT
+            echo "envfile=/root/hale-be.env" >> $GITHUB_OUTPUT
           else
             echo "tag=decora" >> $GITHUB_OUTPUT
             echo "container=hale-be-decora" >> $GITHUB_OUTPUT
@@ -60,4 +60,10 @@ jobs:
               --name ${{ steps.vars.outputs.container }} \
               --env-file ${{ steps.vars.outputs.envfile }} \
               -p ${{ steps.vars.outputs.port }} \
+              --restart unless-stopped \
+              --shm-size=256m \
+              -e CHROME_BIN=/usr/bin/chromium-browser \
+              -e CHROME_PATH=/usr/lib/chromium/ \
+              -e PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+              -e PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}
