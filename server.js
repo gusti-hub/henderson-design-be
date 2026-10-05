@@ -126,13 +126,27 @@ server.headersTimeout = 66000;
 // Handle server errors
 server.on('error', (error) => {
   console.error('Server error:', error);
+  process.exit(1);
 });
 
-// Handle process errors
+// Graceful shutdown on SIGTERM (docker stop)
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received — shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+  // Force exit after 10s if close hangs
+  setTimeout(() => process.exit(0), 10000).unref();
+});
+
+// Process-level crash handlers — log then exit so Docker --restart can recover
 process.on('unhandledRejection', (error) => {
   console.error('Unhandled promise rejection:', error);
+  process.exit(1);
 });
 
 process.on('uncaughtException', (error) => {
   console.error('Uncaught exception:', error);
+  process.exit(1);
 });
