@@ -6,6 +6,21 @@ const QuickBooksToken      = require('../models/QuickBooksToken');
 
 const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
+const FINISH_LABELS = { LT:'Light Oak', MD:'Medium Teak', DK:'Dark Teak', WH:'White', BK:'Black', GY:'Grey', NL:'Natural', WN:'Walnut' };
+const FABRIC_CODES  = {
+  '01':'Merino Snow','02':'Merino Wool','03':'Merino Cloud','04':'Peppin Silver','05':'Peppin Jute',
+  '06':'Peppin Chess','07':'Navara-011','08':'Navara-012','09':'Navara-013','10':'Palopo #WR160',
+  '11':'Dayevella Stone','12':'Peppin Portobelo','13':'Merino Silver','14':'Merino Light Grey',
+  '15':'Merino Pebble','16':'Lagoon #WR141','17':'Lagoon #WR160','18':'Peppin Coblestone',
+  '19':'Peppin Jute','20':'Peppin Chess','0A':'Gusto Angora','0B':'Gusto Shell','0C':'Gusto Dune',
+  '0D':'Indulge Swan','0E':'Indulge Dune','0F':'Indulge Sand','0G':'Navara-011','0H':'Navara-012',
+  '0I':'Navara-013','0J':'Evo Creame','0K':'Evo Plaza','0L':'Evo Sand','0M':'Drama Wool',
+  '0N':'Drama Marble','0O':'Drama Linen','0P':'Chill Out Ivory','0Q':'Chill Out Antique',
+  '0R':'Chill Out Chinchilla','0S':'Rewind Sesame','0T':'Rewind Marble','0U':'Rewind Gull',
+};
+const resolveFinish = c => { if (!c) return ''; const u = c.trim().toUpperCase(); return FINISH_LABELS[u] || c; };
+const resolveFabric = c => { if (!c) return ''; const u = c.trim().toUpperCase(); return FABRIC_CODES[u]  || c; };
+
 // Strip HTML tags to plain text for QB description fields
 const stripHtml = (html) => {
   if (!html || typeof html !== 'string') return '';
@@ -295,14 +310,16 @@ const syncBillInvoiceToQuickBooks = async (req, res) => {
         const opts    = (liveKey && liveMap[liveKey]?.selectedOptions) || p.selectedOptions || {};
 
         const desc = [
-          p.name,
-          p.description          ? stripHtml(p.description)          : null,
-          opts.vendorDescription ? stripHtml(opts.vendorDescription) : null,
-          opts.finish            ? `Finish: ${opts.finish}`          : null,
-          opts.fabric            ? `Fabric: ${opts.fabric}`          : null,
-          opts.size              ? `Size: ${opts.size}`              : null,
-          opts.sidemark          ? `Sidemark: ${opts.sidemark}`      : null,
-        ].filter(Boolean).join(' | ');
+          (opts.vendorDescription || opts.specifications) ? `Specs: ${stripHtml(opts.vendorDescription || opts.specifications)}` : null,
+          p.name                                          ? `Name: ${p.name}`                                                    : null,
+          p.product_id                                    ? `SKU: ${p.product_id}`                                               : null,
+          (opts.size || opts.dimension)                   ? `Dimensions: ${opts.size || opts.dimension}`                         : null,
+          opts.fabric                                     ? `Fabric: ${opts.fabric}`                                             : null,
+          opts.customAttributes?.materials                ? `Materials: ${opts.customAttributes.materials}`                      : null,
+          opts.finish                                     ? `Color: ${opts.finish}`                                              : null,
+          opts.leadTime                                   ? `Lead Time: ${opts.leadTime}`                                        : null,
+          opts.sidemark                                   ? `Sidemark: ${opts.sidemark}`                                         : null,
+        ].filter(Boolean).join('\n');
 
         return { description: desc || p.name || 'Product', amount: total, qty: 1, unitPrice: total, lineType: 'Product' };
       })

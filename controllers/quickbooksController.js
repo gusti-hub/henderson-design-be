@@ -11,6 +11,21 @@ const crypto  = require('crypto');
 
 const round2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
+const FINISH_LABELS = { LT:'Light Oak', MD:'Medium Teak', DK:'Dark Teak', WH:'White', BK:'Black', GY:'Grey', NL:'Natural', WN:'Walnut' };
+const FABRIC_CODES  = {
+  '01':'Merino Snow','02':'Merino Wool','03':'Merino Cloud','04':'Peppin Silver','05':'Peppin Jute',
+  '06':'Peppin Chess','07':'Navara-011','08':'Navara-012','09':'Navara-013','10':'Palopo #WR160',
+  '11':'Dayevella Stone','12':'Peppin Portobelo','13':'Merino Silver','14':'Merino Light Grey',
+  '15':'Merino Pebble','16':'Lagoon #WR141','17':'Lagoon #WR160','18':'Peppin Coblestone',
+  '19':'Peppin Jute','20':'Peppin Chess','0A':'Gusto Angora','0B':'Gusto Shell','0C':'Gusto Dune',
+  '0D':'Indulge Swan','0E':'Indulge Dune','0F':'Indulge Sand','0G':'Navara-011','0H':'Navara-012',
+  '0I':'Navara-013','0J':'Evo Creame','0K':'Evo Plaza','0L':'Evo Sand','0M':'Drama Wool',
+  '0N':'Drama Marble','0O':'Drama Linen','0P':'Chill Out Ivory','0Q':'Chill Out Antique',
+  '0R':'Chill Out Chinchilla','0S':'Rewind Sesame','0T':'Rewind Marble','0U':'Rewind Gull',
+};
+const resolveFinish = c => { if (!c) return ''; const u = c.trim().toUpperCase(); return FINISH_LABELS[u] || c; };
+const resolveFabric = c => { if (!c) return ''; const u = c.trim().toUpperCase(); return FABRIC_CODES[u]  || c; };
+
 const stripHtml = (str) => {
   if (!str) return '';
   return str
@@ -472,15 +487,18 @@ const syncPOToQuickBooks = async (req, res) => {
         const total     = round2(unitPrice * qty);
         if (total === 0) return null;
 
+        const o   = p.selectedOptions || {};
         const desc = [
-          p.name,
-          p.description                        ? stripHtml(p.description)                            : null,
-          p.selectedOptions?.vendorDescription ? stripHtml(p.selectedOptions.vendorDescription)      : null,
-          p.selectedOptions?.finish            ? `Finish: ${p.selectedOptions.finish}`               : null,
-          p.selectedOptions?.fabric            ? `Fabric: ${p.selectedOptions.fabric}`               : null,
-          p.selectedOptions?.size              ? `Size: ${p.selectedOptions.size}`                   : null,
-          p.selectedOptions?.sidemark          ? `Sidemark: ${p.selectedOptions.sidemark}`           : null,
-        ].filter(Boolean).join(' | ');
+          (o.vendorDescription || o.specifications) ? `Specs: ${stripHtml(o.vendorDescription || o.specifications)}` : null,
+          p.name                                    ? `Name: ${p.name}`                                               : null,
+          p.product_id                              ? `SKU: ${p.product_id}`                                         : null,
+          (o.size || o.dimension)                   ? `Dimensions: ${o.size || o.dimension}`                         : null,
+          o.fabric                                  ? `Fabric: ${o.fabric}`                                          : null,
+          o.customAttributes?.materials             ? `Materials: ${o.customAttributes.materials}`                   : null,
+          o.finish                                  ? `Color: ${o.finish}`                                           : null,
+          o.leadTime                                ? `Lead Time: ${o.leadTime}`                                     : null,
+          o.sidemark                                ? `Sidemark: ${o.sidemark}`                                      : null,
+        ].filter(Boolean).join('\n');
 
         return {
           description: desc || p.name || 'Product',
@@ -636,18 +654,16 @@ const syncProposalToQuickBooks = async (req, res) => {
       // $0 products (gifts) are intentionally included.
 
       const descParts = [];
-      if (opts.room)              descParts.push(`Room: ${opts.room}`);
-      if (p.name)                 descParts.push(p.name);
-      if (opts.specifications)    descParts.push(stripHtml(opts.specifications));
-      if (opts.clientDescription) descParts.push(stripHtml(opts.clientDescription));
-      if (opts.finish)            descParts.push(`Finish: ${opts.finish}`);
-      if (opts.fabric)            descParts.push(`Fabric: ${opts.fabric}`);
-      if (opts.size)              descParts.push(`Size: ${opts.size}`);
-      if (opts.leadTime)          descParts.push(`Lead Time: ${opts.leadTime}`);
+      if (p.name)              descParts.push(p.name);
+      if (opts.specifications) descParts.push(stripHtml(opts.specifications));
+      if (opts.finish)         descParts.push(`Color / Finish: ${resolveFinish(opts.finish)}`);
+      if (opts.leadTime)       descParts.push(`Lead Time: ${opts.leadTime}`);
+      if (opts.fabric)         descParts.push(`Fabric: ${resolveFabric(opts.fabric)}`);
+      if (opts.size)           descParts.push(`Size: ${opts.size}`);
 
       const classRef = await resolveClassId(opts.itemClass || '');
       lines.push({
-        description: descParts.join(' | ') || p.spotName || 'Product',
+        description: descParts.join('\n') || p.spotName || 'Product',
         amount:      subtotal,
         qty:         1,
         unitPrice:   subtotal,

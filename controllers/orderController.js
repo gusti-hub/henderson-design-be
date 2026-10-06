@@ -3265,8 +3265,8 @@ const generateCogWithBill = async (req, res) => {
     // poVersions sorted desc — first hit per key = latest version
     const poVersions = await POVersion.find({ orderId: { $in: allOrderIds } }).sort({ version: -1 }).lean();
 
-    // poVersionId → BillInvoice (1:1 via poVersionId)
-    const bills = await BillInvoice.find({ orderId: { $in: allOrderIds } }).lean();
+    // poVersionId → BillInvoice (1:1 via poVersionId) — draft bills excluded from comparison
+    const bills = await BillInvoice.find({ orderId: { $in: allOrderIds }, status: { $in: ['confirmed', 'synced'] } }).lean();
     const billByPOVersionId = new Map();
     bills.forEach(b => {
       const pvid = b.poVersionId?.toString();
