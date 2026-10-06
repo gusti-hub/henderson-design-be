@@ -3,8 +3,27 @@
 // Data source: Order.selectedProducts[] joined with POVersion for PO-level info.
 // Scope: iteration 1 — investor orders only. Retail/Custom to follow in future iterations.
 
-const Order      = require('../models/Order');
-const POVersion  = require('../models/POVersion');
+const Order            = require('../models/Order');
+const POVersion        = require('../models/POVersion');
+const LogisticAuditLog = require('../models/LogisticAuditLog');
+
+// ─── Field metadata for audit logging ────────────────────────────────────────
+const LOG_FIELDS = {
+  cargoReadyDate:      { label: 'Cargo Ready Date',    optsKey: 'cargoReadyDate' },
+  shipmentDate:        { label: 'Shipment Date',       optsKey: 'shipmentDate' },
+  logDrawing:          { label: 'Drawing',             optsKey: 'logDrawing' },
+  logMachining:        { label: 'Machining',           optsKey: 'logMachining' },
+  logAssembly:         { label: 'Assembly',            optsKey: 'logAssembly' },
+  logFinishing:        { label: 'Finishing',           optsKey: 'logFinishing' },
+  logQcChecking:       { label: 'QC Checking',         optsKey: 'logQcChecking' },
+  logPacking:          { label: 'Packing',             optsKey: 'logPacking' },
+  containerNumber:     { label: 'Container #',         optsKey: 'containerNumber' },
+  statusCategory:      { label: 'Status Category',     optsKey: 'statusCategory' },
+  expectedShipDate:    { label: 'Exp. Ship Date',      optsKey: 'expectedShipDate' },
+  expectedArrivalDate: { label: 'Exp. Arrival Date',   optsKey: 'expectedArrivalDate' },
+  remark:              { label: 'Remark',              optsKey: 'notes' },
+  orderDate:           { label: 'Order Date',          optsKey: 'orderDate' },
+};
 
 // ─── Status Category options (TODO: replace with final list before production) ─
 // These are placeholder values — confirm full list with operations team.
@@ -406,6 +425,42 @@ exports.updateEntry = async (req, res) => {
     const resolvedShipped = Math.max(0, Number(updatedOpts.shippedQty ?? 0));
     const resolvedBalance = Math.max(0, resolvedPoQty - resolvedShipped);
 
+    // ── Audit log ────────────────────────────────────────────────────────────
+    const auditChanges = [];
+    for (const [reqField, meta] of Object.entries(LOG_FIELDS)) {
+      const newVal = req.body[reqField];
+      if (newVal === undefined) continue;
+      const oldVal  = opts[meta.optsKey];
+      const newNorm = reqField.startsWith('log') ? Number(newVal) : newVal;
+      if (String(oldVal ?? '') !== String(newNorm ?? '')) {
+        auditChanges.push({ field: meta.optsKey, label: meta.label, oldValue: oldVal ?? null, newValue: newNorm });
+      }
+    }
+    if (poQuantity !== undefined) {
+      const oldPQ = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (sp.quantity ?? 1);
+      if (oldPQ !== Number(poQuantity)) {
+        auditChanges.push({ field: 'poQtyOverride', label: 'PO Quantity', oldValue: oldPQ, newValue: Number(poQuantity) });
+      }
+    }
+    if (packingList !== undefined && Number(packingList) > 0) {
+      const oldShipped = Number(opts.shippedQty ?? 0);
+      auditChanges.push({ field: 'shippedQty', label: 'Shipped Qty (batch)', oldValue: oldShipped, newValue: oldShipped + Number(packingList) });
+    }
+    if (projectCode !== undefined && String(sp.projectCode ?? '') !== String(projectCode)) {
+      auditChanges.push({ field: 'projectCode', label: 'Project Code', oldValue: sp.projectCode ?? null, newValue: projectCode });
+    }
+    if (auditChanges.length > 0) {
+      LogisticAuditLog.create({
+        orderId,
+        performedBy: req.user._id,
+        performedByName: req.user.name || req.user.email || '',
+        action: 'product_edited',
+        productId: String(elemId),
+        productName: sp.name || sp.product_id || '',
+        changes: auditChanges,
+      }).catch(e => console.error('audit log write error:', e));
+    }
+
     res.json({
       message: 'Updated',
       dateInspected: newDateInspected,
@@ -518,6 +573,41 @@ exports.updatePoEntry = async (req, res) => {
     const resolvedShipped = Math.max(0, Number(updatedPoOpts.shippedQty ?? 0));
     const resolvedBalance = Math.max(0, resolvedPoQty - resolvedShipped);
 
+    // ── Audit log ────────────────────────────────────────────────────────────
+    const poAuditChanges = [];
+    for (const [reqField, meta] of Object.entries(LOG_FIELDS)) {
+      const newVal = req.body[reqField];
+      if (newVal === undefined) continue;
+      const optsKey = reqField === 'remark' ? 'remark' : meta.optsKey;
+      const oldVal  = opts[optsKey];
+      const newNorm = reqField.startsWith('log') ? Number(newVal) : newVal;
+      if (String(oldVal ?? '') !== String(newNorm ?? '')) {
+        poAuditChanges.push({ field: optsKey, label: meta.label, oldValue: oldVal ?? null, newValue: newNorm });
+      }
+    }
+    if (poQuantity !== undefined) {
+      const oldPQ = opts.poQtyOverride != null ? Number(opts.poQtyOverride) : (poProd.quantity ?? 1);
+      if (oldPQ !== Number(poQuantity)) {
+        poAuditChanges.push({ field: 'poQtyOverride', label: 'PO Quantity', oldValue: oldPQ, newValue: Number(poQuantity) });
+      }
+    }
+    if (packingList !== undefined && Number(packingList) > 0) {
+      const oldShipped = Number(opts.shippedQty ?? 0);
+      poAuditChanges.push({ field: 'shippedQty', label: 'Shipped Qty (batch)', oldValue: oldShipped, newValue: oldShipped + Number(packingList) });
+    }
+    if (poAuditChanges.length > 0) {
+      // For PO-based products, use poVersionId as orderId substitute for grouping
+      LogisticAuditLog.create({
+        orderId: poSnap._id,
+        performedBy: req.user._id,
+        performedByName: req.user.name || req.user.email || '',
+        action: 'product_edited',
+        productId: String(poElemId),
+        productName: poProd.name || poProd.product_id || '',
+        changes: poAuditChanges,
+      }).catch(e => console.error('audit log write error:', e));
+    }
+
     res.json({
       message: 'Updated',
       dateInspected: opts.dateInspected || '',
@@ -527,6 +617,134 @@ exports.updatePoEntry = async (req, res) => {
     });
   } catch (err) {
     console.error('logistic updatePoEntry error:', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── GET /api/logistic/audit — global audit log (all orders/products) ────────────
+exports.getGlobalAuditLog = async (req, res) => {
+  try {
+    const { q, user, from, to, limit = 200, skip = 0 } = req.query;
+    const query = {};
+    if (user)  query.performedByName = { $regex: user, $options: 'i' };
+    if (from)  query.createdAt = { ...query.createdAt, $gte: new Date(from) };
+    if (to)    query.createdAt = { ...query.createdAt, $lte: new Date(new Date(to).getTime() + 86399999) };
+    if (q) {
+      query.$or = [
+        { productName:      { $regex: q, $options: 'i' } },
+        { performedByName:  { $regex: q, $options: 'i' } },
+        { 'changes.label':  { $regex: q, $options: 'i' } },
+      ];
+    }
+    const [logs, total] = await Promise.all([
+      LogisticAuditLog.find(query).sort({ createdAt: -1 }).skip(Number(skip)).limit(Number(limit)).lean(),
+      LogisticAuditLog.countDocuments(query),
+    ]);
+    res.json({ logs, total });
+  } catch (err) {
+    console.error('getGlobalAuditLog error:', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/logistic/audit/rollback-global — rollback across any orders ───────
+exports.rollbackGlobal = async (req, res) => {
+  try {
+    const { logIds } = req.body;
+    if (!Array.isArray(logIds) || logIds.length === 0) {
+      return res.status(400).json({ message: 'logIds array required' });
+    }
+    const logs = await LogisticAuditLog.find({ _id: { $in: logIds }, action: { $ne: 'rollback' } }).lean();
+    for (const log of logs) {
+      await applyRollback(log, req.user);
+    }
+    res.json({ message: `${logs.length} entries rolled back` });
+  } catch (err) {
+    console.error('rollbackGlobal error:', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── GET /api/logistic/:orderId/audit — fetch audit trail for an order ──────────
+exports.getAuditLog = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { productId } = req.query;
+    const query = { orderId };
+    if (productId) query.productId = productId;
+    const logs = await LogisticAuditLog.find(query).sort({ createdAt: -1 }).limit(300).lean();
+    res.json(logs);
+  } catch (err) {
+    console.error('getAuditLog error:', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── Shared rollback helper ───────────────────────────────────────────────────
+async function applyRollback(log, user) {
+  const mongoose = require('mongoose');
+  const elemId   = new mongoose.Types.ObjectId(log.productId);
+  const setFields = {};
+
+  for (const change of log.changes) {
+    const { field, oldValue } = change;
+    if (field === 'projectCode') {
+      setFields['selectedProducts.$[elem].projectCode'] = oldValue;
+    } else {
+      setFields[`selectedProducts.$[elem].selectedOptions.${field}`] = oldValue;
+    }
+  }
+
+  if (Object.keys(setFields).length > 0) {
+    await Order.findOneAndUpdate(
+      { _id: log.orderId },
+      { $set: { ...setFields, updatedAt: Date.now(), updatedBy: user._id } },
+      { arrayFilters: [{ 'elem._id': elemId }] }
+    );
+  }
+
+  await LogisticAuditLog.create({
+    orderId: log.orderId,
+    performedBy: user._id,
+    performedByName: user.name || user.email || '',
+    action: 'rollback',
+    productId: log.productId,
+    productName: log.productName,
+    changes: log.changes.map(c => ({ field: c.field, label: c.label, oldValue: c.newValue, newValue: c.oldValue })),
+    rollbackOf: log._id,
+  });
+}
+
+// ─── POST /api/logistic/:orderId/audit/:logId/rollback — rollback single ────────
+exports.rollbackEntry = async (req, res) => {
+  try {
+    const { orderId, logId } = req.params;
+    const log = await LogisticAuditLog.findOne({ _id: logId, orderId }).lean();
+    if (!log) return res.status(404).json({ message: 'Audit log not found' });
+    if (log.action === 'rollback') return res.status(400).json({ message: 'Cannot rollback a rollback entry' });
+    await applyRollback(log, req.user);
+    res.json({ message: 'Rolled back successfully' });
+  } catch (err) {
+    console.error('rollbackEntry error:', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/logistic/:orderId/audit/rollback-bulk — rollback multiple ────────
+exports.rollbackBulk = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { logIds } = req.body; // array of log _id strings
+    if (!Array.isArray(logIds) || logIds.length === 0) {
+      return res.status(400).json({ message: 'logIds array required' });
+    }
+    const logs = await LogisticAuditLog.find({ _id: { $in: logIds }, orderId, action: { $ne: 'rollback' } }).lean();
+    for (const log of logs) {
+      await applyRollback(log, req.user);
+    }
+    res.json({ message: `${logs.length} entries rolled back` });
+  } catch (err) {
+    console.error('rollbackBulk error:', err);
     res.status(500).json({ message: err.message });
   }
 };
