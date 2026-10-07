@@ -3837,19 +3837,15 @@ const getBulkExportVendors = async (req, res) => {
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ message: 'No order IDs provided' });
     }
-    // Expand to all orders for the same users so all packages/phases are included
-    const selectedOrders = await Order.find({ _id: { $in: orderIds } }).lean();
-    const userIds = [...new Set(selectedOrders.map(o => o.user?.toString()).filter(Boolean))];
-    const allOrders = await Order.find({ user: { $in: userIds } }).lean();
 
     const vendorMap = new Map();
-    for (const order of allOrders) {
-      const pos = await POVersion.find({ orderId: order._id.toString(), status: { $ne: 'cancelled' } }).lean();
+    for (const orderId of orderIds) {
+      const pos = await POVersion.find({ orderId: orderId.toString(), status: { $ne: 'cancelled' } }).lean();
       for (const po of pos) {
         const vid = po.vendorId?.toString();
         if (vid && !vendorMap.has(vid)) vendorMap.set(vid, { vendorId: vid, vendorName: po.vendorInfo?.name || 'Unknown' });
       }
-      const fullOrder = await Order.findById(order._id).populate('selectedProducts.vendor', 'name').lean();
+      const fullOrder = await Order.findById(orderId).populate('selectedProducts.vendor', 'name').lean();
       for (const p of (fullOrder?.selectedProducts || [])) {
         if (!p.vendor) continue;
         const vid = p.vendor?._id?.toString() || p.vendor?.toString();
@@ -3877,11 +3873,7 @@ const generateBulkExport = async (req, res) => {
       ? new Set(vendorFilter)
       : null;
 
-    // Expand: for each selected order, include ALL orders for the same user so
-    // that POs across multiple orders (packages/phases) for a client are combined.
-    const selectedOrders = await Order.find({ _id: { $in: orderIds } }).lean();
-    const userIds = [...new Set(selectedOrders.map(o => o.user?.toString()).filter(Boolean))];
-    const orders = await Order.find({ user: { $in: userIds } }).lean();
+    const orders = await Order.find({ _id: { $in: orderIds } }).lean();
     orders.sort((a, b) =>
       (a.clientInfo?.unitNumber || '').localeCompare(b.clientInfo?.unitNumber || '', undefined, { numeric: true })
     );
