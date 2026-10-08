@@ -294,7 +294,7 @@ const generatePDF = async (req, res) => {
 
     // ── Page 2: Full floor plan with pins ────────────────────────────────────
     const fullPlan     = plans.find(p => p.type === 'full');     // pin layout
-    const fullviewPlan = plans.find(p => p.type === 'fullview'); // clean floor plan for PDF background
+    const fullviewPlan = plans.find(p => p.type === 'room' && p.room === '_fullview_');
     const bgPlan = fullviewPlan || fullPlan; // prefer fullview; fall back to pin layout image
     if (bgPlan || fullPlan) {
       doc.addPage();

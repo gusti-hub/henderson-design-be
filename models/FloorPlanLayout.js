@@ -13,7 +13,7 @@ const pinSchema = new mongoose.Schema({
 
 const floorPlanLayoutSchema = new mongoose.Schema({
   clientUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  type:         { type: String, enum: ['full', 'room', 'fullview'], required: true },
+  type:         { type: String, enum: ['full', 'room'], required: true },
   room:         { type: String, default: '' },
   imageUrl:     { type: String, required: true },
   imageKey:     { type: String, required: true },
