@@ -169,14 +169,23 @@ const generatePDF = async (req, res) => {
         const room = p.selectedOptions?.room || 'Other';
         const vendorId = p.vendor?._id?.toString() || '';
         if (!byRoom.has(room)) byRoom.set(room, []);
+        const opts = p.selectedOptions || {};
         byRoom.get(room).push({
-          name:       p.name || '',
-          vendorName: p.vendor?.name || '',
-          poNumber:   vendorPOMap.get(vendorId) || p.selectedOptions?.poNumber || '',
-          qty:        p.quantity || 1,
-          desc:       buildDesc(p),
-          imageUrl:   getPrimaryImage(p),
-          vendorOrderNumber: p.selectedOptions?.vendorOrderNumber || '',
+          name:              p.name || '',
+          product_id:        p.product_id || '',
+          room,
+          vendorName:        p.vendor?.name || '',
+          poNumber:          vendorPOMap.get(vendorId) || opts.poNumber || '',
+          qty:               p.quantity || 1,
+          imageUrl:          getPrimaryImage(p),
+          vendorOrderNumber: opts.vendorOrderNumber || '',
+          trackingInfo:      opts.trackingInfo || '',
+          notes:             opts.notes || '',
+          vendorDescription: opts.vendorDescription || '',
+          finish:            opts.finish || '',
+          fabric:            opts.fabric || '',
+          size:              opts.size || '',
+          specifications:    opts.specifications || '',
         });
       }
     }
@@ -209,15 +218,26 @@ const generatePDF = async (req, res) => {
       return null;
     };
 
-    const fetchImg = async (url) => {
+    const sharp = require('sharp');
+
+    // maxPx > 0 → resize to fit within maxPx × maxPx and compress as JPEG (for thumbnails)
+    // maxPx = 0 → strip EXIF only, keep original (for full-page floor plan backgrounds)
+    const fetchImg = async (url, maxPx = 0) => {
       if (!url || !url.startsWith('http')) return null;
       try {
         const r = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
-        const buf = Buffer.from(r.data);
-        const dims = getImageDimensions(buf);
-        // Strip JPEG EXIF to avoid jpeg-exif buffer-bounds crash in pdfkit
-        const stripped = stripJpegExif(buf);
-        return { buffer: stripped, dims };
+        let buf = Buffer.from(r.data);
+        let dims = getImageDimensions(buf);
+        if (maxPx > 0) {
+          try {
+            const { data, info } = await sharp(buf)
+              .resize({ width: maxPx, height: maxPx, fit: 'inside', withoutEnlargement: true })
+              .jpeg({ quality: 65 })
+              .toBuffer({ resolveWithObject: true });
+            return { buffer: data, dims: { width: info.width, height: info.height } };
+          } catch { /* fall through to unresized path */ }
+        }
+        return { buffer: stripJpegExif(buf), dims };
       } catch { return null; }
     };
 
@@ -340,50 +360,168 @@ const generatePDF = async (req, res) => {
     const roomPlans = plans.filter(p => p.type === 'room');
     const allRooms  = [...new Set([...roomPlans.map(p => p.room), ...byRoom.keys()])].sort();
 
-    // Shared column config + fitText for product tables
-    const TABLE_COLS = [
-      { label: 'Vendor Name',        w: 80  },
-      { label: 'Vendor Description', w: 200 },
-      { label: 'HDG PO#',            w: 80  },
-      { label: 'Qty',                w: 30  },
-      { label: 'Vendor Order #',     w: 80  },
-      { label: 'Date Received',      w: 70  },
-      { label: 'Tracking Info',      w: 80  },
-      { label: 'Shipping Carrier',   w: 60  },
-      { label: 'Notes',              w: 60  },
-    ];
-    const tableScale = (PW - M * 2) / TABLE_COLS.reduce((s, c) => s + c.w, 0);
-    const tableCols  = TABLE_COLS.map(c => ({ ...c, w: c.w * tableScale }));
-    const fitText = (text, colW) => {
-      const s = stripHtml(String(text || ''));
-      const max = Math.max(1, Math.floor((colW - 4) / 3.8));
-      return s.length > max ? s.slice(0, max - 1) + '…' : s;
+    // ── PDF product table ──────────────────────────────────────────────────────
+    const PDF_ROOM_CODES = {
+      'COURTYARD':'COU','EXTERIOR ENTRY':'EXT','INTERIOR ENTRY':'INT','FOYER':'FOY',
+      'KITCHEN':'KIT','PANTRY':'PAN','BREAKFAST NOOK':'BRK','DINING ROOM':'DIN','DINING AREA':'DIN',
+      'LIVING ROOM':'LIV','GREAT ROOM':'GRE','FAMILY ROOM':'FAM','DEN':'DEN','WET BAR':'WET',
+      'MEDIA ROOM':'MED','HALLWAY':'HAL','HALLWAY 1':'HA1','HALLWAY 2':'HA2',
+      'LANAI':'LAN','LANAI 1':'LA1','LANAI 2':'LA2','LANAI 3':'LA3','MAIN LANAI':'MAI',
+      'BBQ AREA':'BBQ','POOL LANAI':'POL','POWDER ROOM':'POW','PULL AREA':'PUL','PULL BATH':'PUB',
+      'PAVILLION':'PAV','GYM':'GYM','OFFICE':'OFF','OFFICE 1':'OF1','OFFICE 2':'OF2',
+      'WINE ROOM':'WIN','REC ROOM':'REC','GARAGE':'GAR',
+      'PRIMARY BEDROOM':'PRB','PRIMARY BATHROOM':'PBA','PRIMARY CLOSET':'PRC','PRIMARY BEDROOM LANAI':'PBL',
+      'BEDROOM 2':'BE2','BATHROOM 2':'BA2','BEDROOM 2 CLOSET':'BC2','BEDROOM 2 LANAI':'BL2',
+      'BEDROOM 3':'BE3','BATHROOM 3':'BA3','BEDROOM 3 CLOSET':'BC3','BEDROOM 3 LANAI':'BL3',
+      'BEDROOM 4':'BE4','BATHROOM 4':'BA4','BEDROOM 4 CLOSET':'BC4','BEDROOM 4 LANAI':'BL4',
+      'SITTING ROOM':'SIT','FLEX SPACE':'FLE','LAUNDRY ROOM':'LAU','MUD ROOM':'MUD',
+      'TERRACE':'TER','BALCONY':'BAL','OUTDOOR DINING':'ODI','OUTDOOR LIVING':'ODL','GUEST SUITE':'GUE',
     };
 
-    const drawTable = (prods, startY) => {
-      let y = startY;
-      // Header row
-      doc.rect(M, y, PW - M * 2, 18).fillColor('#1a1a1a').fill();
+    const TABLE_COLS = [
+      { label: 'Photo',                   w: 90  },
+      { label: 'Vendor Description',      w: 200 },
+      { label: 'Room',                    w: 55  },
+      { label: 'Vendor Name',             w: 65  },
+      { label: 'PO #',                    w: 60  },
+      { label: 'Qty',                     w: 25  },
+      { label: 'Vendor Order Number',     w: 75  },
+      { label: 'Shipment\nTracking Info', w: 65  },
+      { label: 'Notes',                   w: 85  },
+    ];
+    const tableW    = PW - M * 2;
+    const tScale    = tableW / TABLE_COLS.reduce((s, c) => s + c.w, 0);
+    const tableCols = TABLE_COLS.map(c => ({ ...c, w: c.w * tScale }));
+    const HDR_H = 22;
+    const ROW_PAD = 6;
+    const PHOTO_H = 110;
+    const dColW = tableCols[1].w - 6;
+    const charsPerLineName   = Math.max(1, Math.floor(dColW / (8   * 0.58)));
+    const charsPerLineDetail = Math.max(1, Math.floor(dColW / (6.5 * 0.58)));
+
+    const drawHdr = (atY) => {
+      doc.rect(M, atY, tableW, HDR_H).fillColor('#1a1a1a').fill();
       let cx = M;
       tableCols.forEach(c => {
-        doc.fontSize(7).fillColor('#fff').font('Helvetica-Bold')
-          .text(fitText(c.label, c.w), cx + 2, y + 5, { lineBreak: false });
+        doc.fontSize(6).fillColor('#fff').font('Helvetica-Bold')
+          .text(c.label, cx + 3, atY + 5, { width: c.w - 6, lineBreak: true, height: HDR_H - 5 });
         cx += c.w;
       });
-      y += 18;
-      for (const p of prods) {
-        if (y > PH - M - 20) break;
-        const rowH = 18;
-        doc.rect(M, y, PW - M * 2, rowH).strokeColor('#e0e0e0').lineWidth(0.5).stroke();
-        cx = M;
-        const cells = [p.vendorName, p.desc, p.poNumber, String(p.qty), p.vendorOrderNumber, '', '', '', ''];
-        cells.forEach((val, i) => {
-          doc.fontSize(7).fillColor('#333').font('Helvetica')
-            .text(fitText(val, tableCols[i].w), cx + 2, y + 5, { lineBreak: false });
-          cx += tableCols[i].w;
+      return atY + HDR_H;
+    };
+
+    const drawTable = async (prods, pageRoom) => {
+      const images = await Promise.all(prods.map(p => fetchImg(p.imageUrl, 300)));
+
+      doc.addPage();
+      drawHeader(pageRoom.toUpperCase());
+      let y = drawHdr(M + 60);
+
+      prods.forEach((p, idx) => {
+        const imgData = images[idx];
+        const code = PDF_ROOM_CODES[(p.room || '').toUpperCase()] || '';
+        const skuLabel = code && p.product_id ? `${code}-${p.product_id}` : p.product_id || '';
+        const nameStr  = stripHtml(p.name || '');
+
+        // Use vendorDescription as the primary detail block; fall back to individual fields
+        const vendorDescStr = stripHtml(p.vendorDescription || '');
+        const fallbackDetail = [
+          p.finish ? `Finish: ${p.finish}` : null,
+          p.fabric ? `Fabric: ${p.fabric}` : null,
+          p.size   ? `Size: ${p.size}`     : null,
+          p.specifications || null,
+        ].filter(Boolean).join('\n');
+        const detailStr = vendorDescStr || fallbackDetail;
+
+        // Estimate row height from content
+        const nameLineCount = Math.max(1, Math.ceil(nameStr.length / charsPerLineName));
+        // Count newlines in detailStr to better estimate line count
+        const detailParas = detailStr ? detailStr.split('\n').filter(Boolean) : [];
+        let detailLineCount = 0;
+        detailParas.forEach(para => {
+          detailLineCount += Math.max(1, Math.ceil(para.length / charsPerLineDetail));
         });
+        const textH = ROW_PAD + nameLineCount * 10 + (skuLabel ? 9 : 0) + detailLineCount * 8 + ROW_PAD;
+        const rowH  = Math.max(PHOTO_H + ROW_PAD * 2, textH);
+
+        // Page break
+        if (y + rowH > PH - M - 8) {
+          doc.addPage();
+          drawHeader(pageRoom.toUpperCase());
+          y = drawHdr(M + 60);
+        }
+
+        // Alternating row background
+        if (idx % 2 === 0) {
+          doc.rect(M, y, tableW, rowH).fillColor('#f7f7f7').fill();
+        }
+        doc.rect(M, y, tableW, rowH).strokeColor('#d8d8d8').lineWidth(0.25).stroke();
+
+        let cx = M;
+
+        // Photo
+        const pCol = tableCols[0];
+        if (imgData) {
+          const maxW = pCol.w - ROW_PAD;
+          const maxH = rowH - ROW_PAD * 2;
+          let iW = maxW, iH = maxH;
+          if (imgData.dims?.width && imgData.dims?.height) {
+            const sc = Math.min(maxW / imgData.dims.width, maxH / imgData.dims.height);
+            iW = imgData.dims.width * sc;
+            iH = imgData.dims.height * sc;
+          }
+          try {
+            doc.image(imgData.buffer, cx + (pCol.w - iW) / 2, y + (rowH - iH) / 2, { width: iW, height: iH });
+          } catch(e) {}
+        }
+        cx += pCol.w;
+
+        // Vendor Description — clip cell to prevent overflow into next row
+        doc.save();
+        doc.rect(cx, y + 1, tableCols[1].w, rowH - 1).clip();
+
+        let dy = y + ROW_PAD;
+        if (nameStr) {
+          doc.fontSize(8).fillColor('#111').font('Helvetica-Bold')
+            .text(nameStr, cx + 3, dy, { width: dColW, lineBreak: true });
+          dy = doc.y;
+        }
+        if (skuLabel) {
+          doc.fontSize(7).fillColor('#444').font('Helvetica-Bold')
+            .text(skuLabel, cx + 3, dy, { width: dColW, lineBreak: false });
+          dy = doc.y + 1;
+        }
+        if (detailStr) {
+          doc.fontSize(6.5).fillColor('#555').font('Helvetica')
+            .text(detailStr, cx + 3, dy, { width: dColW, lineBreak: true });
+        }
+
+        doc.restore();
+        cx += tableCols[1].w;
+
+        // Room, Vendor Name, PO#, Qty, Vendor Order Number, Tracking Info, Notes
+        const vals = [p.room, p.vendorName, p.poNumber, String(p.qty || ''), p.vendorOrderNumber, p.trackingInfo, p.notes];
+        tableCols.slice(2).forEach((col, i) => {
+          const val = stripHtml(vals[i] || '');
+          if (val) {
+            doc.save();
+            doc.rect(cx, y + 1, col.w, rowH - 1).clip();
+            doc.fontSize(7).fillColor('#333').font('Helvetica')
+              .text(val, cx + 3, y + ROW_PAD, { width: col.w - 6, lineBreak: true });
+            doc.restore();
+          }
+          cx += col.w;
+        });
+
+        // Vertical column dividers
+        let dcx = M + tableCols[0].w;
+        tableCols.slice(1).forEach(col => {
+          doc.moveTo(dcx, y).lineTo(dcx, y + rowH).strokeColor('#d8d8d8').lineWidth(0.25).stroke();
+          dcx += col.w;
+        });
+
         y += rowH;
-      }
+      });
     };
 
     for (const room of allRooms) {
@@ -413,11 +551,9 @@ const generatePDF = async (req, res) => {
         }
       }
 
-      // ── Product table — separate page ─────────────────────────────────────
+      // ── Product table ──────────────────────────────────────────────────────
       if (prods.length) {
-        doc.addPage();
-        drawHeader(room.toUpperCase());
-        drawTable(prods, M + 60);
+        await drawTable(prods, room);
       }
     }
 
@@ -451,17 +587,6 @@ const stripHtml = (str) => {
     .trim();
 };
 
-const buildDesc = (p) => {
-  const opts = p.selectedOptions || {};
-  const parts = [
-    stripHtml(p.name),
-    opts.size         ? `Size: ${stripHtml(opts.size)}`           : null,
-    opts.finish       ? `Finish: ${stripHtml(opts.finish)}`       : null,
-    opts.fabric       ? `Fabric: ${stripHtml(opts.fabric)}`       : null,
-    opts.specifications ? stripHtml(opts.specifications)          : null,
-  ].filter(Boolean);
-  return parts.join(' | ');
-};
 
 const getPrimaryImage = (p) => {
   if (p.selectedOptions?.image)                            return p.selectedOptions.image;
