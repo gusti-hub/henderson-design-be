@@ -41,7 +41,7 @@ const createFloorPlan = async (req, res) => {
     // Replace existing plan for same slot
     const query = type === 'room'
       ? { clientUserId, type: 'room', room: room || '' }
-      : { clientUserId, type: 'full' };
+      : { clientUserId, type };
 
     const existing = await FloorPlanLayout.findOne(query);
     if (existing) {
@@ -181,14 +181,43 @@ const generatePDF = async (req, res) => {
       }
     }
 
+    // Read native dimensions from a raw image buffer (JPEG or PNG)
+    const getImageDimensions = (buf) => {
+      if (!buf || buf.length < 4) return null;
+      // PNG: dimensions at bytes 16-23
+      if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
+        if (buf.length < 24) return null;
+        return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+      }
+      // JPEG: scan for SOF markers (0xC0–0xC3, 0xC5–0xC7, 0xC9–0xCB, 0xCD–0xCF)
+      if (buf[0] === 0xFF && buf[1] === 0xD8) {
+        let i = 2;
+        while (i < buf.length - 8) {
+          if (buf[i] !== 0xFF) break;
+          const marker = buf[i + 1];
+          if (marker === 0xDA || marker === 0xD9) break;
+          if (i + 3 >= buf.length) break;
+          const segLen = buf.readUInt16BE(i + 2);
+          if (segLen < 2) break;
+          if ((marker >= 0xC0 && marker <= 0xC3) || (marker >= 0xC5 && marker <= 0xC7) ||
+              (marker >= 0xC9 && marker <= 0xCB) || (marker >= 0xCD && marker <= 0xCF)) {
+            if (i + 8 < buf.length) return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+          }
+          i += 2 + segLen;
+        }
+      }
+      return null;
+    };
+
     const fetchImg = async (url) => {
       if (!url || !url.startsWith('http')) return null;
       try {
         const r = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
         const buf = Buffer.from(r.data);
+        const dims = getImageDimensions(buf);
         // Strip JPEG EXIF to avoid jpeg-exif buffer-bounds crash in pdfkit
         const stripped = stripJpegExif(buf);
-        return { buffer: stripped };
+        return { buffer: stripped, dims };
       } catch { return null; }
     };
 
@@ -222,17 +251,17 @@ const generatePDF = async (req, res) => {
 
     const PW = 792, PH = 612, M = 36;
 
-    const drawHeader = (title) => {
+    const drawHeader = (title, pageW = PW) => {
       doc.fontSize(14).fillColor('#005670').font('Helvetica-Bold').text('Henderson Design Group', M, M);
       doc.fontSize(8).fillColor('#666').font('Helvetica').text('Interior Design', M, M + 18);
-      doc.fontSize(16).fillColor('#005670').font('Helvetica-Bold').text('Floor Plan', PW - M - 120, M, { width: 120, align: 'right' });
+      doc.fontSize(16).fillColor('#005670').font('Helvetica-Bold').text('Floor Plan', pageW - M - 120, M, { width: 120, align: 'right' });
       doc.fontSize(8).fillColor('#333').font('Helvetica')
-        .text(`Client: ${clientName}`, PW - M - 200, M + 18, { width: 200, align: 'right' })
-        .text(`Project: ${clientName}${unitNumber ? ' - ' + unitNumber : ''}`, PW - M - 200, M + 28, { width: 200, align: 'right' });
+        .text(`Client: ${clientName}`, pageW - M - 200, M + 18, { width: 200, align: 'right' })
+        .text(`Project: ${clientName}${unitNumber ? ' - ' + unitNumber : ''}`, pageW - M - 200, M + 28, { width: 200, align: 'right' });
       if (title) {
         doc.fontSize(10).fillColor('#005670').font('Helvetica-Bold').text(title, M, M + 36);
       }
-      doc.moveTo(M, M + 50).lineTo(PW - M, M + 50).strokeColor('#005670').lineWidth(1.5).stroke();
+      doc.moveTo(M, M + 50).lineTo(pageW - M, M + 50).strokeColor('#005670').lineWidth(1.5).stroke();
     };
 
     // ── Cover page ────────────────────────────────────────────────────────────
@@ -264,27 +293,44 @@ const generatePDF = async (req, res) => {
     doc.rect(0, PH - 8, PW, 8).fillColor('#005670').fill();
 
     // ── Page 2: Full floor plan with pins ────────────────────────────────────
-    const fullPlan = plans.find(p => p.type === 'full');
-    if (fullPlan) {
+    const fullPlan     = plans.find(p => p.type === 'full');     // pin layout
+    const fullviewPlan = plans.find(p => p.type === 'fullview'); // clean floor plan for PDF background
+    const bgPlan = fullviewPlan || fullPlan; // prefer fullview; fall back to pin layout image
+    if (bgPlan || fullPlan) {
       doc.addPage();
       drawHeader(null);
-      const imgData = await fetchImg(fullPlan.imageUrl);
-      const imgY = M + 56, imgH = PH - imgY - M - 10;
-      const imgW = PW - M * 2;
+      const imgData = await fetchImg(bgPlan?.imageUrl);
+      // Tight margins on the image area to maximise floor plan size
+      const IM = 6;
+      const imgY = M + 54, imgH = PH - imgY - IM;
+      const imgW = PW - IM * 2;
       if (imgData) {
-        try { doc.image(imgData.buffer, M, imgY, { width: imgW, height: imgH, fit: [imgW, imgH] }); } catch (e) { console.warn('PDF image embed failed:', e.message); }
-        // Draw pins as text labels
-        for (const pin of (fullPlan.pins || [])) {
-          const px = M + (pin.x / 100) * imgW;
-          const py = imgY + (pin.y / 100) * imgH;
-          const fontSize = Math.max(6, Math.round(8 * (pin.scale || 1)));
+        // Calculate centered placement to match CSS object-contain behavior in the FE.
+        // pdfkit's fit places image from top-left; we manually center it so pin
+        // coordinates (stored as % of container) map correctly.
+        let renderedW = imgW, renderedH = imgH, offX = 0, offY = 0;
+        if (imgData.dims && imgData.dims.width && imgData.dims.height) {
+          const scale = Math.min(imgW / imgData.dims.width, imgH / imgData.dims.height);
+          renderedW = imgData.dims.width * scale;
+          renderedH = imgData.dims.height * scale;
+          offX = (imgW - renderedW) / 2;
+          offY = (imgH - renderedH) / 2;
+        }
+        try { doc.image(imgData.buffer, IM + offX, imgY + offY, { width: renderedW, height: renderedH }); } catch (e) { console.warn('PDF image embed failed:', e.message); }
+        // Draw pins — always from the pin layout plan (type 'full'), not the background image plan
+        for (const pin of (fullPlan?.pins || [])) {
+          const px = IM + offX + (pin.x / 100) * renderedW;
+          const py = imgY + offY + (pin.y / 100) * renderedH;
+          const fontSize = Math.max(4, Math.round(6 * (pin.scale || 1)));
+          // Estimate text width to center without a constraining width (matching UI whitespace-nowrap)
+          const charW = fontSize * 0.58;
+          const textW = pin.skuLabel.length * charW;
           doc.save();
           doc.translate(px, py);
           if (pin.rotation) doc.rotate(pin.rotation);
           // Label — no background, just bold colored text directly on floor plan
-          const labelW = Math.min(120, Math.max(40, pin.skuLabel.length * fontSize * 0.65));
           doc.fontSize(fontSize).fillColor('#005670').font('Helvetica-Bold')
-             .text(pin.skuLabel, -labelW / 2, -fontSize - 2, { width: labelW, align: 'center', lineBreak: false });
+             .text(pin.skuLabel, -textW / 2, -fontSize - 2, { lineBreak: false });
           doc.restore();
         }
       }
@@ -349,10 +395,20 @@ const generatePDF = async (req, res) => {
         const imgData = await fetchImg(roomPlan.imageUrl);
         doc.addPage();
         drawHeader(room.toUpperCase());
-        const imgY = M + 56, imgH = PH - (M + 56) - M - 10;
-        const imgW = PW - M * 2;
+        // Consistent tight margins matching the full floor plan page
+        const rIM = 6;
+        const imgY = M + 54, imgH = PH - imgY - rIM;
+        const imgW = PW - rIM * 2;
         if (imgData) {
-          try { doc.image(imgData.buffer, M, imgY, { width: imgW, height: imgH, fit: [imgW, imgH] }); }
+          let rW = imgW, rH = imgH, oX = 0, oY = 0;
+          if (imgData.dims && imgData.dims.width && imgData.dims.height) {
+            const sc = Math.min(imgW / imgData.dims.width, imgH / imgData.dims.height);
+            rW = imgData.dims.width * sc;
+            rH = imgData.dims.height * sc;
+            oX = (imgW - rW) / 2;
+            oY = (imgH - rH) / 2;
+          }
+          try { doc.image(imgData.buffer, rIM + oX, imgY + oY, { width: rW, height: rH }); }
           catch (e) { console.warn('PDF image embed failed:', e.message); }
         }
       }
