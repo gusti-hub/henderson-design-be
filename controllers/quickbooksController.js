@@ -661,9 +661,8 @@ const syncProposalToQuickBooks = async (req, res) => {
       if (opts.fabric)         descParts.push(`Fabric: ${resolveFabric(opts.fabric)}`);
       if (opts.size)           descParts.push(`Size: ${opts.size}`);
 
-      // For group parents qty is already folded into subtotal — keep qty=1
-      const lineQty       = p.isParent ? 1 : qty;
-      const lineUnitPrice = p.isParent ? subtotal : round2(subtotal / (qty || 1));
+      const lineQty       = qty;
+      const lineUnitPrice = round2(subtotal / (qty || 1));
 
       const classRef = await resolveClassId(opts.itemClass || '');
       lines.push({

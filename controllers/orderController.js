@@ -1129,7 +1129,7 @@ const generateOrderSummary = async (req, res) => {
     ];
 
     // Transform products data
-    const productData = (order.selectedProducts || []).map(product => [
+    const productData = (order.selectedProducts || []).filter(product => !product.isParent).map(product => [
       product.name,
       product.product_id,
       product.spotName,
@@ -1697,7 +1697,7 @@ const loadAllClientProducts = async (orderId) => {
 
   // Merge products from all orders — tag each product with its order label + orderId
   let products = allOrders.flatMap(o =>
-    (o.selectedProducts || []).map(p => ({
+    (o.selectedProducts || []).filter(p => !p.isParent).map(p => ({
       ...p,
       _orderLabel: o.orderLabel || (o.orderNumber ? `Order ${o.orderNumber}` : ''),
       _orderId:    o._id,
@@ -3001,7 +3001,7 @@ const generateCogExcel = async (req, res) => {
       .lean();
 
     const allOrderIds = relatedOrders.map(o => o._id);
-    const products    = relatedOrders.flatMap(o => o.selectedProducts || []);
+    const products    = relatedOrders.flatMap(o => (o.selectedProducts || []).filter(p => !p.isParent));
 
     // ✅ Fetch latest POVersion per vendor — for PO number lookup
     const poVersions = await POVersion.find({ orderId: { $in: allOrderIds } })
@@ -3260,7 +3260,7 @@ const generateCogWithBill = async (req, res) => {
       .lean();
 
     const allOrderIds = relatedOrders.map(o => o._id);
-    const products    = relatedOrders.flatMap(o => o.selectedProducts || []);
+    const products    = relatedOrders.flatMap(o => (o.selectedProducts || []).filter(p => !p.isParent));
 
     // poVersions sorted desc — first hit per key = latest version
     const poVersions = await POVersion.find({ orderId: { $in: allOrderIds } }).sort({ version: -1 }).lean();
@@ -3735,7 +3735,7 @@ const generateAllProductsReport = async (req, res) => {
       const unitNumber = order.clientInfo?.unitNumber || '';
       const orderStatus = order.status || '';
  
-      (order.selectedProducts || []).forEach(p => {
+      (order.selectedProducts || []).filter(p => !p.isParent).forEach(p => {
         const opts = p.selectedOptions || {};
         const qty = parseFloat(p.quantity) || 1;
         const vendorName = (p.vendor && typeof p.vendor === 'object') ? p.vendor.name : 'HDG Inventory';

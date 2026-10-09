@@ -34,6 +34,9 @@ const getDashboardStats = async (req, res) => {
           $unwind: '$selectedProducts'
         },
         {
+          $match: { 'selectedProducts.isParent': { $ne: true } }
+        },
+        {
           $group: {
             _id: {
               productId: '$selectedProducts.product_id',
