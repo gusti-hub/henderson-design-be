@@ -1,5 +1,6 @@
 const FloorPlanLayout = require('../models/FloorPlanLayout');
 const Order           = require('../models/Order');
+const User            = require('../models/User');
 const POVersion       = require('../models/POVersion');
 const { generatePresignedUploadUrl, HARDCODED_CONFIG, s3Client } = require('../config/s3');
 const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -149,6 +150,9 @@ const generatePDF = async (req, res) => {
 
     if (!plans.length) return res.status(404).json({ message: 'No floor plans found' });
 
+    const clientUser = await User.findById(clientUserId)
+      .select('name email phoneNumber unitNumber address teamAssignment').lean().catch(() => null);
+
     const clientName = orders[0]?.clientInfo?.name || 'Client';
     const unitNumber = orders[0]?.clientInfo?.unitNumber || '';
 
@@ -264,9 +268,9 @@ const generatePDF = async (req, res) => {
     };
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="FloorPlan_${clientName.replace(/[^a-zA-Z0-9]/g, '_')}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="InstallBinder_${clientName.replace(/[^a-zA-Z0-9]/g, '_')}.pdf"`);
 
-    const doc = new PDFDocument({ layout: 'landscape', size: 'letter', margins: { top: 36, bottom: 36, left: 36, right: 36 }, autoFirstPage: false });
+    const doc = new PDFDocument({ layout: 'landscape', size: 'letter', margins: { top: 36, bottom: 36, left: 36, right: 36 }, autoFirstPage: false, bufferPages: true });
     doc.pipe(res);
 
     const PW = 792, PH = 612, M = 36;
@@ -274,7 +278,7 @@ const generatePDF = async (req, res) => {
     const drawHeader = (title, pageW = PW) => {
       doc.fontSize(14).fillColor('#005670').font('Helvetica-Bold').text('Henderson Design Group', M, M);
       doc.fontSize(8).fillColor('#666').font('Helvetica').text('Interior Design', M, M + 18);
-      doc.fontSize(16).fillColor('#005670').font('Helvetica-Bold').text('Floor Plan', pageW - M - 120, M, { width: 120, align: 'right' });
+      doc.fontSize(16).fillColor('#005670').font('Helvetica-Bold').text('Install Binder', pageW - M - 200, M, { width: 200, align: 'right' });
       doc.fontSize(8).fillColor('#333').font('Helvetica')
         .text(`Client: ${clientName}`, pageW - M - 200, M + 18, { width: 200, align: 'right' })
         .text(`Project: ${clientName}${unitNumber ? ' - ' + unitNumber : ''}`, pageW - M - 200, M + 28, { width: 200, align: 'right' });
@@ -284,35 +288,135 @@ const generatePDF = async (req, res) => {
       doc.moveTo(M, M + 50).lineTo(pageW - M, M + 50).strokeColor('#005670').lineWidth(1.5).stroke();
     };
 
+    // Cover and Project Directory are laid out as portrait sheets and rotated 90° (CCW)
+    // onto the landscape page: portrait (u, v) -> page (x = v, y = PH - u)
+    const QW = 612, QH = 792;
+    // pdfkit auto-adds pages when text passes the unrotated bottom edge, so lift that limit while drawing
+    let savedPageH = PH, savedBottom = M;
+    const beginRotated = () => {
+      savedPageH = doc.page.height; savedBottom = doc.page.margins.bottom;
+      doc.page.height = QH; doc.page.margins.bottom = 0;
+      doc.save(); doc.translate(0, PH); doc.rotate(-90);
+    };
+    const endRotated   = () => { doc.restore(); doc.page.height = savedPageH; doc.page.margins.bottom = savedBottom; };
+
     // ── Cover page ────────────────────────────────────────────────────────────
     doc.addPage();
-    // Top accent bar
-    doc.rect(0, 0, PW, 8).fillColor('#005670').fill();
-    // Brand
+    beginRotated();
+    doc.rect(0, 0, QW, 8).fillColor('#005670').fill();
     doc.fontSize(28).fillColor('#005670').font('Helvetica-Bold')
-       .text('Henderson Design Group', M, PH / 2 - 80, { width: PW - M * 2, align: 'center' });
+       .text('Henderson Design Group', M, QH / 2 - 80, { width: QW - M * 2, align: 'center' });
     doc.fontSize(11).fillColor('#888').font('Helvetica')
-       .text('Interior Design', M, PH / 2 - 44, { width: PW - M * 2, align: 'center' });
-    // Divider
-    doc.moveTo(PW / 2 - 80, PH / 2 - 20).lineTo(PW / 2 + 80, PH / 2 - 20)
+       .text('Interior Design', M, QH / 2 - 44, { width: QW - M * 2, align: 'center' });
+    doc.moveTo(QW / 2 - 80, QH / 2 - 20).lineTo(QW / 2 + 80, QH / 2 - 20)
        .strokeColor('#005670').lineWidth(1).stroke();
-    // Document title
     doc.fontSize(20).fillColor('#333').font('Helvetica-Bold')
-       .text('FLOOR PLAN PACKAGE', M, PH / 2, { width: PW - M * 2, align: 'center' });
-    // Client info
+       .text('INSTALL BINDER', M, QH / 2, { width: QW - M * 2, align: 'center' });
     doc.fontSize(12).fillColor('#555').font('Helvetica')
-       .text(clientName, M, PH / 2 + 36, { width: PW - M * 2, align: 'center' });
+       .text(clientName, M, QH / 2 + 36, { width: QW - M * 2, align: 'center' });
     if (unitNumber) {
       doc.fontSize(10).fillColor('#888').font('Helvetica')
-         .text(`Unit ${unitNumber}`, M, PH / 2 + 54, { width: PW - M * 2, align: 'center' });
+         .text(`Unit ${unitNumber}`, M, QH / 2 + 54, { width: QW - M * 2, align: 'center' });
     }
-    // Date
     doc.fontSize(9).fillColor('#aaa').font('Helvetica')
-       .text(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), M, PH - M - 12, { width: PW - M * 2, align: 'center' });
-    // Bottom accent bar
-    doc.rect(0, PH - 8, PW, 8).fillColor('#005670').fill();
+       .text(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), M, QH - M - 12, { width: QW - M * 2, align: 'center' });
+    doc.rect(0, QH - 8, QW, 8).fillColor('#005670').fill();
+    endRotated();
 
-    // ── Page 2: Full floor plan with pins ────────────────────────────────────
+    // ── Tinted brand logo (source PNG is white with transparency) ─────────────
+    let logoImg = null;
+    try {
+      const fsMod = require('fs'), pathMod = require('path');
+      const src = fsMod.readFileSync(pathMod.join(__dirname, '..', 'assets', 'HDG-Logo.png'));
+      const { data, info } = await sharp(src).raw().toBuffer({ resolveWithObject: true });
+      const [lr, lg, lb] = [0x1f, 0x5a, 0x73];
+      const n = info.width * info.height;
+      const rgba = Buffer.alloc(n * 4);
+      for (let i = 0; i < n; i++) {
+        rgba[i * 4] = lr; rgba[i * 4 + 1] = lg; rgba[i * 4 + 2] = lb;
+        rgba[i * 4 + 3] = info.channels === 2 ? data[i * 2 + 1] : info.channels === 4 ? data[i * 4 + 3] : 255;
+      }
+      logoImg = {
+        buffer: await sharp(rgba, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer(),
+        ratio: info.width / info.height,
+      };
+    } catch (e) { console.warn('PDF logo load failed:', e.message); }
+
+    const drawLogo = (x, y, w) => {
+      if (!logoImg) return;
+      try { doc.image(logoImg.buffer, x, y, { width: w }); } catch (e) { console.warn('PDF logo embed failed:', e.message); }
+    };
+
+    // ── Page 2: Project Directory (portrait layout, rotated onto landscape) ───
+    {
+      doc.addPage();
+      beginRotated();
+      doc.font('Times-Roman').fontSize(24).fillColor('#1f5a73').text('PROJECT DIRECTORY', M, M + 30, { lineBreak: false });
+      drawLogo(QW - M - 150, M, 150);
+
+      const addr   = clientUser?.address || {};
+      const cityLn = [addr.city, [addr.state, addr.zipcode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+      const projectNo = (orders.find(o => o.projectCode)?.projectCode) || '';
+      const floorPlanName = orders[0]?.clientInfo?.floorPlan || '';
+      const team = clientUser?.teamAssignment || {};
+      const COL_V = M + 105, COL_SL = M + 320, COL_SV = M + 378;
+
+      const section = (top, h, labelLines, valueLines, subs) => {
+        doc.moveTo(M, top).lineTo(QW - M, top).lineWidth(1.5).strokeColor('#000').stroke();
+        doc.font('Helvetica').fontSize(10).fillColor('#000');
+        labelLines.forEach((t, i) => doc.text(t, M + 4, top + 12 + i * 15, { width: 95, lineBreak: false }));
+        valueLines.filter(Boolean).forEach((t, i) => doc.text(t, COL_V, top + 12 + i * 15, { width: 205, lineBreak: false, ellipsis: true }));
+        subs.forEach(([label, val], i) => {
+          doc.fillColor('#000').text(label, COL_SL, top + 12 + i * 15, { width: 55, lineBreak: false });
+          if (val) doc.text(val, COL_SV, top + 12 + i * 15, { width: QW - M - COL_SV - 4, lineBreak: false, ellipsis: true });
+        });
+        return top + h;
+      };
+
+      let y = M + 90;
+      y = section(y, 80, ['PROJECT', 'PROJECT NO.'],
+        [clientName + (unitNumber ? ` - Unit ${unitNumber}` : ''), projectNo], []);
+      y = section(y, 130, ['CLIENT', '(Mailing Address)'],
+        [clientUser?.name || clientName, addr.street, cityLn],
+        [['Contact', clientUser?.name || clientName], ['Phone', clientUser?.phoneNumber || ''], ['Cell', ''], ['Email', clientUser?.email || '']]);
+      y = section(y, 130, ['CLIENT', '(Project Address)'],
+        ['ALIA', unitNumber ? `Unit ${unitNumber}` : '', floorPlanName],
+        [['Contact', ''], ['Phone', ''], ['Cell', ''], ['Email', '']]);
+      y = section(y, 150, ['INTERIORS'],
+        ['Henderson Design Group', '74-5518 Kaiwi Street, Bay B / Unit #7', 'Kailua Kona, HI 96740'],
+        [['Contact', team.projectManager || team.designer || ''], ['Office', ''], ['Cell', ''], ['Web', 'www.henderson.house'], ['Email', '']]);
+      doc.moveTo(M, y).lineTo(QW - M, y).lineWidth(1.5).strokeColor('#000').stroke();
+      endRotated();
+    }
+
+    // ── Boxed image area with title block (used by every floor plan image page) ─
+    const TB_H = 62;
+    const drawImageFrame = (planTitle) => {
+      const fx = M, fy = M + 56, fw = PW - M * 2, fh = PH - 30 - fy;
+      const tbY = fy + fh - TB_H;
+      doc.lineWidth(1.5).strokeColor('#111');
+      doc.rect(fx, fy, fw, fh).stroke();
+      doc.moveTo(fx, tbY).lineTo(fx + fw, tbY).stroke();
+      const c1 = fx + 150, c2 = fx + fw - 130;
+      doc.moveTo(c1, tbY).lineTo(c1, fy + fh).stroke();
+      doc.moveTo(c2, tbY).lineTo(c2, fy + fh).stroke();
+
+      drawLogo(fx + 14, tbY + (TB_H - 120 / (logoImg?.ratio || 5)) / 2, 122);
+
+      const l1 = `ALIA${unitNumber ? ' UNIT ' + unitNumber : ''}`;
+      doc.font('Helvetica').fontSize(11).fillColor('#111');
+      [l1, clientName.toUpperCase(), String(planTitle).toUpperCase()].forEach((t, i) => {
+        doc.text(t, c1 + 6, tbY + 9 + i * 15, { width: c2 - c1 - 12, align: 'center', lineBreak: false, ellipsis: true });
+      });
+      const d = new Date();
+      const dateStr = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}-${d.getFullYear()}`;
+      doc.fontSize(9).text(dateStr, c2 + 6, tbY + 18, { width: 118, align: 'center', lineBreak: false });
+      doc.text('NOT TO SCALE', c2 + 6, tbY + 32, { width: 118, align: 'center', lineBreak: false });
+
+      return { ix: fx + 4, iy: fy + 4, iw: fw - 8, ih: fh - TB_H - 8 };
+    };
+
+    // ── Page 3: Full floor plan with pins ────────────────────────────────────
     const fullPlan     = plans.find(p => p.type === 'full');     // pin layout
     const fullviewPlan = plans.find(p => p.type === 'room' && p.room === '_fullview_');
     const bgPlan = fullviewPlan || fullPlan; // prefer fullview; fall back to pin layout image
@@ -320,10 +424,10 @@ const generatePDF = async (req, res) => {
       doc.addPage();
       drawHeader(null);
       const imgData = await fetchImg(bgPlan?.imageUrl);
-      // Tight margins on the image area to maximise floor plan size
-      const IM = 6;
-      const imgY = M + 54, imgH = PH - imgY - IM;
-      const imgW = PW - IM * 2;
+      const frame = drawImageFrame('Overall Floor Plan');
+      const IM = frame.ix;
+      const imgY = frame.iy, imgH = frame.ih;
+      const imgW = frame.iw;
       if (imgData) {
         // Calculate centered placement to match CSS object-contain behavior in the FE.
         // pdfkit's fit places image from top-left; we manually center it so pin
@@ -357,7 +461,7 @@ const generatePDF = async (req, res) => {
     }
 
     // ── Per-room pages ────────────────────────────────────────────────────────
-    const roomPlans = plans.filter(p => p.type === 'room');
+    const roomPlans = plans.filter(p => p.type === 'room' && p.room !== '_fullview_');
     const allRooms  = [...new Set([...roomPlans.map(p => p.room), ...byRoom.keys()])].sort();
 
     // ── PDF product table ──────────────────────────────────────────────────────
@@ -533,10 +637,10 @@ const generatePDF = async (req, res) => {
         const imgData = await fetchImg(roomPlan.imageUrl);
         doc.addPage();
         drawHeader(room.toUpperCase());
-        // Consistent tight margins matching the full floor plan page
-        const rIM = 6;
-        const imgY = M + 54, imgH = PH - imgY - rIM;
-        const imgW = PW - rIM * 2;
+        const rFrame = drawImageFrame(`${room} Floor Plan`);
+        const rIM = rFrame.ix;
+        const imgY = rFrame.iy, imgH = rFrame.ih;
+        const imgW = rFrame.iw;
         if (imgData) {
           let rW = imgW, rH = imgH, oX = 0, oY = 0;
           if (imgData.dims && imgData.dims.width && imgData.dims.height) {
@@ -557,9 +661,19 @@ const generatePDF = async (req, res) => {
       }
     }
 
-    // Footer on last page
-    doc.fontSize(8).fillColor('#666').font('Helvetica')
-      .text('Henderson Design Group  |  4343 Royal Place, Honolulu, HI 96816  |  (808) 315-8782', M, PH - M, { align: 'center', width: PW - M * 2 });
+    // Page numbers (bottom-right, cover excluded) + company footer on last page
+    const pageRange = doc.bufferedPageRange();
+    for (let i = pageRange.start; i < pageRange.start + pageRange.count; i++) {
+      doc.switchToPage(i);
+      doc.page.margins.bottom = 0;
+      doc.fontSize(8).fillColor('#666').font('Helvetica');
+      if (i > 0) {
+        doc.text(`Page ${i + 1} of ${pageRange.count}`, PW - M - 100, PH - 22, { width: 100, align: 'right', lineBreak: false });
+      }
+      if (i === pageRange.start + pageRange.count - 1) {
+        doc.text('Henderson Design Group  |  4343 Royal Place, Honolulu, HI 96816  |  (808) 315-8782', M, PH - 22, { align: 'center', width: PW - M * 2 - 120, lineBreak: false });
+      }
+    }
 
     doc.end();
   } catch (err) {
