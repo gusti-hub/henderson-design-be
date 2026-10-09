@@ -195,6 +195,7 @@ const getProposalData = async (req, res) => {
         orderLabel:       order.orderLabel,
         version:          latestVersion ? latestVersion.version : 0,
         status:           latestVersion ? latestVersion.status : 'draft',
+        invoicePayment:   latestVersion?.invoicePayment ?? null,
         proposalNumber,
         clientInfo:       order.clientInfo,
         user:             order.user,
@@ -482,6 +483,57 @@ const updateProposalStatus = async (req, res) => {
   }
 };
 
+// ─── SET invoice payment (amount=null resets to automatic) ───────────────────
+const updateInvoicePayment = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { amount, version, markPaid } = req.body;
+
+    let value = null;
+    if (amount !== null && amount !== undefined && amount !== '') {
+      value = Number(amount);
+      if (!Number.isFinite(value) || value < 0) {
+        return res.status(400).json({ message: 'Payment must be a number ≥ 0' });
+      }
+      value = Math.round(value * 100) / 100;
+    }
+
+    const query = version ? { orderId, version: parseInt(version) } : { orderId };
+    let pv = await ProposalVersion.findOne(query, {}, { sort: { version: -1 } });
+
+    if (!pv) {
+      const order = await Order.findById(orderId).lean();
+      if (!order) return res.status(404).json({ message: 'Order not found' });
+      await ProposalVersion.create({
+        orderId,
+        version: 1,
+        status: markPaid === true && value !== null ? 'paid' : 'draft',
+        invoicePayment: value,
+        proposalNumber: order.proposalNumber || null,
+        selectedProducts: order.selectedProducts || [],
+        createdBy: req.user.id,
+        updatedBy: req.user.id,
+      });
+      return res.json({ success: true, invoicePayment: value, status: markPaid === true && value !== null ? 'paid' : 'draft' });
+    }
+
+    if (pv.status === 'paid') {
+      return res.status(409).json({ message: 'Invoice is already paid — payment is locked. Change the proposal status first to edit it.' });
+    }
+
+    pv.invoicePayment = value;
+    if (markPaid === true && value !== null) pv.status = 'paid';
+    pv.updatedAt = new Date();
+    pv.updatedBy = req.user.id;
+    await pv.save();
+
+    res.json({ success: true, invoicePayment: value, status: pv.status });
+  } catch (error) {
+    console.error('Error updating invoice payment:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // ─── SAVE CURRENT VERSION ─────────────────────────────────────────────────────
 // (tidak ada perubahan)
 const saveCurrentVersion = async (req, res) => {
@@ -607,6 +659,7 @@ module.exports = {
   ensureProposalNumberEndpoint,
   migrateProposalNumbers,
   updateProposalStatus,
+  updateInvoicePayment,
   saveCurrentVersion,
   getAvailableProducts,
 };

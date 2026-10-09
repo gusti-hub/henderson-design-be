@@ -95,6 +95,13 @@ const proposalVersionSchema = new mongoose.Schema({
     default: 'draft'
   },
 
+  // Invoice payment received; null = automatic (full total when status is paid, else 0)
+  invoicePayment: {
+    type: Number,
+    default: null,
+    min: 0
+  },
+
   quickbooksId: {
     type: String,
     default: null,

@@ -8,6 +8,7 @@ const {
   getAllVersions,
   ensureProposalNumberEndpoint,
   updateProposalStatus,
+  updateInvoicePayment,
   migrateProposalNumbers,
   saveCurrentVersion,
   getAvailableProducts
@@ -27,6 +28,7 @@ router.get('/:orderId/latest',          protect, (req, res) => {
 
 // ── Status update BEFORE generic PUT /:orderId ────────────────────────────────
 router.put('/:orderId/status',          protect, updateProposalStatus);
+router.put('/:orderId/invoice-payment', protect, updateInvoicePayment);
 
 // ── Generic routes LAST ───────────────────────────────────────────────────────
 router.put('/:orderId',                 protect, saveProposal);
