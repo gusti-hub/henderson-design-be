@@ -40,6 +40,8 @@ const expenseSchema = new mongoose.Schema({
     enum: ['draft', 'review', 'confirmed', 'paid'],
     default: 'draft',
   },
+  // Amount received; status flips to 'paid' automatically once it covers the total
+  payment: { type: Number, default: 0, min: 0 },
   employeeName: { type: String, default: '' },
   hoursLabel:   { type: String, enum: ['Hours', 'QTY'], default: 'Hours' },
 

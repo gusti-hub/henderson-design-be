@@ -55,6 +55,7 @@ const createExpense = async (req, res) => {
       })),
       taxRate:      parseFloat(taxRate) || 4.5,
       notes:        notes        || '',
+      payment:      Math.max(0, parseFloat(req.body.payment) || 0),
       status:       status       || 'draft',
       employeeName: employeeName || '',
       hoursLabel:   hoursLabel   || 'Hours',
@@ -62,11 +63,26 @@ const createExpense = async (req, res) => {
       createdBy:    req.user?.id,
     });
 
+    if (expense.payment > 0 && coversTotal(expense, expense.payment) && expense.status !== 'paid') {
+      expense.status = 'paid';
+      await expense.save();
+    }
+
     res.status(201).json({ ...expense.toJSON(), id: expense._id.toString() });
   } catch (error) {
     console.error('createExpense error:', error);
     res.status(500).json({ message: error.message });
   }
+};
+
+// total = subtotal + tax (same formula as the expense document)
+const expenseTotal = (exp) => {
+  const sub = (exp.lines || []).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+  return sub + sub * ((parseFloat(exp.taxRate) || 0) / 100);
+};
+const coversTotal = (exp, payment) => {
+  const total = expenseTotal(exp);
+  return total > 0 && Math.round((total - payment) * 100) <= 0;
 };
 
 // ─── UPDATE expense ───────────────────────────────────────────────────────────
@@ -76,6 +92,9 @@ const updateExpense = async (req, res) => {
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
 
     const { expenseNumber, expenseDate, projectName, clientInfo, lines, taxRate, notes, status, employeeName, hoursLabel } = req.body;
+
+    const prevStatus  = expense.status;
+    const prevPayment = expense.payment || 0;
 
     if (expenseNumber !== undefined) expense.expenseNumber = expenseNumber;
     if (expenseDate   !== undefined) expense.expenseDate   = expenseDate;
@@ -97,6 +116,17 @@ const updateExpense = async (req, res) => {
         amount:      parseFloat(l.amount) || 0,
         unit:        l.unit        || 'hr',
       }));
+    }
+
+    if (req.body.payment !== undefined) {
+      const newPayment = Math.round((parseFloat(req.body.payment) || 0) * 100) / 100;
+      if (newPayment < 0) return res.status(400).json({ message: 'Payment must be ≥ 0' });
+      const changed = newPayment !== prevPayment;
+      if (changed && prevStatus === 'paid' && expense.status === 'paid') {
+        return res.status(409).json({ message: 'Expense is already paid — payment is locked. Change the status first to edit it.' });
+      }
+      expense.payment = newPayment;
+      if (changed && coversTotal(expense, newPayment)) expense.status = 'paid';
     }
 
     await expense.save();
