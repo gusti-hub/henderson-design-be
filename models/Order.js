@@ -168,6 +168,8 @@ const orderSchema = new mongoose.Schema({
       trackingInfo:      String,
       deliveryStatus:    String,
       installerNotes:    String,
+      installStatus:     String,   // Pending | Scheduled | Installed | Issue
+      installDate:       String,   // YYYY-MM-DD
       leadTime:          String,
 
       // ── Status Report ──

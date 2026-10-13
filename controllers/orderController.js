@@ -104,6 +104,10 @@ const updateOrder = async (req, res) => {
     }
  
     if (req.body.selectedProducts && Array.isArray(req.body.selectedProducts)) {
+      // Drop blank group parents (draft groups that were never named); also self-heals orders that already have them
+      req.body.selectedProducts = req.body.selectedProducts.filter(
+        p => !(p && p.isParent && !String(p.name || '').trim())
+      );
       console.log(`📦 Processing ${req.body.selectedProducts.length} products`);
 
       // ── Guard: block removal of products used in confirmed POs / approved Proposals ──
@@ -173,6 +177,24 @@ const updateOrder = async (req, res) => {
       const usedIds = new Set();
       const isFree = (id) => id && !usedIds.has(String(id));
 
+      // Fields owned by the Logistic Tracker. The Orders screen never sends them, so they must be
+      // carried over from the stored product — otherwise every save from Orders wipes them.
+      const LOGISTIC_KEYS = [
+        'cargoReadyDate', 'shipmentDate',
+        'logDrawing', 'logMachining', 'logAssembly', 'logFinishing', 'logQcChecking', 'logPacking',
+        'packingList', 'packingListQty', 'shippedQty', 'poQtyOverride',
+      ];
+      const storedById = new Map((beforeSnapshot.selectedProducts || []).map(p => [String(p._id), p]));
+      // Fields shared with the Logistic Tracker: the Orders screen holds a copy loaded earlier, so for
+      // these fields an untouched (stale) value must not overwrite what someone else just saved.
+      const changedFields = (req.body.changedFields && typeof req.body.changedFields === 'object') ? req.body.changedFields : null;
+      const preserveLogistic = (id) => {
+        const stored = storedById.get(String(id))?.selectedOptions;
+        const kept = {};
+        if (stored) for (const k of LOGISTIC_KEYS) if (stored[k] !== undefined && stored[k] !== null) kept[k] = stored[k];
+        return kept;
+      };
+
       updateData.selectedProducts = req.body.selectedProducts.map((product, idx) => {
         // ── Resolve _id ──────────────────────────────────────────────────────
         // Priority (selalu lewati _id yang sudah terpakai di order ini → unik):
@@ -202,6 +224,18 @@ const updateOrder = async (req, res) => {
         }
         usedIds.add(String(resolvedId));
 
+        // Use stored values for shared fields unless this save really edited them
+        const storedProd = (hasValidId && String(product._id) === String(resolvedId))
+          ? storedById.get(String(resolvedId)) : null;
+        const dirtySet = new Set((changedFields && changedFields[String(resolvedId)]) || []);
+        const keepStored = !!(changedFields && storedProd);
+        const shared = (key) => (keepStored && !dirtySet.has(`selectedOptions.${key}`))
+          ? storedProd.selectedOptions?.[key]
+          : product.selectedOptions?.[key];
+        const sharedQuantity = (keepStored && !dirtySet.has('quantity'))
+          ? (storedProd.quantity || 1)
+          : (product.quantity || 1);
+
         return {
           _id: resolvedId,  // ← selalu ada sekarang
           product_id: product.product_id,
@@ -209,7 +243,7 @@ const updateOrder = async (req, res) => {
           category: product.category,
           package: product.package || '',
           spotName: product.spotName,
-          quantity: product.quantity || 1,
+          quantity: sharedQuantity,
           unitPrice: product.unitPrice || 0,
           finalPrice: product.finalPrice || 0,
           vendor: product.vendor || null,
@@ -219,6 +253,7 @@ const updateOrder = async (req, res) => {
           isParent: product.isParent || false,
           parentId: product.parentId || null,
           selectedOptions: {
+            ...preserveLogistic(resolvedId),
             sidemark:           product.selectedOptions?.sidemark           || '',
             group:              product.selectedOptions?.group              || '',
             tags:               product.selectedOptions?.tags               || [],
@@ -233,7 +268,7 @@ const updateOrder = async (req, res) => {
             images:             product.selectedOptions?.images             || [],
             links:              product.selectedOptions?.links              || [],
             specifications:     product.selectedOptions?.specifications     || '',
-            notes:              product.selectedOptions?.notes              || '',
+            notes:              shared('notes')              || '',
             itemNotes:          product.selectedOptions?.itemNotes          || '',
             shipToVendorId:     product.selectedOptions?.shipToVendorId     || null,
             shipToName:         product.selectedOptions?.shipToName         || '',
@@ -245,18 +280,20 @@ const updateOrder = async (req, res) => {
             shipToPhone:        product.selectedOptions?.shipToPhone        || '',
             poNumber:           product.selectedOptions?.poNumber           || '',
             vendorOrderNumber:  product.selectedOptions?.vendorOrderNumber  || '',
-            trackingInfo:       product.selectedOptions?.trackingInfo       || '',
+            trackingInfo:       shared('trackingInfo')       || '',
             deliveryStatus:     product.selectedOptions?.deliveryStatus     || '',
             installerNotes:     product.selectedOptions?.installerNotes     || '',
+            installStatus:      product.selectedOptions?.installStatus      || '',
+            installDate:        product.selectedOptions?.installDate        || '',
             leadTime:           product.selectedOptions?.leadTime           || '',
             room:                     product.selectedOptions?.room                     || '',
-            statusCategory:           product.selectedOptions?.statusCategory           || '',
+            statusCategory:           shared('statusCategory')           || '',
             proposalNumber:           product.selectedOptions?.proposalNumber           || '',
             shipTo:                   product.selectedOptions?.shipTo                   || '',
-            orderDate:                product.selectedOptions?.orderDate                || '',
+            orderDate:                shared('orderDate')                || '',
             revisedOrderDate:         product.selectedOptions?.revisedOrderDate         || '',
-            expectedShipDate:         product.selectedOptions?.expectedShipDate         || '',
-            expectedArrivalDate:      product.selectedOptions?.expectedArrivalDate      || '',
+            expectedShipDate:         shared('expectedShipDate')         || '',
+            expectedArrivalDate:      shared('expectedArrivalDate')      || '',
             dateReceived:             product.selectedOptions?.dateReceived             || '',
             dateInspected:            product.selectedOptions?.dateInspected            || '',
             estimatedDeliveryDate:    product.selectedOptions?.estimatedDeliveryDate    || '',
@@ -303,6 +340,8 @@ const updateOrder = async (req, res) => {
             fabricVendor:       product.selectedOptions?.fabricVendor       || '',
             fabricClient:       product.selectedOptions?.fabricClient       || '',
             productVendor:      product.selectedOptions?.productVendor      || '',
+            // Container # in the Logistic Tracker is the Orders "Tracking Number"
+            containerNumber:    shared('trackingInfo')                      || '',
           },
           placement: product.placement || null
         };

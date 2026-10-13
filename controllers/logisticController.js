@@ -151,7 +151,8 @@ const buildRow = (order, orderProd, poProd, po) => {
     logQcChecking:       opts.logQcChecking ?? 0,
     logPacking:          packing,
     packingList:         Number(opts.packingListQty ?? 0),
-    containerNumber:     opts.containerNumber || '',
+    // Container # and the Orders "Tracking Number" are the same value (Orders wins when both exist)
+    containerNumber:     opts.trackingInfo || opts.containerNumber || '',
     statusCategory:      opts.statusCategory || '',
     expectedShipDate:    opts.expectedShipDate || '',
     expectedArrivalDate: opts.expectedArrivalDate || '',
@@ -376,7 +377,10 @@ exports.updateEntry = async (req, res) => {
     if (logAssembly != null)               setFields[pf('logAssembly')]       = Number(logAssembly);
     if (logFinishing != null)              setFields[pf('logFinishing')]      = Number(logFinishing);
     if (logPacking != null)                setFields[pf('logPacking')]        = Number(logPacking);
-    if (containerNumber !== undefined)     setFields[pf('containerNumber')]   = containerNumber;
+    if (containerNumber !== undefined) {
+      setFields[pf('containerNumber')] = containerNumber;
+      setFields[pf('trackingInfo')]    = containerNumber;   // shows in Orders > Status > Tracking Number
+    }
     if (statusCategory !== undefined)      setFields[pf('statusCategory')]    = statusCategory;
     if (expectedShipDate !== undefined)    setFields[pf('expectedShipDate')]  = expectedShipDate;
     if (expectedArrivalDate !== undefined) setFields[pf('expectedArrivalDate')] = expectedArrivalDate;
