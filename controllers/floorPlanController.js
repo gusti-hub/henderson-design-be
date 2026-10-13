@@ -1,6 +1,7 @@
 const FloorPlanLayout = require('../models/FloorPlanLayout');
 const Order           = require('../models/Order');
 const User            = require('../models/User');
+const { vendorDescriptionText, latestNotePoints } = require('../utils/installBinderText');
 const POVersion       = require('../models/POVersion');
 const { generatePresignedUploadUrl, HARDCODED_CONFIG, s3Client } = require('../config/s3');
 const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -137,49 +138,8 @@ const getClientProducts = async (req, res) => {
 };
 
 // ── GET PDF — full floor plan + per-room pages ───────────────────────────────
-const ROOM_ORDER_LIST = [
-  'COURTYARD','EXTERIOR ENTRY','INTERIOR ENTRY','FOYER','LIVING ROOM','DINING ROOM',
-  'KITCHEN','PANTRY','PRIMARY BEDROOM','PRIMARY BEDROOM LANAI','PRIMARY BATHROOM',
-  'PRIMARY CLOSET','BEDROOM 2','BATHROOM 2','BEDROOM 2 CLOSET','BEDROOM 2 LANAI',
-  'BEDROOM 3','BATHROOM 3','BEDROOM 3 CLOSET','BEDROOM 3 LANAI','BEDROOM 4','BATHROOM 4',
-  'BEDROOM 4 CLOSET','BEDROOM 4 LANAI','POWDER ROOM','OFFICE','OFFICE 1','OFFICE 2','MEDIA ROOM','DEN','HALLWAY','HALLWAY 1','HALLWAY 2',
-  'LANAI','LANAI 1','LANAI 2','LANAI 3','MAIN LANAI','POOL LANAI','POOL AREA','BREAKFAST NOOK','GREAT ROOM','FAMILY ROOM','WET BAR','BBQ AREA',
-  'POOL BATH','PAVILLION','GYM','WINE ROOM','REC ROOM','GARAGE','SITTING ROOM',
-  'FLEX SPACE','LAUNDRY ROOM','MUD ROOM','TERRACE','BALCONY','OUTDOOR DINING',
-  'OUTDOOR LIVING','GUEST SUITE','DESIGN SERVICES','PROJECT MANAGEMENT SERVICES',
-  'PROCUREMENT SERVICES','FDI SERVICES (FREIGHT, DELIVERY & INSTALLATION)',
-  'WALLPAPER INSTALLATION SERVICES','ELECTRICAL INSTALLATION SERVICES',
-  'ART INSTALLATION SERVICES','WALLPAPER TRADE COORDINATION',
-  'ELECTRICAL TRADE COORDINATION','CLOSET SOLUTIONS',
-  'KITCHEN & HOUSEHOLD ESSENTIALS PACKAGE','WINDOW COVERING SERVICES',
-  'AUDIO VISUAL SERVICES','GREENERY & PLANT STYLING',
-  'CONSTRUCTION DESIGN & PM SERVICES','CUSTOM MILLWORK SERVICES',
-  'CUSTOM FURNITURE SERVICES','LIGHTING PROCUREMENT & COORDINATION',
-  'APPLIANCE COORDINATION','PLUMBING FIXTURE COORDINATION',
-  'DECORATIVE PLUMBING COORDINATION','STONE & SLAB COORDINATION',
-  'TILE & SURFACE COORDINATION','HARDWARE & DECORATIVE HARDWARE COORDINATION',
-  'OUTDOOR FURNISHINGS','LANAI / TERRACE FURNISHINGS','STYLING & ACCESSORIES',
-  'BEDDING PACKAGE','TURNKEY MOVE-IN PACKAGE','OWNER STORAGE & INVENTORY COORDINATION',
-  'CLIENT SUPPLIED ITEMS COORDINATION','WHITE GLOVE RECEIVING & WAREHOUSING',
-  'PUNCH LIST & COMPLETION COORDINATION','SITE VISIT COORDINATION',
-  'EXPEDITING SERVICES','BUILDING COORDINATION SERVICES',
-  'CONTRACTOR COORDINATION SERVICES','INSTALLATION OVERSIGHT',
-  'FINAL STYLING & STAGING','REVEAL PREPARATION',
-];
+const { roomCompare } = require('../utils/roomOrder');
 
-// Room order shared by the tabs, the PDF and the Proposal Editor (rooms without a name go last)
-const roomCompare = (a, b) => {
-  const isNone = (r) => !String(r || '').trim() || r === 'Other' || r === '-' || r === '—';
-  if (isNone(a) && isNone(b)) return 0;
-  if (isNone(a)) return 1;
-  if (isNone(b)) return -1;
-  const ia = ROOM_ORDER_LIST.indexOf(String(a).trim().toUpperCase());
-  const ib = ROOM_ORDER_LIST.indexOf(String(b).trim().toUpperCase());
-  if (ia !== -1 && ib !== -1) return ia - ib;
-  if (ia !== -1) return -1;
-  if (ib !== -1) return 1;
-  return String(a).localeCompare(String(b));
-};
 const normRoom = (r) => String(r || '').trim();
 
 // Rich text / HTML -> plain text, keeping line breaks
@@ -246,10 +206,9 @@ const generatePDF = async (req, res) => {
           qty:               p.quantity || 1,
           imageUrl:          getPrimaryImage(p),
           vendorOrderNumber: opts.vendorOrderNumber || '',
-          installStatus:     opts.installStatus || '',
           installDate:       opts.installDate || '',
           trackingInfo:      opts.trackingInfo || '',
-          notes:             opts.notes || '',
+          notes:             latestNotePoints(opts.notes, 2),
           vendorDescription: opts.vendorDescription || '',
           finish:            opts.finish || '',
           fabric:            opts.fabric || '',
@@ -578,22 +537,23 @@ const generatePDF = async (req, res) => {
     };
 
     const TABLE_COLS = [
-      { label: 'Photo',                   w: 90  },
-      { label: 'Vendor Description',      w: 170 },
+      { label: 'Photo',                   w: 100 },
+      { label: 'Vendor Description',      w: 150 },
       { label: 'Room',                    w: 50  },
       { label: 'Vendor Name',             w: 65  },
       { label: 'PO #',                    w: 78  },
       { label: 'Qty',                     w: 25  },
       { label: 'Vendor Order Number',     w: 72  },
       { label: 'Shipment\nTracking Info', w: 65  },
-      { label: 'Notes',                   w: 105 },
+      { label: 'Install Date',            w: 58  },
+      { label: 'Notes',                   w: 135 },
     ];
     const tableW    = PW - M * 2;
     const tScale    = tableW / TABLE_COLS.reduce((s, c) => s + c.w, 0);
     const tableCols = TABLE_COLS.map(c => ({ ...c, w: c.w * tScale }));
     const HDR_H = 22;
     const ROW_PAD = 6;
-    const PHOTO_H = 110;
+    const PHOTO_H = 120;
     const dColW = tableCols[1].w - 6;
     const MAX_ROW_H = PH - M - 8 - (M + 60 + HDR_H);
 
@@ -633,10 +593,12 @@ const generatePDF = async (req, res) => {
         const nameStr  = stripHtml(p.name || '');
 
         // Detail block comes from Vendor Description only (no other fields mixed in)
-        const detailStr = richToText(p.vendorDescription || '');
+        const detailStr = vendorDescriptionText(p.vendorDescription || '');
 
         // Other columns: Room, Vendor Name, PO#, Qty, Vendor Order Number, Tracking Info, Notes
-        const cellTexts = [p.room, p.vendorName, p.poNumber, String(p.qty || ''), p.vendorOrderNumber, p.trackingInfo, p.notes]
+        const fmtInstallDate = (d) => (/^\d{4}-\d{2}-\d{2}/.test(d || '') ? `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}` : (d || ''));
+        const installText = fmtInstallDate(p.installDate);
+        const cellTexts = [p.room, p.vendorName, p.poNumber, String(p.qty || ''), p.vendorOrderNumber, p.trackingInfo, installText, p.notes]
           .map(v => richToText(v || ''));
         const cellSizes = cellTexts.map((t, i) => (t ? fitCellSize(t, tableCols[i + 2].w - 6, MAX_ROW_H - ROW_PAD * 2) : 7));
 
@@ -653,13 +615,7 @@ const generatePDF = async (req, res) => {
           doc.font('CalibriLight').fontSize(cellSizes[i]);
           contentH = Math.max(contentH, ROW_PAD * 2 + doc.heightOfString(t, { width: tableCols[i + 2].w - 6 }));
         });
-        // Install status / date go under the photo
-        const fmtInstallDate = (d) => (/^\d{4}-\d{2}-\d{2}/.test(d || '') ? `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}` : (d || ''));
-        const infoLines = [];
-        if (p.installStatus) infoLines.push({ text: `Status: ${p.installStatus}`, bold: true });
-        if (p.installDate)   infoLines.push({ text: `Install Date: ${fmtInstallDate(p.installDate)}`, bold: false });
-        const infoH = infoLines.length ? infoLines.length * 9 + 4 : 0;
-        const rowH = Math.min(MAX_ROW_H, Math.max(PHOTO_H + ROW_PAD * 2 + infoH, contentH));
+        const rowH = Math.min(MAX_ROW_H, Math.max(PHOTO_H + ROW_PAD * 2, contentH));
 
         // Page break
         if (y + rowH > PH - M - 8) {
@@ -678,10 +634,9 @@ const generatePDF = async (req, res) => {
 
         // Photo
         const pCol = tableCols[0];
-        let infoY = y + ROW_PAD;
         if (imgData) {
           const maxW = pCol.w - ROW_PAD;
-          const maxH = rowH - ROW_PAD * 2 - infoH;
+          const maxH = rowH - ROW_PAD * 2;
           let iW = maxW, iH = maxH;
           if (imgData.dims?.width && imgData.dims?.height) {
             const sc = Math.min(maxW / imgData.dims.width, maxH / imgData.dims.height);
@@ -692,12 +647,7 @@ const generatePDF = async (req, res) => {
           try {
             doc.image(imgData.buffer, cx + (pCol.w - iW) / 2, imgTop, { width: iW, height: iH });
           } catch(e) {}
-          infoY = imgTop + iH + 3;
         }
-        infoLines.forEach((ln, i) => {
-          doc.font(ln.bold ? 'CalibriBold' : 'CalibriLight').fontSize(7.5).fillColor('#000000')
-            .text(ln.text, cx + 2, infoY + i * 9, { width: pCol.w - 4, align: 'center', lineBreak: false });
-        });
         cx += pCol.w;
 
         // Vendor Description — clip cell to prevent overflow into next row
@@ -805,6 +755,21 @@ const generatePDF = async (req, res) => {
   }
 };
 
+// ── GET /api/floor-plans/:clientUserId/excel — Install Binder as Excel ───────
+// Same Excel the Orders list downloads; it merges all of this client's orders, so any one of them works.
+const generateInstallBinderExcelForClient = async (req, res) => {
+  try {
+    const { clientUserId } = req.params;
+    const order = await Order.findOne({ user: clientUserId }).sort({ orderNumber: 1, createdAt: 1 }).select('_id').lean();
+    if (!order) return res.status(404).json({ message: 'No orders found for this client' });
+    req.params = { ...req.params, id: String(order._id) };
+    return require('./orderController').generateInstallBinderExcel(req, res);
+  } catch (err) {
+    console.error('Install Binder Excel error:', err);
+    if (!res.headersSent) res.status(500).json({ message: err.message });
+  }
+};
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const stripHtml = (str) => {
   if (!str) return '';
@@ -836,4 +801,5 @@ module.exports = {
   deleteFloorPlan,
   getClientProducts,
   generatePDF,
+  generateInstallBinderExcelForClient,
 };

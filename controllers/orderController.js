@@ -20,6 +20,9 @@ const html_to_pdf = require('html-pdf-node');
 const { generatePDF } = require('../config/pdfConfig');
 const nodemailer = require('nodemailer');
 const { logOrderChanges } = require('../utils/auditLogger');
+const { vendorDescriptionText, latestNotePoints } = require('../utils/installBinderText');
+const { roomCompare } = require('../utils/roomOrder');
+const { buildProjectDirectory } = require('../utils/projectDirectory');
 const { generatePresignedUploadUrl } = require('../config/s3');
 
 
@@ -1753,6 +1756,25 @@ const loadAllClientProducts = async (orderId) => {
   return { anchor, allOrders, allOrderIds, products, clientInfo: anchor.clientInfo };
 };
 
+// Shrinks a product photo for the Install Binder (max 450px, JPEG): keeps files small without visible loss at print size
+const compressBinderImage = async (buffer) => {
+  try {
+    const sharp = require('sharp');
+    const out = await sharp(buffer).rotate()
+      .resize({ width: 450, height: 450, fit: 'inside', withoutEnlargement: true })
+      .flatten({ background: '#ffffff' })
+      .jpeg({ quality: 72 })
+      .toBuffer();
+    return out;
+  } catch { return buffer; }
+};
+
+// Install Binder: "Install Date" column text — date only, as MM/DD/YYYY (the install status is not printed)
+const installDateText = (opts = {}) => {
+  const d = String(opts.installDate || '');
+  return /^\d{4}-\d{2}-\d{2}/.test(d) ? `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}` : d;
+};
+
 // ── REPLACE generateInstallBinder ───────────────────────────────────────
 const generateInstallBinder = async (req, res) => {
   try {
@@ -1786,10 +1808,8 @@ const generateInstallBinder = async (req, res) => {
       if (!url || !url.startsWith('http')) return null;
       try {
         const r = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
-        const ct = r.headers['content-type'] || '';
-        const type = ct.includes('jpeg') || ct.includes('jpg') ? 'jpeg'
-                   : ct.includes('gif') ? 'gif' : 'png';
-        return { buffer: Buffer.from(r.data), type };
+        const small = await compressBinderImage(Buffer.from(r.data));
+        return { buffer: small, type: 'jpeg' };
       } catch { return null; }
     };
 
@@ -1814,6 +1834,11 @@ const generateInstallBinder = async (req, res) => {
     });
     doc.pipe(res);
 
+    // Calibri Light / Bold: matches the Henderson guidelines and renders accented letters such as Ā
+    const FONT_DIR = path.join(__dirname, '..', 'assets', 'fonts');
+    doc.registerFont('CalibriLight', path.join(FONT_DIR, 'CalibriLight.ttf'));
+    doc.registerFont('CalibriBold',  path.join(FONT_DIR, 'CalibriBold.ttf'));
+
     // Page dimensions (landscape Letter = 792 × 612 pts)
     const PW = doc.page.width;   // 792
     const PH = doc.page.height;  // 612
@@ -1821,24 +1846,24 @@ const generateInstallBinder = async (req, res) => {
     const TW = PW - M * 2;      // table width = 720
 
     // Columns — widths must sum to 720
-    // Photo(60)+Room(70)+Vendor(65)+Desc(170)+PO(55)+Qty(25)+OrderNum(55)+DateRcv(55)+Tracking(55)+ShipCarrier(55)+Notes(55)=720
+    // Photo(96)+Room(46)+Vendor(52)+Desc(112)+PO(68)+Qty(22)+OrderNum(52)+InstallDate(50)+Tracking(58)+Carrier(44)+Notes(120)=720
     const COLS = [
-      { key: 'photo',        label: 'Photo',             w: 60  },
-      { key: 'room',         label: 'Room',              w: 70  },
-      { key: 'vendor',       label: 'Vendor Name',       w: 65  },
-      { key: 'desc',         label: 'Vendor Description',w: 170 },
-      { key: 'po',           label: 'HDG PO#',           w: 55  },
-      { key: 'qty',          label: 'Qty',               w: 25  },
-      { key: 'orderNum',     label: 'Vendor Order #',    w: 55  },
-      { key: 'dateReceived', label: 'Date Received',     w: 55  },
-      { key: 'tracking',     label: 'Tracking Info',     w: 55  },
-      { key: 'shipCarrier',  label: 'Shipping Carrier',  w: 55  },
-      { key: 'notes',        label: 'Notes',             w: 55  },
+      { key: 'photo',        label: 'Photo',             w: 96  },
+      { key: 'room',         label: 'Room',              w: 46  },
+      { key: 'vendor',       label: 'Vendor Name',       w: 52  },
+      { key: 'desc',         label: 'Vendor Description',w: 112 },
+      { key: 'po',           label: 'HDG PO#',           w: 68  },
+      { key: 'qty',          label: 'Qty',               w: 22  },
+      { key: 'orderNum',     label: 'Vendor Order #',    w: 52  },
+      { key: 'installDate',  label: 'Install Date',      w: 50  },
+      { key: 'tracking',     label: 'Tracking Info',     w: 58  },
+      { key: 'shipCarrier',  label: 'Carrier',           w: 44  },
+      { key: 'notes',        label: 'Notes',             w: 120 },
     ];
 
     const PAD       = 3;
-    const FSM       = 7;   // font size for data rows
-    const IMG_SIZE  = 62;  // max image width & height in pts
+    const FSM       = 7.5; // font size for data rows (Calibri runs smaller than Helvetica)
+    const IMG_SIZE  = 90;  // max image width & height in pts (photo column is 96 wide)
     const ROW_MIN   = IMG_SIZE + PAD * 2;  // rows must fit the image
     const HDR_H     = 52;
     const COL_HDR_H = 16;
@@ -1848,14 +1873,14 @@ const generateInstallBinder = async (req, res) => {
     const projectLabel = [order.clientInfo?.name, order.clientInfo?.floorPlan].filter(Boolean).join(' - ');
 
     const drawPageHeader = () => {
-      doc.font('Helvetica-Bold').fontSize(12).fillColor('#005670')
+      doc.font('CalibriBold').fontSize(12).fillColor('#005670')
          .text('Henderson Design Group', M, M, { width: 250 });
-      doc.font('Helvetica').fontSize(FSM).fillColor('#666')
+      doc.font('CalibriLight').fontSize(FSM).fillColor('#666')
          .text('Interior Design', M, M + 15, { width: 250 });
 
-      doc.font('Helvetica-Bold').fontSize(18).fillColor('#005670')
+      doc.font('CalibriBold').fontSize(18).fillColor('#005670')
          .text('Install Binder', M, M, { width: TW, align: 'right' });
-      doc.font('Helvetica').fontSize(FSM).fillColor('#333')
+      doc.font('CalibriLight').fontSize(FSM).fillColor('#333')
          .text(`Client: ${clientLabel}`, M, M + 22, { width: TW, align: 'right' })
          .text(`Project: ${projectLabel}`, M, M + 32, { width: TW, align: 'right' });
 
@@ -1866,7 +1891,7 @@ const generateInstallBinder = async (req, res) => {
       doc.rect(M, chy, TW, COL_HDR_H).fill('#005670').stroke();
       let cx = M;
       COLS.forEach(col => {
-        doc.font('Helvetica-Bold').fontSize(FSM).fillColor('#ffffff')
+        doc.font('CalibriBold').fontSize(FSM).fillColor('#ffffff')
            .text(col.label, cx + PAD, chy + PAD + 1, { width: col.w - PAD * 2, lineBreak: false });
         cx += col.w;
       });
@@ -1875,7 +1900,7 @@ const generateInstallBinder = async (req, res) => {
     };
 
     const drawPageFooter = (n) => {
-      doc.font('Helvetica').fontSize(6).fillColor('#999')
+      doc.font('CalibriLight').fontSize(6).fillColor('#999')
          .text(`Page ${n}`, M, PH - M - 8, { width: TW, align: 'center' });
     };
 
@@ -1905,25 +1930,23 @@ const generateInstallBinder = async (req, res) => {
       const ROOM_H = 18;
       checkPageBreak(ROOM_H + ROW_MIN); // keep at least one product with header
       doc.rect(M, curY, TW, ROOM_H).fill('#e8f4f7').stroke('#005670');
-      doc.font('Helvetica-Bold').fontSize(9).fillColor('#005670')
+      doc.font('CalibriBold').fontSize(9).fillColor('#005670')
          .text(room, M + PAD + 4, curY + 4, { width: TW - PAD * 2 });
       curY += ROOM_H;
 
       for (const product of roomProducts) {
         // Build text cells
+        // Vendor description only — not the client description
         const descParts = [
           product.name || '',
           product.product_id                        ? `SKU: ${product.product_id}` : '',
-          htmlToText(product.selectedOptions?.specifications),
-          product.selectedOptions?.finish           ? `Finish: ${product.selectedOptions.finish}` : '',
-          product.selectedOptions?.fabric           ? `Fabric: ${product.selectedOptions.fabric}` : '',
-          product.selectedOptions?.size             ? `Size: ${product.selectedOptions.size}` : '',
-          product.selectedOptions?.leadTime         ? `Lead Time: ${product.selectedOptions.leadTime}` : '',
+          vendorDescriptionText(product.selectedOptions?.vendorDescription),
         ].filter(Boolean);
 
+        // Notes: only the 2 most recent points
         const notesParts = [
           htmlToText(product.selectedOptions?.deliveryStatus),
-          htmlToText(product.selectedOptions?.notes),
+          latestNotePoints(product.selectedOptions?.notes, 2),
           htmlToText(product.selectedOptions?.installerNotes),
         ].filter(Boolean);
 
@@ -1934,14 +1957,14 @@ const generateInstallBinder = async (req, res) => {
           po:           safeText(getPoNumber(product)),
           qty:          safeText(product.quantity || 1),
           orderNum:     safeText(product.selectedOptions?.vendorOrderNumber || ''),
-          dateReceived: safeText(product.selectedOptions?.dateReceived || ''),
+          installDate:  safeText(installDateText(product.selectedOptions)),
           tracking:     safeText(product.selectedOptions?.trackingInfo || ''),
           shipCarrier:  safeText(product.selectedOptions?.shippingCarrier || ''),
           notes:        safeText(notesParts.join('\n')),
         };
 
         // Calculate row height from tallest text cell (photo column is fixed)
-        doc.font('Helvetica').fontSize(FSM);
+        doc.font('CalibriLight').fontSize(FSM);
         let rowH = ROW_MIN;
         COLS.forEach(col => {
           if (col.key === 'photo') return;
@@ -1973,16 +1996,16 @@ const generateInstallBinder = async (req, res) => {
                   valign: 'center',
                 });
               } catch (_) {
-                doc.font('Helvetica').fontSize(6).fillColor('#aaa')
+                doc.font('CalibriLight').fontSize(6).fillColor('#aaa')
                    .text('No Image', cx + PAD, curY + PAD, { width: col.w - PAD * 2 });
               }
             } else {
-              doc.font('Helvetica').fontSize(6).fillColor('#aaa')
+              doc.font('CalibriLight').fontSize(6).fillColor('#aaa')
                  .text('No Image', cx + PAD, curY + PAD, { width: col.w - PAD * 2 });
             }
           } else {
             const isRoom = col.key === 'room';
-            doc.font(isRoom ? 'Helvetica-Bold' : 'Helvetica')
+            doc.font(isRoom ? 'CalibriBold' : 'CalibriLight')
                .fontSize(FSM)
                .fillColor(isRoom ? '#005670' : '#222')
                .text(cells[col.key] || '', cx + PAD, curY + PAD, {
@@ -1999,7 +2022,7 @@ const generateInstallBinder = async (req, res) => {
 
     // Footer contact line
     checkPageBreak(14);
-    doc.font('Helvetica').fontSize(7).fillColor('#999')
+    doc.font('CalibriLight').fontSize(7).fillColor('#999')
        .text('Henderson Design Group  |  4343 Royal Place, Honolulu, HI 96816  |  (808) 315-8782',
              M, curY + 4, { width: TW, align: 'center' });
 
@@ -2021,13 +2044,12 @@ const generateInstallBinderExcel = async (req, res) => {
 
     const clientData = await loadAllClientProducts(req.params.id);
     if (!clientData) return res.status(404).json({ message: 'Order not found' });
-    const { anchor: order, products, allOrderIds } = clientData;
+    const { anchor: order, products, allOrderIds, allOrders } = clientData;
 
-    const clientName = order.clientInfo?.name  || 'Client';
+    const clientName = (order.clientInfo?.name || 'Client').trim();
     const unitNumber = order.clientInfo?.unitNumber || '';
     const floorPlan  = order.clientInfo?.floorPlan  || '';
-    const projectLabel = [clientName, unitNumber ? `Unit ${unitNumber}` : '', floorPlan]
-      .filter(Boolean).join(' — ');
+    const projectLabel = [clientName, floorPlan].filter(Boolean).join(' - ');
 
     // Fetch ALL PO versions across all orders for this client, ASC so earliest first
     const allPoVersions = await POVersion.find({ orderId: { $in: allOrderIds } })
@@ -2090,11 +2112,8 @@ const generateInstallBinderExcel = async (req, res) => {
           timeout: 8000,
           headers: { 'User-Agent': 'HDG-InstallBinder/1.0' }
         });
-        const ct = response.headers['content-type'] || '';
-        let ext = 'png';
-        if (ct.includes('jpeg') || ct.includes('jpg')) ext = 'jpeg';
-        else if (ct.includes('gif')) ext = 'gif';
-        return { buffer: Buffer.from(response.data), extension: ext };
+        const small = await compressBinderImage(Buffer.from(response.data));
+        return { buffer: small, extension: 'jpeg' };
       } catch { return null; }
     };
 
@@ -2117,187 +2136,195 @@ const generateInstallBinderExcel = async (req, res) => {
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Henderson Design Group';
-    const ws  = wb.addWorksheet('Install Binder');
 
-    ws.getColumn('A').width = 13;
-    ws.getColumn('B').width = 18;
-    ws.getColumn('C').width = 20;
-    ws.getColumn('D').width = 22;
-    ws.getColumn('E').width = 38;
-    ws.getColumn('F').width = 16;
-    ws.getColumn('G').width = 10;
-    ws.getColumn('H').width = 20;
-    ws.getColumn('I').width = 18;
-    ws.getColumn('J').width = 24;
-    ws.getColumn('K').width = 20;
-    ws.getColumn('L').width = 26;
-    ws.getColumn('M').width = 24;
+    // Layout follows the Install Binder PDF: Project Directory first, then one sheet per room
+    const FONT   = 'Calibri Light';
+    const TEAL   = 'FF005670';
+    const GRID   = { style: 'thin', color: { argb: 'FFD8D8D8' } };
+    const cellBorder = { top: GRID, left: GRID, bottom: GRID, right: GRID };
+    const wrapTop = { vertical: 'top', wrapText: true };
+    const fmtDay = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
 
-    const thinBorder = {
-      top: { style: 'thin' }, left: { style: 'thin' },
-      bottom: { style: 'thin' }, right: { style: 'thin' },
-    };
-    const headerFont = { name: 'Arial', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-    const dataFont   = { name: 'Arial', size: 9 };
-    const wrapTop    = { vertical: 'top', wrapText: true };
+    // ── Sheet 1: Project Directory ───────────────────────────────────────────
+    {
+      const dir = await buildProjectDirectory({ clientUser: order.user, orders: allOrders || [order], clientName, unitNumber });
+      const ws = wb.addWorksheet('Project Directory');
+      ws.getColumn(1).width = 24; ws.getColumn(2).width = 46; ws.getColumn(3).width = 12; ws.getColumn(4).width = 44;
+      ws.mergeCells('A1:D1');
+      ws.getCell('A1').value = 'PROJECT DIRECTORY';
+      ws.getCell('A1').font = { name: 'Times New Roman', size: 22, color: { argb: 'FF1F5A73' } };
+      ws.getCell('A1').alignment = { vertical: 'middle' };
+      ws.getRow(1).height = 36;
+      ws.getRow(2).height = 10;
+      let r = 3;
+      const THICK = { style: 'medium', color: { argb: 'FF000000' } };
+      dir.sections.forEach(sec => {
+        const vals = sec.values.filter(Boolean);
+        const rows = Math.max(sec.labels.length, vals.length, sec.subs.length);
+        for (let i = 0; i < rows; i++) {
+          const row = ws.getRow(r + i); row.height = 18;
+          if (sec.labels[i]) { const c = ws.getCell(r + i, 1); c.value = sec.labels[i]; c.font = { name: FONT, size: 11 }; }
+          if (vals[i])       { const c = ws.getCell(r + i, 2); c.value = vals[i];       c.font = { name: FONT, size: 11 }; }
+          if (sec.subs[i])   {
+            const l = ws.getCell(r + i, 3); l.value = sec.subs[i][0]; l.font = { name: FONT, size: 11 };
+            const v = ws.getCell(r + i, 4); v.value = sec.subs[i][1] || ''; v.font = { name: FONT, size: 11 };
+          }
+        }
+        for (let c = 1; c <= 4; c++) ws.getCell(r, c).border = { top: THICK };
+        r += rows + 1;
+        ws.getRow(r - 1).height = 12;
+      });
+      for (let c = 1; c <= 4; c++) ws.getCell(r, c).border = { top: THICK };
+      ws.pageSetup = { orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 1 };
+    }
 
-    ws.mergeCells('A1:M1');
-    const titleCell = ws.getCell('A1');
-    titleCell.value     = 'Henderson Design Group — Install Binder';
-    titleCell.font      = { name: 'Arial', bold: true, size: 13, color: { argb: 'FF005670' } };
-    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
-    ws.getRow(1).height = 28;
-
-    ws.mergeCells('A2:M2');
-    const projCell = ws.getCell('A2');
-    projCell.value     = projectLabel;
-    projCell.font      = { name: 'Arial', bold: true, size: 10 };
-    projCell.alignment = { vertical: 'middle', horizontal: 'center' };
-    ws.getRow(2).height = 20;
-
-    ws.mergeCells('A3:M3');
-    const dateCell = ws.getCell('A3');
-    dateCell.value = `Printed: ${new Date().toLocaleDateString('en-US', {
-      month: '2-digit', day: '2-digit', year: 'numeric'
-    })}`;
-    dateCell.font      = { name: 'Arial', size: 9, italic: true, color: { argb: 'FF666666' } };
-    dateCell.alignment = { vertical: 'middle', horizontal: 'center' };
-    ws.getRow(3).height = 16;
-
-    ['Photo','Room','Vendor Name','SKU Code','Vendor Description','HDG PO#','Qty',
-     'Vendor Order #','Date Received','Tracking Info','Shipping Carrier','Notes','Expediting Order Status'].forEach((h, i) => {
-      const cell = ws.getCell(4, i + 1);
-      cell.value     = h;
-      cell.font      = headerFont;
-      cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF005670' } };
-      cell.border    = thinBorder;
-      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    });
-    ws.getRow(4).height = 24;
-
-    const grouped = {};
+    // ── One sheet per room ───────────────────────────────────────────────────
+    const roomOf = (p) => String(p.selectedOptions?.room || '').trim();   // no room -> sheet "Other" (same as the PDF)
+    const byRoom = new Map();
     products.forEach(p => {
-      const room = p.selectedOptions?.room || p.category || p.spotName || '— No Room Assigned —';
-      if (!grouped[room]) grouped[room] = [];
-      grouped[room].push(p);
+      const room = roomOf(p) || 'Other';
+      if (!byRoom.has(room)) byRoom.set(room, []);
+      byRoom.get(room).push(p);
     });
+    const rooms = [...byRoom.keys()].sort(roomCompare);
 
-    let rowNum = 5;
+    const COLS = [
+      { label: 'Photo',                  w: 21 },
+      { label: 'Vendor Description',     w: 46 },
+      { label: 'Room',                   w: 15 },
+      { label: 'Vendor Name',            w: 18 },
+      { label: 'PO #',                   w: 19 },
+      { label: 'Qty',                    w: 6  },
+      { label: 'Vendor Order Number',    w: 20 },
+      { label: 'Shipment Tracking Info', w: 20 },
+      { label: 'Install Date',           w: 13 },
+      { label: 'Notes',                  w: 50 },
+    ];
+    const HEAD_ROW = 6;
+    const usedNames = new Set(['Project Directory']);
+    const sheetName = (room) => {
+      let base = room.replace(/[\\/*?:\[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 31) || 'Room';
+      let name = base, n = 2;
+      while (usedNames.has(name.toLowerCase())) { const suf = ` (${n++})`; name = base.slice(0, 31 - suf.length) + suf; }
+      usedNames.add(name.toLowerCase());
+      return name;
+    };
+    const estimateLines = (text, widthChars) => String(text || '').split('\n')
+      .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / Math.max(1, widthChars))), 0);
 
-    Object.entries(grouped).forEach(([room, roomProducts]) => {
-      ws.mergeCells(`A${rowNum}:M${rowNum}`);
-      const roomCell = ws.getCell(`A${rowNum}`);
-      roomCell.value     = room;
-      roomCell.font      = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF005670' } };
-      roomCell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F4F7' } };
-      roomCell.border    = thinBorder;
-      roomCell.alignment = { vertical: 'middle', indent: 1 };
-      ws.getRow(rowNum).height = 20;
-      rowNum++;
+    for (const room of rooms) {
+      const ws = wb.addWorksheet(sheetName(room));
+      COLS.forEach((c, i) => { ws.getColumn(i + 1).width = c.w; });
+      const lastCol = COLS.length;
 
-      roomProducts.forEach((p) => {
+      ws.mergeCells(1, 1, 1, 4);
+      ws.getCell(1, 1).value = 'Henderson Design Group';
+      ws.getCell(1, 1).font = { name: FONT, bold: true, size: 15, color: { argb: TEAL } };
+      ws.mergeCells(1, 6, 1, lastCol);
+      ws.getCell(1, 6).value = 'Install Binder';
+      ws.getCell(1, 6).font = { name: FONT, bold: true, size: 20, color: { argb: TEAL } };
+      ws.getCell(1, 6).alignment = { horizontal: 'right', vertical: 'middle' };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, 4);
+      ws.getCell(2, 1).value = 'Interior Design';
+      ws.getCell(2, 1).font = { name: FONT, size: 10, color: { argb: 'FF666666' } };
+      ws.mergeCells(2, 6, 2, lastCol);
+      ws.getCell(2, 6).value = `Client: ${clientName}`;
+      ws.getCell(2, 6).font = { name: FONT, size: 10 };
+      ws.getCell(2, 6).alignment = { horizontal: 'right' };
+      ws.mergeCells(3, 6, 3, lastCol);
+      ws.getCell(3, 6).value = `Project: ${projectLabel}`;
+      ws.getCell(3, 6).font = { name: FONT, size: 10 };
+      ws.getCell(3, 6).alignment = { horizontal: 'right' };
+
+      ws.mergeCells(4, 1, 4, lastCol);
+      ws.getCell(4, 1).value = room.toUpperCase();
+      ws.getCell(4, 1).font = { name: FONT, bold: true, size: 14, color: { argb: TEAL } };
+      ws.getCell(4, 1).border = { bottom: { style: 'medium', color: { argb: TEAL } } };
+      ws.getRow(4).height = 24;
+      for (let c = 1; c <= lastCol; c++) ws.getCell(4, c).border = { bottom: { style: 'medium', color: { argb: TEAL } } };
+      ws.getRow(5).height = 8;
+
+      COLS.forEach((c, i) => {
+        const cell = ws.getCell(HEAD_ROW, i + 1);
+        cell.value = c.label;
+        cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A1A1A' } };
+        cell.border = cellBorder;
+        cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+      });
+      ws.getRow(HEAD_ROW).height = 28;
+
+      let rowNum = HEAD_ROW + 1;
+      byRoom.get(room).forEach((p, idx) => {
+        const o = p.selectedOptions || {};
+        const code = getRoomCode(roomOf(p));
+        const sku = code && p.product_id ? `${code}-${p.product_id}` : (p.product_id || '');
+        const vendorDesc = vendorDescriptionText(o.vendorDescription);
+        const notes = [
+          htmlToText(o.deliveryStatus),
+          latestNotePoints(o.notes, 2),
+          htmlToText(o.installerNotes),
+        ].filter(Boolean).join('\n');
+        const vendorName = (p.vendor && typeof p.vendor === 'object' && p.vendor.name) ? p.vendor.name : 'HDG Inventory';
+        const poNo = getPoNumber(p);
+
+        const descRuns = [];
+        if (p.name)       descRuns.push({ text: p.name + '\n', font: { name: FONT, bold: true, size: 10 } });
+        if (sku)          descRuns.push({ text: sku + (vendorDesc ? '\n' : ''), font: { name: FONT, bold: true, size: 9 } });
+        if (vendorDesc)   descRuns.push({ text: vendorDesc, font: { name: FONT, size: 9 } });
+
+        const values = [
+          '',
+          descRuns.length ? { richText: descRuns } : '',
+          roomOf(p),
+          vendorName,
+          poNo,
+          p.quantity || 1,
+          o.vendorOrderNumber || '',
+          o.trackingInfo || '',
+          installDateText(o),
+          notes,
+        ];
+        values.forEach((v, i) => {
+          const cell = ws.getCell(rowNum, i + 1);
+          cell.value = v;
+          if (!(v && v.richText)) cell.font = { name: FONT, size: 10 };
+          cell.border = cellBorder;
+          cell.alignment = i === 5 ? { ...wrapTop, horizontal: 'center' } : wrapTop;
+          if (idx % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F7F7' } };
+        });
+
+        const lines = Math.max(
+          estimateLines([p.name, sku, vendorDesc].filter(Boolean).join('\n'), COLS[1].w * 1.05),
+          estimateLines(notes, COLS[9].w * 1.05),
+          estimateLines(poNo, COLS[4].w),
+          estimateLines(o.trackingInfo, COLS[7].w),
+          estimateLines(o.vendorOrderNumber, COLS[6].w),
+        );
+        ws.getRow(rowNum).height = Math.min(400, Math.max(100, lines * 13 + 8));
+
         const originalIdx = products.indexOf(p);
-        ws.getRow(rowNum).height = 90;
-
-        const vendorName = (p.vendor && typeof p.vendor === 'object' && p.vendor.name)
-          ? p.vendor.name : 'HDG Inventory';
-
-        const descParts = [];
-        if (p.name)                            descParts.push(p.name);
-        if (p.product_id)                      descParts.push(`SKU: ${p.product_id}`);
-        if (p.selectedOptions?.specifications) descParts.push(htmlToText(p.selectedOptions.specifications));
-        if (p.selectedOptions?.finish)         descParts.push(`Finish: ${p.selectedOptions.finish}`);
-        if (p.selectedOptions?.fabric)         descParts.push(`Fabric: ${p.selectedOptions.fabric}`);
-        if (p.selectedOptions?.size)           descParts.push(`Size: ${p.selectedOptions.size}`);
-        if (p.selectedOptions?.leadTime)       descParts.push(`Lead Time: ${p.selectedOptions.leadTime}`);
-        const vendorDesc = descParts.join('\n');
-
-        ws.getCell(rowNum, 1).border = thinBorder;
         if (imageCache.has(originalIdx)) {
           try {
             const imgData = imageCache.get(originalIdx);
             const imageId = wb.addImage({ buffer: imgData.buffer, extension: imgData.extension });
-            ws.addImage(imageId, {
-              tl: { col: 0.05, row: rowNum - 1 + 0.05 },
-              ext: { width: 80, height: 80 },
-              editAs: 'oneCell',
-            });
+            ws.addImage(imageId, { tl: { col: 0.06, row: rowNum - 1 + 0.05 }, ext: { width: 135, height: 125 }, editAs: 'oneCell' });
           } catch (_) {}
         }
-
-        const cellB = ws.getCell(rowNum, 2);
-        cellB.value = p.selectedOptions?.room || p.category || p.spotName || '';
-        cellB.font = dataFont; cellB.border = thinBorder; cellB.alignment = wrapTop;
-
-        const cellC = ws.getCell(rowNum, 3);
-        cellC.value = vendorName;
-        cellC.font = dataFont; cellC.border = thinBorder; cellC.alignment = wrapTop;
-
-        const cellD = ws.getCell(rowNum, 4);
-        const skuRoom = p.selectedOptions?.room || p.category || p.spotName || '';
-        const skuRoomCode = getRoomCode(skuRoom);
-        cellD.value = skuRoomCode ? `${skuRoomCode}-${p.product_id || ''}` : (p.product_id || '');
-        cellD.font = dataFont; cellD.border = thinBorder; cellD.alignment = wrapTop;
-
-        const cellE = ws.getCell(rowNum, 5);
-        cellE.value = vendorDesc;
-        cellE.font = dataFont; cellE.border = thinBorder; cellE.alignment = wrapTop;
-
-        const cellF = ws.getCell(rowNum, 6);
-        cellF.value = getPoNumber(p);
-        cellF.font = dataFont; cellF.border = thinBorder; cellF.alignment = wrapTop;
-
-        const cellG = ws.getCell(rowNum, 7);
-        cellG.value = p.quantity || 1;
-        cellG.font = dataFont; cellG.border = thinBorder;
-        cellG.alignment = { ...wrapTop, horizontal: 'center' };
-
-        const cellH = ws.getCell(rowNum, 8);
-        cellH.value = p.selectedOptions?.vendorOrderNumber || '';
-        cellH.font = dataFont; cellH.border = thinBorder; cellH.alignment = wrapTop;
-
-        const cellI = ws.getCell(rowNum, 9);
-        cellI.value = p.selectedOptions?.dateReceived || '';
-        cellI.font = dataFont; cellI.border = thinBorder; cellI.alignment = wrapTop;
-
-        const cellJ = ws.getCell(rowNum, 10);
-        cellJ.value = p.selectedOptions?.trackingInfo || '';
-        cellJ.font = dataFont; cellJ.border = thinBorder; cellJ.alignment = wrapTop;
-
-        const cellK = ws.getCell(rowNum, 11);
-        cellK.value = p.selectedOptions?.shippingCarrier || '';
-        cellK.font = dataFont; cellK.border = thinBorder; cellK.alignment = wrapTop;
-
-        const cellL = ws.getCell(rowNum, 12);
-        const notesParts = [
-          htmlToText(p.selectedOptions?.deliveryStatus),
-          htmlToText(p.selectedOptions?.notes),
-          htmlToText(p.selectedOptions?.installerNotes),
-        ].filter(Boolean);
-        cellL.value = notesParts.join('\n') || '';
-        cellL.font = dataFont; cellL.border = thinBorder; cellL.alignment = wrapTop;
-
-        const cellM = ws.getCell(rowNum, 13);
-        cellM.value = p.selectedOptions?.statusCategory || '';
-        cellM.font = dataFont; cellM.border = thinBorder; cellM.alignment = wrapTop;
-
         rowNum++;
       });
-    });
 
-    if (products.length === 0) {
-      ws.mergeCells(`A${rowNum}:M${rowNum}`);
-      ws.getCell(`A${rowNum}`).value     = 'No products in this order';
-      ws.getCell(`A${rowNum}`).font      = { ...dataFont, italic: true };
-      ws.getCell(`A${rowNum}`).alignment = { horizontal: 'center' };
-      rowNum++;
+      ws.views = [{ state: 'frozen', ySplit: HEAD_ROW }];
+      ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: `${HEAD_ROW}:${HEAD_ROW}` };
     }
 
-    ws.mergeCells(`A${rowNum}:M${rowNum}`);
-    const footerCell = ws.getCell(`A${rowNum}`);
-    footerCell.value = 'Henderson Design Group  |  4343 Royal Place, Honolulu, HI 96816  |  (808) 315-8782';
-    footerCell.font  = { name: 'Arial', size: 8, color: { argb: 'FF999999' }, italic: true };
-    footerCell.alignment = { horizontal: 'center' };
+    if (rooms.length === 0) {
+      const ws = wb.addWorksheet('Install Binder');
+      ws.getCell('A1').value = 'No products in this order';
+      ws.getCell('A1').font = { name: FONT, italic: true, size: 11 };
+    }
 
     // Filename: "ClientName - Install Binder.xlsx"
     const safeClient = clientName.replace(/[^a-zA-Z0-9 ]/g, '').trim();
