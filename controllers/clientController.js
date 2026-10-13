@@ -508,7 +508,8 @@ const createClient = async (req, res) => {
       pricingYear = 2026,
       customNotes,
       teamAssignment,
-      address
+      address,
+      creditBalance
     } = req.body;
 
     const email = rawEmail && rawEmail.trim() !== '' ? rawEmail.trim() : null;
@@ -589,6 +590,7 @@ const createClient = async (req, res) => {
       unitNumber4,
       unitNumber5,
       phoneNumber: phoneNumber || '',
+      creditBalance: Math.max(0, Math.round((parseFloat(creditBalance) || 0) * 100) / 100),
       floorPlan: floorPlan || '',
       floorPlan2: floorPlan2 || '',
       floorPlan3: floorPlan3 || '',
@@ -762,6 +764,25 @@ const updateClient = async (req, res) => {
       });
     }
 
+    // Credit balance: invoices change it in real time, so an edit is only accepted when the balance
+    // is still what the form loaded (expectedCreditBalance) — otherwise a stale form would undo usage.
+    let creditUpdate = null;
+    if (req.body.creditBalance !== undefined && req.body.creditBalance !== null && req.body.creditBalance !== '') {
+      const next = Math.round((parseFloat(req.body.creditBalance) || 0) * 100) / 100;
+      if (next < 0) return res.status(400).json({ success: false, message: 'Credit must be 0 or more' });
+      const current = Math.round((currentClient.creditBalance || 0) * 100) / 100;
+      const expected = req.body.expectedCreditBalance === undefined
+        ? current
+        : Math.round((parseFloat(req.body.expectedCreditBalance) || 0) * 100) / 100;
+      if (expected !== current) {
+        return res.status(409).json({
+          success: false,
+          message: `Credit balance changed to $${current.toFixed(2)} since you opened this form (an invoice used it). Close and reopen the client to edit it.`,
+        });
+      }
+      if (next !== current) creditUpdate = next;
+    }
+
     // Regenerate client code if name or unitNumber changed
     if (req.body.name || req.body.unitNumber) {
       const newName = req.body.name || currentClient.name;
@@ -807,17 +828,30 @@ const updateClient = async (req, res) => {
       }
     }
 
+    if (creditUpdate !== null) updates.creditBalance = creditUpdate;
+
     const updateQuery = Object.keys(unsetFields).length > 0
       ? { $set: updates, $unset: unsetFields }
       : { $set: updates };
 
-    const client = await User.findByIdAndUpdate(
-      req.params.id,
+    // When the credit changes, only apply it if the balance is still the one we checked above
+    const currentCredit = Math.round((currentClient.creditBalance || 0) * 100) / 100;
+    const filter = creditUpdate !== null
+      ? { _id: req.params.id, creditBalance: { $in: currentCredit === 0 ? [0, null] : [currentCredit] } }
+      : { _id: req.params.id };
+    const client = await User.findOneAndUpdate(
+      filter,
       updateQuery,
       { new: true, runValidators: false }
     ).select('-password');
       
     if (!client) {
+      if (creditUpdate !== null) {
+        return res.status(409).json({
+          success: false,
+          message: 'Credit balance was just changed by an invoice. Close and reopen the client to edit it.',
+        });
+      }
       return res.status(404).json({ 
         success: false,
         message: 'Client not found' 

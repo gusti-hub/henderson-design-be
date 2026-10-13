@@ -62,6 +62,12 @@ const userSchema = new mongoose.Schema({
     enum: [2025, 2026],
     default: 2026
   },
+  // Optional client credit / remaining deposit. Applied to invoices; reduced in real time when used.
+  creditBalance: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   // Tambahkan setelah field packageType
   teamAssignment: {
     designer: {

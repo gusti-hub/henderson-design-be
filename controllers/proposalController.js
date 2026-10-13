@@ -163,7 +163,7 @@ const getProposalData = async (req, res) => {
 
     // ── LATEST VERSION ────────────────────────────────────────────────────────
     const order = await Order.findById(orderId)
-      .populate('user', 'name email address unitNumber phoneNumber')
+      .populate('user', 'name email address unitNumber phoneNumber creditBalance')
       .populate('selectedProducts.vendor')
       .lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
@@ -196,6 +196,7 @@ const getProposalData = async (req, res) => {
         version:          latestVersion ? latestVersion.version : 0,
         status:           latestVersion ? latestVersion.status : 'draft',
         invoicePayment:   latestVersion?.invoicePayment ?? null,
+        invoiceCredit:    latestVersion?.invoiceCredit || 0,
         proposalNumber,
         clientInfo:       order.clientInfo,
         user:             order.user,
@@ -534,6 +535,77 @@ const updateInvoicePayment = async (req, res) => {
   }
 };
 
+// ─── APPLY client credit to the invoice (latest version) ─────────────────────
+// Deducts from / returns to User.creditBalance in real time, atomically, so the balance can never
+// go negative and two people applying credit at the same time cannot spend it twice.
+const updateInvoiceCredit = async (req, res) => {
+  try {
+    const User = require('../models/User');
+    const { orderId } = req.params;
+    const { amount, markPaid } = req.body;
+
+    const target = Math.round((Number(amount) || 0) * 100) / 100;
+    if (!Number.isFinite(target) || target < 0) {
+      return res.status(400).json({ message: 'Credit must be a number ≥ 0' });
+    }
+
+    const order = await Order.findById(orderId).select('user proposalNumber').lean();
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (!order.user) return res.status(400).json({ message: 'This order has no client to take credit from' });
+
+    let pv = await ProposalVersion.findOne({ orderId }, {}, { sort: { version: -1 } });
+    if (!pv) {
+      pv = await ProposalVersion.create({
+        orderId, version: 1, status: 'draft',
+        proposalNumber: order.proposalNumber || null,
+        selectedProducts: (await Order.findById(orderId).select('selectedProducts').lean()).selectedProducts || [],
+        createdBy: req.user.id, updatedBy: req.user.id,
+      });
+    }
+    if (pv.status === 'paid') {
+      return res.status(409).json({ message: 'Invoice is already paid — credit is locked. Change the status first to edit it.' });
+    }
+
+    const prev = Math.round((pv.invoiceCredit || 0) * 100) / 100;
+    const delta = Math.round((target - prev) * 100) / 100;   // >0 uses more credit, <0 gives credit back
+
+    // 1) move the balance (atomic, never below zero)
+    if (delta !== 0) {
+      const moved = await User.findOneAndUpdate(
+        delta > 0 ? { _id: order.user, creditBalance: { $gte: delta } } : { _id: order.user },
+        { $inc: { creditBalance: -delta } },
+        { new: true }
+      ).select('creditBalance');
+      if (!moved) {
+        const u = await User.findById(order.user).select('creditBalance').lean();
+        return res.status(409).json({
+          message: `Not enough client credit. Available: $${(u?.creditBalance || 0).toFixed(2)}.`,
+          creditBalance: u?.creditBalance || 0,
+        });
+      }
+    }
+
+    // 2) record it on the invoice — only if nobody changed it in the meantime; otherwise undo step 1
+    const set = { invoiceCredit: target, updatedAt: new Date(), updatedBy: req.user.id };
+    if (markPaid === true) set.status = 'paid';
+    const saved = await ProposalVersion.findOneAndUpdate(
+      { _id: pv._id, status: { $ne: 'paid' }, invoiceCredit: { $in: prev === 0 ? [0, null] : [prev] } },
+      { $set: set },
+      { new: true }
+    );
+    if (!saved) {
+      if (delta !== 0) await User.updateOne({ _id: order.user }, { $inc: { creditBalance: delta } });
+      return res.status(409).json({ message: 'The invoice changed while saving. Reload and try again.' });
+    }
+
+    const u = await User.findById(order.user).select('creditBalance').lean();
+    res.json({ success: true, invoiceCredit: saved.invoiceCredit, creditBalance: u?.creditBalance || 0, status: saved.status });
+  } catch (error) {
+    console.error('Error updating invoice credit:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // ─── SAVE CURRENT VERSION ─────────────────────────────────────────────────────
 // (tidak ada perubahan)
 const saveCurrentVersion = async (req, res) => {
@@ -660,6 +732,7 @@ module.exports = {
   migrateProposalNumbers,
   updateProposalStatus,
   updateInvoicePayment,
+  updateInvoiceCredit,
   saveCurrentVersion,
   getAvailableProducts,
 };

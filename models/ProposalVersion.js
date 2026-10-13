@@ -102,6 +102,13 @@ const proposalVersionSchema = new mongoose.Schema({
     min: 0
   },
 
+  // Client credit applied to this invoice (deducted from User.creditBalance)
+  invoiceCredit: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+
   quickbooksId: {
     type: String,
     default: null,
