@@ -58,4 +58,7 @@ const latestNotePoints = (html, n = 2, now = new Date()) => {
   return [...dated, ...undated].slice(0, n).map(e => e.text).join('\n').split('\n').slice(0, n).join('\n');
 };
 
-module.exports = { richToText, vendorDescriptionText, latestNotePoints };
+// Items whose Install Status is "Pending" are left out of the Install Binder (PDF and Excel)
+const isInstallPending = (opts) => String(opts?.installStatus || '').trim().toLowerCase() === 'pending';
+
+module.exports = { richToText, vendorDescriptionText, latestNotePoints, isInstallPending };

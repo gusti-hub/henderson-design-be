@@ -1,7 +1,7 @@
 const FloorPlanLayout = require('../models/FloorPlanLayout');
 const Order           = require('../models/Order');
 const User            = require('../models/User');
-const { vendorDescriptionText, latestNotePoints } = require('../utils/installBinderText');
+const { vendorDescriptionText, latestNotePoints, isInstallPending } = require('../utils/installBinderText');
 const POVersion       = require('../models/POVersion');
 const { generatePresignedUploadUrl, HARDCODED_CONFIG, s3Client } = require('../config/s3');
 const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -193,6 +193,7 @@ const generatePDF = async (req, res) => {
     for (const order of orders) {
       for (const p of (order.selectedProducts || [])) {
         if (p.isParent) continue;
+        if (isInstallPending(p.selectedOptions)) continue;   // Pending install status stays out of the binder
         const room = (p.selectedOptions?.room || '').trim() || 'Other';
         const vendorId = p.vendor?._id?.toString() || '';
         if (!byRoom.has(room)) byRoom.set(room, []);

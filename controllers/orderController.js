@@ -20,7 +20,7 @@ const html_to_pdf = require('html-pdf-node');
 const { generatePDF } = require('../config/pdfConfig');
 const nodemailer = require('nodemailer');
 const { logOrderChanges } = require('../utils/auditLogger');
-const { vendorDescriptionText, latestNotePoints } = require('../utils/installBinderText');
+const { vendorDescriptionText, latestNotePoints, isInstallPending } = require('../utils/installBinderText');
 const { roomCompare } = require('../utils/roomOrder');
 const { buildProjectDirectory } = require('../utils/projectDirectory');
 const { generatePresignedUploadUrl } = require('../config/s3');
@@ -1783,7 +1783,8 @@ const generateInstallBinder = async (req, res) => {
 
     const clientData = await loadAllClientProducts(req.params.id);
     if (!clientData) return res.status(404).json({ message: 'Order not found' });
-    const { anchor: order, products, allOrderIds } = clientData;
+    const { anchor: order, allOrderIds } = clientData;
+    const products = clientData.products.filter(p => !isInstallPending(p.selectedOptions));   // Pending install status stays out of the binder
 
     // Build vendorId → latest PO number across ALL orders
     const allPoVersions = await POVersion.find({ orderId: { $in: allOrderIds } })
@@ -2044,7 +2045,8 @@ const generateInstallBinderExcel = async (req, res) => {
 
     const clientData = await loadAllClientProducts(req.params.id);
     if (!clientData) return res.status(404).json({ message: 'Order not found' });
-    const { anchor: order, products, allOrderIds, allOrders } = clientData;
+    const { anchor: order, allOrderIds, allOrders } = clientData;
+    const products = clientData.products.filter(p => !isInstallPending(p.selectedOptions));   // Pending install status stays out of the binder
 
     const clientName = (order.clientInfo?.name || 'Client').trim();
     const unitNumber = order.clientInfo?.unitNumber || '';
