@@ -2201,6 +2201,7 @@ const generateInstallBinderExcel = async (req, res) => {
       { label: 'Shipment Tracking Info', w: 20 },
       { label: 'Install Date',           w: 13 },
       { label: 'Notes',                  w: 50 },
+      { label: 'Expediting Order Status', w: 22 },
     ];
     const HEAD_ROW = 6;
     const usedNames = new Set(['Project Directory']);
@@ -2288,6 +2289,7 @@ const generateInstallBinderExcel = async (req, res) => {
           o.trackingInfo || '',
           installDateText(o),
           notes,
+          o.statusCategory || '',   // Orders > Status > Status Category
         ];
         values.forEach((v, i) => {
           const cell = ws.getCell(rowNum, i + 1);

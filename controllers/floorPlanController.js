@@ -208,6 +208,7 @@ const generatePDF = async (req, res) => {
           imageUrl:          getPrimaryImage(p),
           vendorOrderNumber: opts.vendorOrderNumber || '',
           installDate:       opts.installDate || '',
+          statusCategory:    opts.statusCategory || '',
           trackingInfo:      opts.trackingInfo || '',
           notes:             latestNotePoints(opts.notes, 2),
           vendorDescription: opts.vendorDescription || '',
@@ -538,16 +539,17 @@ const generatePDF = async (req, res) => {
     };
 
     const TABLE_COLS = [
-      { label: 'Photo',                   w: 100 },
-      { label: 'Vendor Description',      w: 150 },
-      { label: 'Room',                    w: 50  },
-      { label: 'Vendor Name',             w: 65  },
+      { label: 'Photo',                   w: 96  },
+      { label: 'Vendor Description',      w: 138 },
+      { label: 'Room',                    w: 48  },
+      { label: 'Vendor Name',             w: 60  },
       { label: 'PO #',                    w: 78  },
-      { label: 'Qty',                     w: 25  },
-      { label: 'Vendor Order Number',     w: 72  },
-      { label: 'Shipment\nTracking Info', w: 65  },
-      { label: 'Install Date',            w: 58  },
-      { label: 'Notes',                   w: 135 },
+      { label: 'Qty',                     w: 24  },
+      { label: 'Vendor Order Number',     w: 66  },
+      { label: 'Shipment\nTracking Info', w: 64  },
+      { label: 'Install Date',            w: 56  },
+      { label: 'Notes',                   w: 120 },
+      { label: 'Expediting\nOrder Status', w: 62  },
     ];
     const tableW    = PW - M * 2;
     const tScale    = tableW / TABLE_COLS.reduce((s, c) => s + c.w, 0);
@@ -599,7 +601,7 @@ const generatePDF = async (req, res) => {
         // Other columns: Room, Vendor Name, PO#, Qty, Vendor Order Number, Tracking Info, Notes
         const fmtInstallDate = (d) => (/^\d{4}-\d{2}-\d{2}/.test(d || '') ? `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}` : (d || ''));
         const installText = fmtInstallDate(p.installDate);
-        const cellTexts = [p.room, p.vendorName, p.poNumber, String(p.qty || ''), p.vendorOrderNumber, p.trackingInfo, installText, p.notes]
+        const cellTexts = [p.room, p.vendorName, p.poNumber, String(p.qty || ''), p.vendorOrderNumber, p.trackingInfo, installText, p.notes, p.statusCategory]
           .map(v => richToText(v || ''));
         const cellSizes = cellTexts.map((t, i) => (t ? fitCellSize(t, tableCols[i + 2].w - 6, MAX_ROW_H - ROW_PAD * 2) : 7));
 
