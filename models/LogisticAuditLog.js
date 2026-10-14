@@ -15,6 +15,17 @@ const logisticAuditLogSchema = new mongoose.Schema({
   productId:       { type: String, default: null },
   productName:     { type: String, default: null },
   changes:         [fieldChangeSchema],
+  // What the edited item was at the time of the edit (so the audit stays readable even if the item changes later)
+  context: {
+    poNumber:    { type: String, default: '' },
+    vendor:      { type: String, default: '' },
+    sku:         { type: String, default: '' },
+    unit:        { type: String, default: '' },
+    client:      { type: String, default: '' },
+    projectCode: { type: String, default: '' },
+    room:        { type: String, default: '' },
+    orderNumber: { type: Number, default: null },
+  },
   rollbackOf:      { type: mongoose.Schema.Types.ObjectId, ref: 'LogisticAuditLog', default: null },
   createdAt:       { type: Date, default: Date.now, index: true },
 }, {

@@ -7,6 +7,53 @@ const Order            = require('../models/Order');
 const POVersion        = require('../models/POVersion');
 const LogisticAuditLog = require('../models/LogisticAuditLog');
 
+// ─── Audit context: which item an audit entry is about (PO, vendor, SKU, unit, client, room…) ───
+// Built from the live order/PO data; entries written after this change also keep a snapshot.
+async function loadAuditContexts(pairs) {
+  const orderIds = [...new Set(pairs.map(p => String(p.orderId)))].filter(Boolean);
+  const out = new Map();
+  if (!orderIds.length) return out;
+
+  const [orders, pos] = await Promise.all([
+    Order.find({ _id: { $in: orderIds } })
+      .select('clientInfo.name clientInfo.unitNumber projectCode orderNumber selectedProducts._id selectedProducts.product_id selectedProducts.vendor selectedProducts.selectedOptions.room')
+      .populate('selectedProducts.vendor', 'name')
+      .lean(),
+    POVersion.find({ orderId: { $in: orderIds }, status: { $ne: 'cancelled' } })
+      .select('orderId vendorId poNumber version').sort({ version: -1 }).lean(),
+  ]);
+
+  const latestPo = new Map();   // `${orderId}__${vendorId}` -> latest PO number
+  pos.forEach(po => {
+    const k = `${po.orderId}__${po.vendorId}`;
+    if (!latestPo.has(k)) latestPo.set(k, po.poNumber || '');
+  });
+
+  orders.forEach(o => (o.selectedProducts || []).forEach(sp => {
+    const vid = sp.vendor?._id?.toString() || (sp.vendor && typeof sp.vendor !== 'object' ? String(sp.vendor) : '');
+    out.set(`${o._id}|${sp._id}`, {
+      poNumber:    vid ? (latestPo.get(`${o._id}__${vid}`) || '') : '',
+      vendor:      sp.vendor?.name || '',
+      sku:         sp.product_id || '',
+      unit:        o.clientInfo?.unitNumber || '',
+      client:      o.clientInfo?.name || '',
+      projectCode: o.projectCode || '',
+      room:        sp.selectedOptions?.room || '',
+      orderNumber: o.orderNumber ?? null,
+    });
+  }));
+  return out;
+}
+
+// Adds `context` to each log: the snapshot taken at edit time wins, live data fills what is missing
+async function withAuditContext(logs) {
+  const live = await loadAuditContexts(logs.map(l => ({ orderId: l.orderId, productId: l.productId })));
+  return logs.map(l => {
+    const snap = Object.fromEntries(Object.entries(l.context || {}).filter(([, v]) => v !== '' && v != null));
+    return { ...l, context: { ...(live.get(`${l.orderId}|${l.productId}`) || {}), ...snap } };
+  });
+}
+
 // ─── Field metadata for audit logging ────────────────────────────────────────
 const LOG_FIELDS = {
   cargoReadyDate:      { label: 'Cargo Ready Date',    optsKey: 'cargoReadyDate' },
@@ -454,15 +501,20 @@ exports.updateEntry = async (req, res) => {
       auditChanges.push({ field: 'projectCode', label: 'Project Code', oldValue: sp.projectCode ?? null, newValue: projectCode });
     }
     if (auditChanges.length > 0) {
-      LogisticAuditLog.create({
-        orderId,
-        performedBy: req.user._id,
-        performedByName: req.user.name || req.user.email || '',
-        action: 'product_edited',
-        productId: String(elemId),
-        productName: sp.name || sp.product_id || '',
-        changes: auditChanges,
-      }).catch(e => console.error('audit log write error:', e));
+      loadAuditContexts([{ orderId, productId: String(elemId) }])
+        .then(m => m.get(`${orderId}|${String(elemId)}`) || {})
+        .catch(() => ({}))
+        .then(context => LogisticAuditLog.create({
+          orderId,
+          performedBy: req.user._id,
+          performedByName: req.user.name || req.user.email || '',
+          action: 'product_edited',
+          productId: String(elemId),
+          productName: sp.name || sp.product_id || '',
+          changes: auditChanges,
+          context,
+        }))
+        .catch(e => console.error('audit log write error:', e));
     }
 
     res.json({
@@ -609,6 +661,7 @@ exports.updatePoEntry = async (req, res) => {
         productId: String(poElemId),
         productName: poProd.name || poProd.product_id || '',
         changes: poAuditChanges,
+        context: { poNumber: poSnap.poNumber || '', vendor: poSnap.vendorInfo?.name || '', sku: poProd.product_id || '' },
       }).catch(e => console.error('audit log write error:', e));
     }
 
@@ -638,13 +691,18 @@ exports.getGlobalAuditLog = async (req, res) => {
         { productName:      { $regex: q, $options: 'i' } },
         { performedByName:  { $regex: q, $options: 'i' } },
         { 'changes.label':  { $regex: q, $options: 'i' } },
+        { 'context.poNumber': { $regex: q, $options: 'i' } },
+        { 'context.vendor':   { $regex: q, $options: 'i' } },
+        { 'context.sku':      { $regex: q, $options: 'i' } },
+        { 'context.unit':     { $regex: q, $options: 'i' } },
+        { 'context.client':   { $regex: q, $options: 'i' } },
       ];
     }
     const [logs, total] = await Promise.all([
       LogisticAuditLog.find(query).sort({ createdAt: -1 }).skip(Number(skip)).limit(Number(limit)).lean(),
       LogisticAuditLog.countDocuments(query),
     ]);
-    res.json({ logs, total });
+    res.json({ logs: await withAuditContext(logs), total });
   } catch (err) {
     console.error('getGlobalAuditLog error:', err);
     res.status(500).json({ message: err.message });
@@ -677,7 +735,7 @@ exports.getAuditLog = async (req, res) => {
     const query = { orderId };
     if (productId) query.productId = productId;
     const logs = await LogisticAuditLog.find(query).sort({ createdAt: -1 }).limit(300).lean();
-    res.json(logs);
+    res.json(await withAuditContext(logs));
   } catch (err) {
     console.error('getAuditLog error:', err);
     res.status(500).json({ message: err.message });
@@ -716,6 +774,7 @@ async function applyRollback(log, user) {
     productName: log.productName,
     changes: log.changes.map(c => ({ field: c.field, label: c.label, oldValue: c.newValue, newValue: c.oldValue })),
     rollbackOf: log._id,
+    context: log.context || undefined,
   });
 }
 
