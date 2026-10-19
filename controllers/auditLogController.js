@@ -69,9 +69,26 @@ const getAuditLog = async (req, res) => {
     const page       = Math.max(1, parseInt(req.query.page)  || 1);
     const limit      = Math.min(200, parseInt(req.query.limit) || 50);
     const productId  = req.query.productId || null;
+    const action     = req.query.action || null;
+    const q          = String(req.query.q || '').trim();
 
     const query = { orderId };
     if (productId) query.productId = productId;
+    if (action && ['product_added', 'product_removed', 'product_edited', 'order_field_changed', 'rollback'].includes(action)) {
+      query.action = action;
+    }
+    if (q) {
+      // Search the whole history (not just the page on screen): item, person, field names and values
+      const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [
+        { productName:     rx },
+        { performedByName: rx },
+        { 'changes.label': rx },
+        { 'changes.field': rx },
+        { 'changes.newValue': rx },
+        { 'changes.oldValue': rx },
+      ];
+    }
 
     const [total, logs] = await Promise.all([
       OrderAuditLog.countDocuments(query),
