@@ -4023,9 +4023,18 @@ const generateBulkExport = async (req, res) => {
         });
       }
 
+      // The PO editor always lists the LIVE order items of the vendor (not the copy saved inside the PO version),
+      // so the export does the same: PO header data from the saved version, items from the current order.
+      const savedPOs = Array.from(latestByVendor.values())
+        .map(po => ({
+          ...po,
+          products: (vendorProductsMap.get(po.vendorId?.toString())?.products || []).filter(p => !p.isParent),
+        }))
+        .filter(po => po.products.length > 0 || (po.additionalLines || []).length > 0);
+
       // Merge saved POVersions + temp entries for vendors without a saved PO
       const combinedPOs = [
-        ...Array.from(latestByVendor.values()),
+        ...savedPOs,
         ...tempPOs,
       ].sort((a, b) => (a.vendorInfo?.name || '').localeCompare(b.vendorInfo?.name || ''));
 
@@ -4080,14 +4089,14 @@ const generateBulkExport = async (req, res) => {
 
     // ── Sheet 2: Detail ───────────────────────────────────────────────────────
     const DCOLS = [
-      'Client', 'Unit', 'Vendor', 'PO #', 'PO Status', 'Order Date', 'Account #', 'Rep Name',
+      'Client', 'Unit', 'Room', 'Vendor', 'PO #', 'PO Status', 'Order Date', 'Account #', 'Rep Name',
       'Product Name', 'SKU', 'Qty',
       'Vendor Description', 'Specs / Description', 'Color / Finish', 'Fabric', 'Materials',
       'Dimensions', 'Lead Time', 'Sidemark',
       'Image',
       'Unit Cost', 'Total Cost',
     ];
-    const DWIDTHS = [20, 8, 22, 14, 10, 13, 14, 18, 28, 14, 6, 32, 30, 16, 16, 18, 14, 12, 20, 22, 13, 13];
+    const DWIDTHS = [20, 8, 18, 22, 14, 10, 13, 14, 18, 28, 14, 6, 32, 30, 16, 16, 18, 14, 12, 20, 22, 13, 13];
 
     const detailWs = wb.addWorksheet('Detail');
     DWIDTHS.forEach((w, i) => { detailWs.getColumn(i + 1).width = w; });
@@ -4107,25 +4116,46 @@ const generateBulkExport = async (req, res) => {
     detailWs.getRow(2).height = 22;
     let detailRow = 3;
 
-    // ── Image helpers ─────────────────────────────────────────────────────────
-    const fetchImageBuffer = async (url) => {
-      if (!url || !url.startsWith('http')) return null;
-      try {
-        const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: 6000 });
-        return Buffer.from(resp.data);
-      } catch { return null; }
+    // ── Image helpers: fetched in parallel, retried once, shrunk to a small JPEG (fast + small file) ──
+    const sharp = require('sharp');
+    const fetchSmallImage = async (url) => {
+      if (!url || !/^https?:\/\//i.test(url)) return null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: 12000, headers: { 'User-Agent': 'HDG-Export/1.0' } });
+          return await sharp(Buffer.from(resp.data)).rotate()
+            .resize({ width: 240, height: 240, fit: 'inside', withoutEnlargement: true })
+            .flatten({ background: '#ffffff' })
+            .jpeg({ quality: 70 })
+            .toBuffer();
+        } catch { /* retry once, then give up */ }
+      }
+      return null;
     };
-    const getImageExt = (url = '') => {
-      const u = url.toLowerCase();
-      if (u.includes('.png')) return 'png';
-      if (u.includes('.gif')) return 'gif';
-      return 'jpeg';
-    };
+    const imageCandidates = (opts = {}) => [
+      ...(opts.uploadedImages || []).map(i => i?.url),
+      ...(opts.images || []),
+      opts.image,
+    ].filter(u => typeof u === 'string' && u).slice(0, 4);
+
+    // Collect every image URL first, then download them all with limited concurrency
+    const allUrls = new Set();
+    for (const [, { pos: ps = [] }] of posByOrder) {
+      for (const po of ps) for (const p of (po.products || [])) imageCandidates(p.selectedOptions).forEach(u => allUrls.add(u));
+    }
+    const imageByUrl = new Map();
+    const urlQueue = [...allUrls];
+    await Promise.all(Array.from({ length: 8 }, async () => {
+      while (urlQueue.length) {
+        const u = urlQueue.shift();
+        imageByUrl.set(u, await fetchSmallImage(u));
+      }
+    }));
 
     // ── Populate both sheets ──────────────────────────────────────────────────
-    const IMG_COL_IDX = 19; // 0-based index of 'Image' column (PO Status added at pos 4)
-    const IMG_PX = 75;      // image size in pixels
-    const IMG_ROW_H = 58;   // row height in Excel points (~75px)
+    const IMG_COL_IDX = DCOLS.indexOf('Image'); // 0-based index of the 'Image' column
+    const IMG_PX = 75;      // image size in pixels (source is 240px, so it stays sharp)
+    const IMG_ROW_H = 60;   // row height in Excel points (80px)
 
     for (const order of orders) {
       const clientName = order.clientInfo?.name || 'Unknown';
@@ -4171,23 +4201,16 @@ const generateBulkExport = async (req, res) => {
         for (const p of liveProducts) {
           const opts = p.selectedOptions || {};
           const qty = parseFloat(p.quantity) || 1;
-          // Primary: look up from Order.selectedProducts (same source as the single PO view).
-          // This handles old POVersions where p.unitPrice was never stored / stored as 0.
-          // Fall back to p.unitPrice (correctly-saved newer POs), then opts values (temp POs).
-          const pid = p.product_id || p._id?.toString();
-          const unitCost = orderCostMap.has(pid)
-            ? orderCostMap.get(pid)
-            : (parseFloat(p.unitPrice) > 0
-                ? parseFloat(p.unitPrice)
-                : ((opts.netCostOverride != null && opts.netCostOverride !== '')
-                    ? parseFloat(opts.netCostOverride)
-                    : parseFloat(opts.msrp || 0)));
+          // Same cost rule as the PO editor, taken from the live order item itself
+          // (not looked up by product_id, which mixes up items that share an id)
+          const unitCost = (opts.netCostOverride != null && opts.netCostOverride !== '')
+            ? (parseFloat(opts.netCostOverride) || 0)
+            : (parseFloat(opts.msrp || p.unitPrice || 0) || 0);
           const totalCost = unitCost * qty;
           poTotal += totalCost;
 
-          const imageUrl = opts.uploadedImages?.[0]?.url || opts.images?.[0] || opts.image || '';
           const rowData = [
-            clientName, unitNumber, vendorName, poNumber, poStatus.toUpperCase(), orderDate,
+            clientName, unitNumber, String(opts.room || '').trim(), vendorName, poNumber, poStatus.toUpperCase(), orderDate,
             po.accountNumber || '', po.repName || '',
             p.name || '', p.product_id || '', qty,
             stripHtml(opts.vendorDescription || ''),
@@ -4211,23 +4234,49 @@ const generateBulkExport = async (req, res) => {
             cell.alignment = wrapTop;
           });
 
-          // Embed image
+          // Embed image (first candidate that downloaded)
           let rowHeight = 18;
-          if (imageUrl) {
-            const imgBuf = await fetchImageBuffer(imageUrl);
-            if (imgBuf) {
-              try {
-                const imgId = wb.addImage({ buffer: imgBuf, extension: getImageExt(imageUrl) });
-                detailWs.addImage(imgId, {
-                  tl: { col: IMG_COL_IDX, row: detailRow - 1 },
-                  ext: { width: IMG_PX, height: IMG_PX },
-                });
-                rowHeight = IMG_ROW_H;
-              } catch (_) { /* skip broken image */ }
-            }
+          const imgBuf = imageCandidates(opts).map(u => imageByUrl.get(u)).find(Boolean);
+          if (imgBuf) {
+            try {
+              const imgId = wb.addImage({ buffer: imgBuf, extension: 'jpeg' });
+              // Centered in the cell: offsets are in EMU (1px = 9525); column px width ≈ chars*7+5
+              const colPx = DWIDTHS[IMG_COL_IDX] * 7 + 5;
+              const rowPx = IMG_ROW_H * 96 / 72;
+              detailWs.addImage(imgId, {
+                tl: {
+                  nativeCol: IMG_COL_IDX, nativeColOff: Math.round(Math.max(0, colPx - IMG_PX) / 2 * 9525),
+                  nativeRow: detailRow - 1, nativeRowOff: Math.round(Math.max(0, rowPx - IMG_PX) / 2 * 9525),
+                },
+                ext: { width: IMG_PX, height: IMG_PX },
+                editAs: 'oneCell',
+              });
+              rowHeight = IMG_ROW_H;
+            } catch (_) { /* skip broken image */ }
           }
 
           detailWs.getRow(detailRow).height = rowHeight;
+          detailRow++;
+        }
+
+        // Extra cost lines added in the PO editor (FDI / Freight / Tax / Product…) are part of the PO total
+        for (const al of (po.additionalLines || [])) {
+          const amount = parseFloat(al.amount) || 0;
+          poTotal += amount;
+          const labels = [
+            clientName, unitNumber, '', vendorName, poNumber, poStatus.toUpperCase(), orderDate, '', '',
+            `Extra cost (${al.lineType || 'Additional'})`, '', 1, stripHtml(al.description || ''),
+            '', '', '', '', '', '', '', money(amount), money(amount),
+          ];
+          labels.forEach((val, i) => {
+            const cell = detailWs.getCell(detailRow, i + 1);
+            if (val && typeof val === 'object' && 'numFmt' in val) { cell.value = val.value; cell.numFmt = val.numFmt; }
+            else { cell.value = val; }
+            cell.font = { name: 'Arial', size: 9, italic: true };
+            cell.border = thinBorder;
+            cell.alignment = wrapTop;
+          });
+          detailWs.getRow(detailRow).height = 18;
           detailRow++;
         }
 
