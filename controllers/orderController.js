@@ -4259,6 +4259,21 @@ const generateBulkExport = async (req, res) => {
           detailRow++;
         }
 
+        // Sub Total (Items): items only, shown above the extra cost lines (same as the PO editor)
+        if ((po.additionalLines || []).length > 0) {
+          detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length - 1);
+          const stLabel = detailWs.getCell(detailRow, 1);
+          stLabel.value = 'Sub Total (Items):';
+          stLabel.font = { name: 'Arial', bold: true, size: 9 };
+          stLabel.alignment = { horizontal: 'right', vertical: 'middle' };
+          const stCell = detailWs.getCell(detailRow, DCOLS.length);
+          stCell.value = Math.round(poTotal * 100) / 100; stCell.numFmt = '"$"#,##0.00';
+          stCell.font = { name: 'Arial', bold: true, size: 9 };
+          stCell.border = { top: { style: 'thin' } };
+          detailWs.getRow(detailRow).height = 16;
+          detailRow++;
+        }
+
         // Extra cost lines added in the PO editor (FDI / Freight / Tax / Product…) are part of the PO total
         for (const al of (po.additionalLines || [])) {
           const amount = parseFloat(al.amount) || 0;
@@ -4266,7 +4281,7 @@ const generateBulkExport = async (req, res) => {
           const labels = [
             clientName, unitNumber, '', vendorName, poNumber, poStatus.toUpperCase(), orderDate, '', '',
             `Extra cost (${al.lineType || 'Additional'})`, '', 1, stripHtml(al.description || ''),
-            '', '', '', '', '', '', '', money(amount), money(amount),
+            '', '', '', '', '', '', '', '', money(amount), money(amount),
           ];
           labels.forEach((val, i) => {
             const cell = detailWs.getCell(detailRow, i + 1);
