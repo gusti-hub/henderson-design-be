@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Role = require('../models/Role');
 const bcrypt = require('bcryptjs');
 const ActivityLog = require('../models/ActivityLog');
+const { startSession } = require('./sessionController');
 
 const ALL_PERMISSIONS = [
   'view_dashboard', 'view_orders', 'view_expenses', 'view_vendors',
@@ -181,6 +182,7 @@ const login = async (req, res) => {
       status: 'success',
       timestamp: new Date()
     });
+    await startSession(req, user);   // work session for the Team attendance report
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
     const permissions = await resolvePermissions(user);
