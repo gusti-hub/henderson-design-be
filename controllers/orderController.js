@@ -485,7 +485,7 @@ const getOrders = async (req, res) => {
 
     // Populate references (works on aggregation results)
     await Order.populate(orders, [
-      { path: 'user', select: 'name email clientCode unitNumber pricingYear' },
+      { path: 'user', select: 'name email clientCode unitNumber pricingYear collection' },
       { path: 'selectedProducts.vendor', select: 'name vendorCode defaultMarkup' },
       { path: 'updatedBy', select: 'name' },
     ]);
@@ -512,7 +512,7 @@ const getOrderById = async (req, res) => {
     const order = await Order.findById(req.params.id)
       .populate({
         path: 'user',
-        select: 'name email clientCode unitNumber pricingYear'
+        select: 'name email clientCode unitNumber pricingYear collection'
       })
       .populate({
         path: 'selectedProducts.vendor',
