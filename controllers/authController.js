@@ -294,7 +294,7 @@ const sendAdminNotificationEmail = async (user) => {
 };
 
 // Send approval email with login credentials (when admin approves user)
-const sendApprovalEmail = async (user, temporaryPassword) => {
+const sendApprovalEmail = async (user, temporaryPassword, { subject } = {}) => {
   try {
     const { userApprovalTemplate } = require('../utils/emailTemplates');
     const sendEmail = require('../utils/sendEmail');
@@ -313,7 +313,7 @@ const sendApprovalEmail = async (user, temporaryPassword) => {
     await sendEmail({
       to: user.email,
       toName: user.name,
-      subject: '🎉 Welcome to Ālia Collections - Your Account is Approved!',
+      subject: subject || '🎉 Welcome to Ālia Collections - Your Account is Approved!',
       htmlContent: htmlContent
     });
 

@@ -297,6 +297,53 @@ const approveClient = async (req, res) => {
   }
 };
 
+// @desc    Manually send a client their portal login details (new temporary password + login link)
+// @route   POST /api/clients/:id/send-login-email
+// Passwords are stored hashed, so the current one cannot be re-sent: a NEW temporary password is generated.
+// A client who has already logged in must be confirmed explicitly (body.confirmReset) because their current password stops working.
+const sendLoginEmail = async (req, res) => {
+  try {
+    const client = await User.findById(req.params.id).select('+password');
+    if (!client || client.role !== 'user') {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+    if (!client.email) {
+      return res.status(400).json({ success: false, message: 'This client has no email address.' });
+    }
+    if (client.status !== 'approved') {
+      return res.status(400).json({ success: false, message: 'Login details can only be sent to approved clients.' });
+    }
+    if (client.lastLogin && req.body?.confirmReset !== true) {
+      return res.status(409).json({
+        success: false, needsConfirm: true,
+        message: 'This client has already logged in. Sending login details sets a new password and the current one stops working.',
+      });
+    }
+
+    const previous = { password: client.password, loginEmailSentAt: client.loginEmailSentAt || null, loginEmailSentBy: client.loginEmailSentBy || null };
+    const temporaryPassword = crypto.randomBytes(4).toString('hex').toUpperCase();
+    client.password = temporaryPassword;                       // hashed by the User pre-save hook
+    client.loginEmailSentAt = new Date();
+    client.loginEmailSentBy = req.user._id;
+    await client.save({ validateModifiedOnly: true });         // older clients may not pass full validation
+
+    try {
+      await sendApprovalEmail(client, temporaryPassword, { subject: 'Your Ālia client portal login details' });
+    } catch (emailError) {
+      // Never leave the client with a password they were not told: put the previous one back
+      await User.updateOne({ _id: client._id }, { $set: previous });
+      console.error('❌ Login details email failed, password restored:', emailError.message);
+      return res.status(502).json({ success: false, message: 'The email could not be sent, so the password was not changed. Please try again.' });
+    }
+
+    console.log(`✅ Login details sent to ${client.email} by ${req.user.email || req.user._id}`);
+    res.json({ success: true, message: `Login details sent to ${client.email}`, data: { loginEmailSentAt: client.loginEmailSentAt } });
+  } catch (error) {
+    console.error('Send login email error:', error);
+    res.status(500).json({ success: false, message: 'Failed to send login details' });
+  }
+};
+
 // @desc    Reject client registration
 // @route   PUT /api/clients/:id/reject
 // @access  Private (Admin)
@@ -1681,5 +1728,6 @@ module.exports = {
   getClientStats,
   recordPayment,
   exportClientsToExcel,
-  updateProjectSummary
+  updateProjectSummary,
+  sendLoginEmail
 };

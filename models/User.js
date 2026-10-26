@@ -39,6 +39,16 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Last time an admin sent this client their portal login details (a new temporary password is generated each time)
+  loginEmailSentAt: {
+    type: Date,
+    default: null
+  },
+  loginEmailSentBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
   unitNumber: {
     type: String,
     required: [false, 'Please add a unit number']

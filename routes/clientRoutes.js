@@ -14,7 +14,8 @@ const {
   getClientStats,
   recordPayment,
   exportClientsToExcel,
-  updateProjectSummary
+  updateProjectSummary,
+  sendLoginEmail
 } = require('../controllers/clientController');
 const { protect, authorize, hasPermission } = require('../middleware/auth');
 
@@ -30,6 +31,7 @@ router.get('/',  protect, hasPermission('view_clients'), getAllClients);
 router.post('/', protect, createClient);
 
 router.post('/:id/record-payment', protect, recordPayment);
+router.post('/:id/send-login-email', protect, hasPermission('view_clients'), sendLoginEmail);
 router.put('/:id/project-summary', protect, updateProjectSummary);
 
 // Parameterized routes PALING BAWAH
