@@ -169,6 +169,7 @@ const orderSchema = new mongoose.Schema({
       deliveryStatus:    String,
       installerNotes:    String,
       installStatus:     String,   // Pending | Scheduled | Installed | Issue
+      installId:         String,   // shared item code printed on field pack / tag / carton, e.g. 701-LIV-08 (empty = printed as a dash)
       installDate:       String,   // YYYY-MM-DD
       leadTime:          String,
 

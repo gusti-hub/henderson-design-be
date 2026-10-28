@@ -10,145 +10,10 @@ const path = require('path');
 const FloorPlanLayout = require('../models/FloorPlanLayout');
 const Order = require('../models/Order');
 const User = require('../models/User');
-const { isInstallPending } = require('../utils/installBinderText');
-const { roomCompare } = require('../utils/roomOrder');
-
-// ── Look & feel (taken from the approved sample pack) ────────────────────────
-const C = {
-  navy: '#17363f', teal: '#2e7570', ink: '#26343a', gray: '#6b7a80', line: '#cdd9d6',
-  panel: '#eff4f0', rust: '#9b4a39', sand: '#e9d3a8', white: '#ffffff',
-};
-const PW = 792, PH = 612, M = 36;
-const DASH = '—';
-
-// ── Unit marker: colour + shape the crew matches against the unit entrance and every carton ──
-// Only markers HDG has confirmed are printed. Add a unit here once HDG confirms it; every other unit prints "TO BE ASSIGNED".
-const MARKER_COLORS = { BLUE: '#1f6fb5', ORANGE: '#e07b1f', PURPLE: '#7a4fa3', RED: '#c0392b', YELLOW: '#d9a800', GREEN: '#008c69' };
-const CONFIRMED_MARKERS = { '701': { color: 'GREEN', shape: 'SQUARE' } };   // shape: SQUARE / CIRCLE / TRIANGLE / DIAMOND / HEXAGON
-const UNASSIGNED_HEX = '#8a979c';
-
-const unitMarker = (unit) => {
-  const m = CONFIRMED_MARKERS[String(unit || '').trim()];
-  return m ? { ...m, confirmed: true } : { color: '', shape: 'SQUARE', confirmed: false };
-};
-
-const drawMarker = (doc, shape, cx, cy, size, color) => {
-  const h = size / 2;
-  doc.save().fillColor(color);
-  if (shape === 'CIRCLE') doc.circle(cx, cy, h).fill();
-  else if (shape === 'TRIANGLE') doc.polygon([cx, cy - h], [cx + h, cy + h * 0.85], [cx - h, cy + h * 0.85]).fill();
-  else if (shape === 'DIAMOND') doc.polygon([cx, cy - h], [cx + h, cy], [cx, cy + h], [cx - h, cy]).fill();
-  else if (shape === 'HEXAGON') {
-    const pts = Array.from({ length: 6 }, (_, i) => [cx + h * Math.cos(Math.PI / 3 * i), cy + h * Math.sin(Math.PI / 3 * i)]);
-    doc.polygon(...pts).fill();
-  } else doc.rect(cx - h, cy - h, size, size).fill();
-  doc.restore();
-};
-
-// ── Room codes: the same table as the Install Binder item labels (Primary Bedroom = PBR as in the field pack sample).
-// A room that is not in the table prints "—" as its code.
-const ROOM_CODES = {
-  'COURTYARD': 'COU', 'EXTERIOR ENTRY': 'EXT', 'INTERIOR ENTRY': 'INT', 'FOYER': 'FOY', 'KITCHEN': 'KIT', 'PANTRY': 'PAN',
-  'BREAKFAST NOOK': 'BRK', 'DINING ROOM': 'DIN', 'DINING AREA': 'DIN', 'LIVING ROOM': 'LIV', 'GREAT ROOM': 'GRE',
-  'FAMILY ROOM': 'FAM', 'DEN': 'DEN', 'WET BAR': 'WET', 'MEDIA ROOM': 'MED', 'HALLWAY': 'HAL', 'HALLWAY 1': 'HA1', 'HALLWAY 2': 'HA2',
-  'LANAI': 'LAN', 'LANAI 1': 'LA1', 'LANAI 2': 'LA2', 'LANAI 3': 'LA3', 'MAIN LANAI': 'MAI', 'BBQ AREA': 'BBQ', 'POOL LANAI': 'POL',
-  'POWDER ROOM': 'POW', 'PAVILLION': 'PAV', 'GYM': 'GYM', 'OFFICE': 'OFF', 'OFFICE 1': 'OF1', 'OFFICE 2': 'OF2', 'WINE ROOM': 'WIN',
-  'REC ROOM': 'REC', 'GARAGE': 'GAR', 'PRIMARY BEDROOM': 'PBR', 'PRIMARY BATHROOM': 'PBA', 'PRIMARY CLOSET': 'PRC',
-  'PRIMARY BEDROOM LANAI': 'PBL', 'BEDROOM 2': 'BE2', 'BATHROOM 2': 'BA2', 'BEDROOM 2 CLOSET': 'BC2', 'BEDROOM 2 LANAI': 'BL2',
-  'BEDROOM 3': 'BE3', 'BATHROOM 3': 'BA3', 'BEDROOM 3 CLOSET': 'BC3', 'BEDROOM 3 LANAI': 'BL3', 'BEDROOM 4': 'BE4',
-  'BATHROOM 4': 'BA4', 'BEDROOM 4 CLOSET': 'BC4', 'BEDROOM 4 LANAI': 'BL4', 'SITTING ROOM': 'SIT', 'FLEX SPACE': 'FLE',
-  'LAUNDRY ROOM': 'LAU', 'MUD ROOM': 'MUD', 'TERRACE': 'TER', 'BALCONY': 'BAL', 'OUTDOOR DINING': 'ODI', 'OUTDOOR LIVING': 'ODL',
-  'GUEST SUITE': 'GUE', 'THROUGHOUT': 'ACC', 'STYLING & ACCESSORIES': 'ACC',
-};
-
-// ── Item data (only what is stored on the item) ──────────────────────────────
-const lc = (s) => String(s || '').toLowerCase();
-const sentenceCase = (s) => { const t = lc(s); return t.charAt(0).toUpperCase() + t.slice(1); };
-const titleCase = (s) => lc(s).replace(/\b\w/g, (c) => c.toUpperCase());
-const stripHtml = (s) => String(s || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
-
-// Services / labor lines are not physical items: left out by the item class stored on the item (no name matching)
-const isService = (p) => /^(installation \/ logistics|labor)$/.test(lc(p.selectedOptions?.itemClass).trim());
-
-// "QTY 2 pc": the unit word comes from the item's own Units field; no Units value → just the number
-const UNIT_WORDS = { each: 'pc', set: 'set', pair: 'pair', box: 'box', case: 'case', roll: 'roll', yard: 'yard', foot: 'ft', meter: 'm', panel: 'panel' };
-const qtyText = (p) => {
-  const q = Number(p.quantity) || 1;
-  const u = lc(p.selectedOptions?.units).trim();
-  if (!u) return `QTY ${q}`;
-  const word = UNIT_WORDS[u] || u.replace('square foot', 'sq ft').replace('linear foot', 'lin ft');
-  return `QTY ${q} ${q !== 1 && !['pc', 'ft', 'm'].includes(word) ? `${word}s` : word}`;
-};
-
-const imageUrlOf = (p) => {
-  const o = p.selectedOptions || {};
-  const u = o.image || (o.images || [])[0] || (o.uploadedImages || [])[0]?.url || '';
-  return /^https?:/.test(u) ? u : '';
-};
-
-// ── Images ────────────────────────────────────────────────────────────────────
-// A failed download must not silently look like "no photo", so each image gets 3 attempts before it is given up
-const fetchImage = async (url, maxPx, quality) => {
-  if (!url) return null;
-  const axios = require('axios'), sharp = require('sharp');
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const r = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 });
-      const { data, info } = await sharp(Buffer.from(r.data)).rotate()
-        .resize({ width: maxPx, height: maxPx, fit: 'inside', withoutEnlargement: true })
-        .flatten({ background: '#ffffff' }).jpeg({ quality }).toBuffer({ resolveWithObject: true });
-      return { buffer: data, w: info.width, h: info.height };
-    } catch (e) {
-      if (attempt === 3) console.warn('[FieldPack] image failed:', url.slice(0, 90), '-', e.message);
-      else await new Promise(r => setTimeout(r, 400 * attempt));
-    }
-  }
-  return null;
-};
-
-const runPool = async (items, size, fn) => {
-  let i = 0;
-  await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => {
-    while (i < items.length) { const k = i++; await fn(items[k], k); }
-  }));
-};
-
-// ── Build the content model (rooms → numbered items) ─────────────────────────
-const buildRooms = (orders, plans, unit) => {
-  const byRoom = new Map();
-  const roomName = (r) => String(r || '').trim() || 'Other';
-  for (const order of orders) {
-    for (const p of (order.selectedProducts || [])) {
-      if (p.isParent || isInstallPending(p.selectedOptions) || isService(p)) continue;
-      const room = roomName(p.selectedOptions?.room);
-      if (!byRoom.has(room)) byRoom.set(room, []);
-      byRoom.get(room).push(p);
-    }
-  }
-  const planByRoom = new Map();
-  plans.filter(p => p.type === 'room' && p.room && p.room !== '_fullview_')
-    .forEach(p => planByRoom.set(String(p.room).trim().toUpperCase(), p));
-
-  const names = [...new Set([...byRoom.keys(), ...[...planByRoom.values()].map(p => String(p.room).trim())])]
-    .sort(roomCompare);
-
-  return names.map(name => {
-    const code = ROOM_CODES[name.toUpperCase()] || DASH;
-    const items = (byRoom.get(name) || []).map((p, i) => {
-      const num = String(i + 1).padStart(2, '0');           // numbered in the order the rows are saved in the order
-      const sku = String(p.product_id || '').trim();
-      return {
-        num, id: `${unit}-${code}-${num}`, name: stripHtml(p.name) || DASH,
-        qty: qtyText(p), qtyNum: Number(p.quantity) || 1,
-        size: stripHtml(p.selectedOptions?.size),
-        sku: sku ? (code !== DASH ? `${code}-${sku}` : sku) : '',
-        imageUrl: imageUrlOf(p),
-        isLighting: lc(p.selectedOptions?.itemClass).trim() === 'lighting',   // from the item's own class
-      };
-    });
-    return { name, code, plan: planByRoom.get(name.toUpperCase()) || null, items };
-  });
-};
+const {
+  C, PW, PH, M, DASH, MARKER_COLORS, UNASSIGNED_HEX, unitMarker, drawMarker,
+  lc, sentenceCase, titleCase, fetchImage, runPool, buildRooms, attachInstallInstructions,
+} = require('../utils/binderShared');
 
 // ── Controller ───────────────────────────────────────────────────────────────
 const generateFieldPack = async (req, res) => {
@@ -173,6 +38,7 @@ const generateFieldPack = async (req, res) => {
     const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
 
     const rooms = buildRooms(orders, plans, unit);
+    await attachInstallInstructions(rooms);
     if (!rooms.length) return res.status(404).json({ message: 'No items or floor plans to put in a field pack' });
 
     // ── Page plan (page numbers are needed up front for the room guide) ──────
@@ -208,7 +74,7 @@ const generateFieldPack = async (req, res) => {
     const jobs = [];
     rooms.forEach(r => {
       if (r.plan) jobs.push(async () => planImgs.set(r.name, await fetchImage(r.plan.imageUrl, 1800, 80)));
-      r.items.forEach(i => { if (i.imageUrl) jobs.push(async () => itemImgs.set(i.id, await fetchImage(i.imageUrl, 360, 70))); });
+      r.items.forEach(i => { if (i.imageUrl) jobs.push(async () => itemImgs.set(i.productId || i.id, await fetchImage(i.imageUrl, 360, 70))); });
     });
     await runPool(jobs, 8, (j) => j());
 
@@ -310,19 +176,20 @@ const generateFieldPack = async (req, res) => {
       if (g === guidePages - 1) txt(`Carton checks, lighting pairing key and completion forms follow the room inventories.${holdRoomsText}`, M, 144 + slice.length * 28 + 14, { size: 9, color: C.gray, width: tableW });
     }
 
-    // ── Item cards: every field is stored data; the install action is not stored, so it prints "—" to be completed ──
+    // ── Item cards: every field is stored data; the install action is not stored, so it prints "—" until filled in Product Config ──
     const titleOf = (it) => `${it.id} / ${it.name}`;
-    const actionLine = (x, y, w) => txt(`${DASH}  (install action to be completed)`, x, y, { bold: true, size: 9.5, color: C.gray, width: w, height: 28 });
+    const actionLine = (x, y, w) => txt(DASH, x, y, { bold: true, size: 9.5, color: C.gray, width: w, height: 28 });
 
     const inventoryCard = (x, y, w, h, it) => {
       box(x, y, w, h, C.white, C.line);
       txt(titleOf(it), x + 12, y + 10, { bold: true, size: 11.5, width: w - 24, height: 30, ellipsis: true });
       txt(it.qty, x + 12, y + 40, { bold: true, size: 9.5, color: C.teal, lineBreak: false });
-      photoBox(itemImgs.get(it.id), x + 12, y + 60, 120, h - 96);
+      photoBox(itemImgs.get(it.productId || it.id), x + 12, y + 60, 120, h - 96);
       const tx = x + 144, tw = w - 156; let ty = y + 60;
       if (it.sku) { txt(it.sku, tx, ty, { bold: true, size: 8.5, color: C.teal, width: tw, lineBreak: false, ellipsis: true }); ty += 13; }
       if (it.size) { txt(`Size: ${it.size}`, tx, ty, { size: 9, width: tw, height: 24, ellipsis: true }); ty += doc.heightOfString(`Size: ${it.size}`, { width: tw }) + 3; }
-      actionLine(tx, ty, tw);
+      if (it.installInstruction) txt(it.installInstruction, tx, ty, { size: 9.5, width: tw, height: 46 });
+      else actionLine(tx, ty, tw);
       const by = y + h - 24;
       check(x + 12, by, 'Placed', 40); check(x + 82, by, 'Checked', 50);
       txt('Qty: ____ Initials: ____', x + 160, by, { size: 8.5, color: C.gray, lineBreak: false });
@@ -333,8 +200,9 @@ const generateFieldPack = async (req, res) => {
       txt(titleOf(it), x + 10, y + 8, { bold: true, size: 10.5, width: w - 80, height: 28, ellipsis: true });
       txt(it.qty, x + w - 66, y + 8, { bold: true, size: 9, color: C.teal, width: 56, align: 'right', lineBreak: false });
       txt(`ITEM ${it.num}`, x + 10, y + 38, { bold: true, size: 8.5, color: C.teal, lineBreak: false });
-      photoBox(itemImgs.get(it.id), x + 10, y + 52, 62, h - 82);
-      txt(`${DASH}  (to be completed)`, x + 82, y + 54, { bold: true, size: 9, color: C.gray, width: w - 92, height: 28 });
+      photoBox(itemImgs.get(it.productId || it.id), x + 10, y + 52, 62, h - 82);
+      if (it.installInstruction) txt(it.installInstruction, x + 82, y + 54, { size: 9, width: w - 92, height: 34 });
+      else txt(DASH, x + 82, y + 54, { bold: true, size: 9, color: C.gray, width: w - 92, height: 28 });
       const by = y + h - 20;
       check(x + 10, by, 'Count OK', 46); check(x + 86, by, 'Placed', 40); check(x + 156, by, 'Checked', 46);
     };

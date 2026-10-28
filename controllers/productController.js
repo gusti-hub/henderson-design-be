@@ -63,6 +63,8 @@ const buildProductData = (body, uploadedFile = null) => {
     wingPanelsClient:   body.wingPanelsClient   || '',
     fabricVendor:       body.fabricVendor       || '',
     fabricClient:       body.fabricClient       || '',
+    // only written when the request carries them, so imports / upserts never wipe instructions that were filled in
+    ...(body.installInstruction !== undefined && { installInstruction: String(body.installInstruction || '').trim() }),
     ...(buildCustomAttributes(body)),
   };
 };
@@ -406,6 +408,7 @@ const buildUpdatePayloadFromRow = (row) => {
   if (row.name              !== undefined) payload.name              = str(row.name);
   if (row.description       !== undefined) payload.description       = str(row.description);
   if (row.vendorDescription !== undefined) payload.vendorDescription = str(row.vendorDescription);
+  if (row.installInstruction !== undefined) payload.installInstruction = str(row.installInstruction);
   if (row.vendor            !== undefined) payload.vendor            = str(row.vendor);
   if (row.category          !== undefined) payload.category          = str(row.category) || 'General';
   if (row.collection        !== undefined) payload.collection        = str(row.collection) || 'General';
@@ -604,7 +607,7 @@ const exportAllProducts = async (req, res) => {
   try {
     const products = await Product.find()
       .sort({ createdAt: -1 })
-      .select('product_id name description vendorDescription vendor category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image customAttributes woodFinishVendor woodFinishClient drawerFrontsVendor drawerFrontsClient wingPanelsVendor wingPanelsClient fabricVendor fabricClient')
+      .select('product_id name description vendorDescription installInstruction vendor category collection package dimension colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image customAttributes woodFinishVendor woodFinishClient drawerFrontsVendor drawerFrontsClient wingPanelsVendor wingPanelsClient fabricVendor fabricClient')
       .lean();
 
     res.json({ products, total: products.length });

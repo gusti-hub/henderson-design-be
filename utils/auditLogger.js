@@ -51,6 +51,7 @@ const FIELD_LABELS = {
   'selectedOptions.expectedArrivalDate':     'Expected Arrival Date',
   'selectedOptions.dateReceived':            'Date Received',
   'selectedOptions.dateInspected':           'Date Inspected',
+  'selectedOptions.installId':               'Install ID',
   'selectedOptions.estimatedDeliveryDate':   'Estimated Delivery Date',
   'selectedOptions.shippingCarrier':         'Shipping Carrier',
   'selectedOptions.orderStatus':             'Order Status',

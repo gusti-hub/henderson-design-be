@@ -1,7 +1,8 @@
 const FloorPlanLayout = require('../models/FloorPlanLayout');
 const Order           = require('../models/Order');
 const User            = require('../models/User');
-const { vendorDescriptionText, latestNotePoints, isInstallPending } = require('../utils/installBinderText');
+const { vendorDescriptionText, latestNotePoints } = require('../utils/installBinderText');
+const { buildRooms, statusStyle, STATUS_LEGEND } = require('../utils/binderShared');
 const POVersion       = require('../models/POVersion');
 const { generatePresignedUploadUrl, HARDCODED_CONFIG, s3Client } = require('../config/s3');
 const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -104,6 +105,11 @@ const getClientProducts = async (req, res) => {
     const products = [];
     const roomSet  = new Set();
 
+    // Same Install ID as the Field Pack / Install Binder PDF (typed in CPM, e.g. 701-LIV-07 → "07"; empty → dash); parent and service rows are not in the binder
+    const unit = String(orders[0]?.clientInfo?.unitNumber || '').trim();
+    const numbered = new Map();
+    buildRooms(orders, [], unit).forEach(r => r.items.forEach(it => numbered.set(it.productId, { sharedId: it.id, num: it.num })));
+
     for (const order of orders) {
       const poVersions = await POVersion.find({ orderId: order._id }).sort({ version: -1 }).lean();
       const vendorPOMap = new Map();
@@ -127,11 +133,15 @@ const getClientProducts = async (req, res) => {
           poNumber,
           quantity:   p.quantity || 1,
           orderId:    order._id,
+          sharedId:   numbered.get(String(p._id))?.sharedId || '',
+          num:        numbered.get(String(p._id))?.num || '',
+          installStatus: p.selectedOptions?.installStatus || '',
+          status:     statusStyle(p.selectedOptions?.installStatus),
         });
       }
     }
 
-    res.json({ products, rooms: [...roomSet].sort(roomCompare) });
+    res.json({ products, rooms: [...roomSet].sort(roomCompare), legend: STATUS_LEGEND });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -193,7 +203,6 @@ const generatePDF = async (req, res) => {
     for (const order of orders) {
       for (const p of (order.selectedProducts || [])) {
         if (p.isParent) continue;
-        if (isInstallPending(p.selectedOptions)) continue;   // Pending install status stays out of the binder
         const room = (p.selectedOptions?.room || '').trim() || 'Other';
         const vendorId = p.vendor?._id?.toString() || '';
         if (!byRoom.has(room)) byRoom.set(room, []);

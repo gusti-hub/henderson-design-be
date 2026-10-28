@@ -49,6 +49,9 @@ const productSchema = new mongoose.Schema({
   itemClass:         { type: String, default: '' },
   vendorDescription: { type: String, default: '' },
 
+  // Install instruction for this SKU, printed on the Field Pack / Install Binder (one plain line)
+  installInstruction:{ type: String, default: '' },
+
   // Finish attributes — free text, no enum restriction
   woodFinish: { type: String, default: '' },
   fabric:     { type: String, default: '' },

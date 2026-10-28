@@ -20,7 +20,7 @@ const html_to_pdf = require('html-pdf-node');
 const { generatePDF } = require('../config/pdfConfig');
 const nodemailer = require('nodemailer');
 const { logOrderChanges } = require('../utils/auditLogger');
-const { vendorDescriptionText, latestNotePoints, isInstallPending } = require('../utils/installBinderText');
+const { vendorDescriptionText, latestNotePoints } = require('../utils/installBinderText');
 const { roomCompare } = require('../utils/roomOrder');
 const { buildProjectDirectory } = require('../utils/projectDirectory');
 const { generatePresignedUploadUrl } = require('../config/s3');
@@ -287,6 +287,7 @@ const updateOrder = async (req, res) => {
             deliveryStatus:     product.selectedOptions?.deliveryStatus     || '',
             installerNotes:     product.selectedOptions?.installerNotes     || '',
             installStatus:      product.selectedOptions?.installStatus      || '',
+            installId:          shared('installId')                         || '',
             installDate:        product.selectedOptions?.installDate        || '',
             leadTime:           product.selectedOptions?.leadTime           || '',
             room:                     product.selectedOptions?.room                     || '',
@@ -1784,7 +1785,7 @@ const generateInstallBinder = async (req, res) => {
     const clientData = await loadAllClientProducts(req.params.id);
     if (!clientData) return res.status(404).json({ message: 'Order not found' });
     const { anchor: order, allOrderIds } = clientData;
-    const products = clientData.products.filter(p => !isInstallPending(p.selectedOptions));   // Pending install status stays out of the binder
+    const products = clientData.products;   // every item is listed, including Pending install status
 
     // Build vendorId → latest PO number across ALL orders
     const allPoVersions = await POVersion.find({ orderId: { $in: allOrderIds } })
@@ -2046,7 +2047,7 @@ const generateInstallBinderExcel = async (req, res) => {
     const clientData = await loadAllClientProducts(req.params.id);
     if (!clientData) return res.status(404).json({ message: 'Order not found' });
     const { anchor: order, allOrderIds, allOrders } = clientData;
-    const products = clientData.products.filter(p => !isInstallPending(p.selectedOptions));   // Pending install status stays out of the binder
+    const products = clientData.products;   // every item is listed, including Pending install status
 
     const clientName = (order.clientInfo?.name || 'Client').trim();
     const unitNumber = order.clientInfo?.unitNumber || '';
