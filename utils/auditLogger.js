@@ -108,7 +108,8 @@ const ORDER_LEVEL_FIELDS = [
 // After save: vendor might be raw ObjectId string, or still populated
 // Both cases now produce the same normalized string
 const normalize = (v) => {
-  if (v === undefined || v === null) return '__NULL__';
+  // a never-filled field (missing / null) and an empty string are the same "blank" — blank → blank is not a change
+  if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) return '__NULL__';
   if (typeof v === 'number' && isNaN(v)) return '__NULL__';
   if (Array.isArray(v)) return JSON.stringify(v);
   if (v && typeof v === 'object') {
