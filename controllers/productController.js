@@ -112,7 +112,7 @@ const getProducts = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('product_id name description vendorDescription vendor category collection package dimension shipTo colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image uploadedImages customAttributes woodFinishVendor woodFinishClient drawerFrontsVendor drawerFrontsClient wingPanelsVendor wingPanelsClient fabricVendor fabricClient')
+        .select('product_id name description vendorDescription installInstruction vendor category collection package dimension shipTo colorFinish itemUrl itemClass buyPrice sellPrice sellPrice2025 sellPrice2026 price woodFinish fabric others image uploadedImages customAttributes woodFinishVendor woodFinishClient drawerFrontsVendor drawerFrontsClient wingPanelsVendor wingPanelsClient fabricVendor fabricClient')
         .lean()
     ]);
 
