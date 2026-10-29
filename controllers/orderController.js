@@ -3937,6 +3937,8 @@ const generateBulkExport = async (req, res) => {
     const ExcelJS = require('exceljs');
     const mongoose = require('mongoose');
     const { orderIds, vendorIds: vendorFilter } = req.body;
+    // mode 'proposal' = same pipeline as the PO export, but only the proposal columns + Sell Price (no cost totals)
+    const proposalMode = req.body.mode === 'proposal';
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ message: 'No order IDs provided' });
     }
@@ -4058,7 +4060,7 @@ const generateBulkExport = async (req, res) => {
     // Columns: Client | Unit | Vendor | PO # | Ver | Order Date | PO Status | Total
     [20, 8, 24, 14, 6, 13, 14, 14].forEach((w, i) => { summaryWs.getColumn(i + 1).width = w; });
     summaryWs.mergeCells('A1:H1');
-    summaryWs.getCell('A1').value = `Henderson Design Group — Combined PO Export — ${new Date().toLocaleDateString('en-US')}`;
+    summaryWs.getCell('A1').value = `Henderson Design Group — ${proposalMode ? 'Combined Proposal Export' : 'Combined PO Export'} — ${new Date().toLocaleDateString('en-US')}`;
     summaryWs.getCell('A1').font = { name: 'Arial', bold: true, size: 12, color: { argb: 'FF005670' } };
     summaryWs.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' };
     summaryWs.getRow(1).height = 26;
@@ -4089,20 +4091,26 @@ const generateBulkExport = async (req, res) => {
     };
 
     // ── Sheet 2: Detail ───────────────────────────────────────────────────────
-    const DCOLS = [
+    const ALL_COLS = [
       'Client', 'Unit', 'Room', 'Vendor', 'PO #', 'PO Status', 'Order Date', 'Account #', 'Rep Name',
       'Product Name', 'SKU', 'Qty',
       'Vendor Description', 'Specs / Description', 'Color / Finish', 'Fabric', 'Materials',
       'Dimensions', 'Lead Time', 'Sidemark',
       'Image',
-      'Unit Cost', 'Total Cost',
+      'Unit Cost', 'Total Cost', 'Sell Price',
     ];
-    const DWIDTHS = [20, 8, 18, 22, 14, 10, 13, 14, 18, 28, 14, 6, 32, 30, 16, 16, 18, 14, 12, 20, 22, 13, 13];
+    const ALL_WIDTHS = [20, 8, 18, 22, 14, 10, 13, 14, 18, 28, 14, 6, 32, 30, 16, 16, 18, 14, 12, 20, 22, 13, 13, 14];
+    // Columns shown in the Bulk Proposal export (the highlighted ones) + Sell Price; the PO export keeps every column except Sell Price
+    const PROPOSAL_COLS = ['Vendor', 'PO #', 'PO Status', 'Order Date', 'Account #', 'Rep Name', 'Product Name', 'SKU', 'Fabric', 'Materials', 'Sidemark', 'Sell Price'];
+    const SHOWN = ALL_COLS.filter(c => proposalMode ? PROPOSAL_COLS.includes(c) : c !== 'Sell Price');
+    const SHOWN_IDX = SHOWN.map(c => ALL_COLS.indexOf(c));
+    const DWIDTHS = SHOWN_IDX.map(i => ALL_WIDTHS[i]);
 
+    const DCOLS = SHOWN;
     const detailWs = wb.addWorksheet('Detail');
     DWIDTHS.forEach((w, i) => { detailWs.getColumn(i + 1).width = w; });
     detailWs.mergeCells(1, 1, 1, DCOLS.length);
-    detailWs.getCell('A1').value = `Henderson Design Group — PO Detail — ${new Date().toLocaleDateString('en-US')}`;
+    detailWs.getCell('A1').value = `Henderson Design Group — ${proposalMode ? 'Proposal' : 'PO'} Detail — ${new Date().toLocaleDateString('en-US')}`;
     detailWs.getCell('A1').font = { name: 'Arial', bold: true, size: 12, color: { argb: 'FF005670' } };
     detailWs.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' };
     detailWs.getRow(1).height = 26;
@@ -4209,6 +4217,8 @@ const generateBulkExport = async (req, res) => {
             : (parseFloat(opts.msrp || p.unitPrice || 0) || 0);
           const totalCost = unitCost * qty;
           poTotal += totalCost;
+          // Sell price per unit = the item's own selling price on the order (unitPrice; qty x unitPrice is the proposal line total)
+          const sellUnit = parseFloat(p.unitPrice) || 0;
 
           const rowData = [
             clientName, unitNumber, String(opts.room || '').trim(), vendorName, poNumber, poStatus.toUpperCase(), orderDate,
@@ -4221,9 +4231,10 @@ const generateBulkExport = async (req, res) => {
             opts.size || '',
             opts.leadTime || '', opts.sidemark || '',
             '', // Image column — image embedded separately below
-            money(unitCost), money(totalCost),
+            money(unitCost), money(totalCost), money(sellUnit),
           ];
-          rowData.forEach((val, i) => {
+          SHOWN_IDX.forEach((src, i) => {
+            const val = rowData[src];
             const cell = detailWs.getCell(detailRow, i + 1);
             if (val && typeof val === 'object' && 'numFmt' in val) {
               cell.value = val.value; cell.numFmt = val.numFmt;
@@ -4237,7 +4248,7 @@ const generateBulkExport = async (req, res) => {
 
           // Embed image (first candidate that downloaded)
           let rowHeight = 18;
-          const imgBuf = imageCandidates(opts).map(u => imageByUrl.get(u)).find(Boolean);
+          const imgBuf = IMG_COL_IDX < 0 ? null : imageCandidates(opts).map(u => imageByUrl.get(u)).find(Boolean);
           if (imgBuf) {
             try {
               const imgId = wb.addImage({ buffer: imgBuf, extension: 'jpeg' });
@@ -4261,7 +4272,7 @@ const generateBulkExport = async (req, res) => {
         }
 
         // Sub Total (Items): items only, shown above the extra cost lines (same as the PO editor)
-        if ((po.additionalLines || []).length > 0) {
+        if (!proposalMode && (po.additionalLines || []).length > 0) {
           detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length - 1);
           const stLabel = detailWs.getCell(detailRow, 1);
           stLabel.value = 'Sub Total (Items):';
@@ -4276,7 +4287,7 @@ const generateBulkExport = async (req, res) => {
         }
 
         // Extra cost lines added in the PO editor (FDI / Freight / Tax / Product…) are part of the PO total
-        for (const al of (po.additionalLines || [])) {
+        for (const al of (proposalMode ? [] : (po.additionalLines || []))) {
           const amount = parseFloat(al.amount) || 0;
           poTotal += amount;
           const labels = [
@@ -4302,7 +4313,8 @@ const generateBulkExport = async (req, res) => {
         const vendorTotal = poTotal + shipping + others;
         orderTotal += vendorTotal;
 
-        // PO total row in Detail
+        // PO total row in Detail (cost total: not part of the proposal export)
+        if (!proposalMode) {
         detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length - 1);
         detailWs.getCell(detailRow, 1).value = `PO Total — ${vendorName} v${poVersion}`;
         detailWs.getCell(detailRow, 1).font = { name: 'Arial', bold: true, size: 9 };
@@ -4313,6 +4325,7 @@ const generateBulkExport = async (req, res) => {
         vtCell.border = { top: { style: 'thin' } };
         detailWs.getRow(detailRow).height = 16;
         detailRow++;
+        }
 
         // Summary: one row per PO version
         [clientName, unitNumber, vendorName, poNumber, `v${poVersion}`, orderDate, poStatus, money(vendorTotal)].forEach((val, i) => {
@@ -4329,7 +4342,8 @@ const generateBulkExport = async (req, res) => {
         grandTotal += vendorTotal;
       }
 
-      // Order total row in Detail
+      // Order total row in Detail (cost total: not part of the proposal export)
+      if (!proposalMode) {
       detailWs.mergeCells(detailRow, 1, detailRow, DCOLS.length - 1);
       detailWs.getCell(detailRow, 1).value = `Order Total — ${clientName}${unitNumber ? ' Unit ' + unitNumber : ''}`;
       detailWs.getCell(detailRow, 1).font = { name: 'Arial', bold: true, size: 10 };
@@ -4340,6 +4354,7 @@ const generateBulkExport = async (req, res) => {
       otCell.border = { top: { style: 'double' } };
       detailWs.getRow(detailRow).height = 20;
       detailRow++;
+      }
     }
 
     // Grand total in Summary — 8-col layout: label spans cols 1-7, value in col 8
@@ -4353,7 +4368,8 @@ const generateBulkExport = async (req, res) => {
     grandSumCell.border = { top: { style: 'double' } };
     summaryWs.getRow(summaryRow).height = 22;
 
-    const filename = `Alia - Combined PO Export - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    if (proposalMode) wb.removeWorksheet(summaryWs.id);   // the Summary sheet only holds PO cost totals
+    const filename = `Alia - ${proposalMode ? 'Combined Proposal Export' : 'Combined PO Export'} - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     await wb.xlsx.write(res);

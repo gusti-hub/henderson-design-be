@@ -131,12 +131,12 @@ const buildRooms = (orders, plans, unit) => {
     const items = (byRoom.get(name) || []).map(({ p, orderId }) => {
       const sku = String(p.product_id || '').trim();
       // Install ID comes only from the item (CPM → Install Binder). A plain number (12) is completed as unit-room-number
-      // (711-LIV-012); a full code typed by hand is kept as typed; nothing typed → dash (nothing is numbered automatically)
+      // (711-LIV-12); a full code typed by hand is kept as typed; nothing typed → dash (nothing is numbered automatically)
       const t = String(p.selectedOptions?.installId || '').trim();
       const plain = /^\d+$/.test(t);
-      const numPart = !t ? DASH : plain ? t.padStart(3, '0') : (t.split('-').pop() || t);
+      const numPart = !t ? DASH : plain ? t : (t.split('-').pop() || t);
       const id = !t ? DASH : plain ? `${unitPart}-${code}-${numPart}` : t;
-      const num = numPart;     // short number shown in circles / "ITEM 012"
+      const num = numPart;     // short number shown in circles / "ITEM 12"
       return {
         num, id, name: stripHtml(p.name) || DASH,
         qty: qtyText(p), qtyNum: Number(p.quantity) || 1,
