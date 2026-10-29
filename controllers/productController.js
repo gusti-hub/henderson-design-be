@@ -603,6 +603,20 @@ const bulkUpdateProducts = async (req, res) => {
   }
 };
 
+// POST /api/products/install-instructions  { items: [{ key, libraryProductId, product_id }] } → { result: { [key]: { found, text } } }
+// Used by CPM: an item that has a master product shows the master's instruction read-only; a custom item is editable.
+const getInstallInstructions = async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 500) : [];
+    const { lookupMasterInstructions } = require('../utils/binderShared');
+    const result = await lookupMasterInstructions(items.map(i => ({ key: String(i.key), libraryProductId: i.libraryProductId, product_id: i.product_id })));
+    res.json({ result });
+  } catch (error) {
+    console.error('getInstallInstructions error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const exportAllProducts = async (req, res) => {
   try {
     const products = await Product.find()
@@ -631,5 +645,6 @@ module.exports = {
   getProductCategories,
   bulkUpdatePreview,
   bulkUpdateProducts,
-  exportAllProducts
+  exportAllProducts,
+  getInstallInstructions
 };

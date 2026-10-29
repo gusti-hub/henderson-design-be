@@ -19,7 +19,8 @@ const {
   getProductCategories,
   bulkUpdatePreview,
   bulkUpdateProducts,
-  exportAllProducts
+  exportAllProducts,
+  getInstallInstructions
 } = require('../controllers/productController');
 
 router.use(protect);
@@ -28,6 +29,7 @@ router.use(protect);
 router.get('/basic-info',            getProductsBasicInfo);
 router.get('/categories',            getProductCategories);
 router.get('/export/all',            exportAllProducts);
+router.post('/install-instructions', getInstallInstructions);
 router.post('/bulk-delete',          bulkDeleteProducts);
 router.post('/bulk-update/preview',  bulkUpdatePreview);
 router.put('/bulk-update',           bulkUpdateProducts);

@@ -170,6 +170,7 @@ const orderSchema = new mongoose.Schema({
       installerNotes:    String,
       installStatus:     String,   // Pending | Scheduled | Installed | Issue
       installId:         String,   // item number typed in CPM (e.g. 12); PDFs show unit-room-number, e.g. 711-LIV-012 (empty = printed as a dash)
+      installInstruction:String,   // install instruction of a custom item (no master product); a master product's own text lives on Product
       installDate:       String,   // YYYY-MM-DD
       leadTime:          String,
 

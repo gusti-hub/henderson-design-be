@@ -288,6 +288,7 @@ const updateOrder = async (req, res) => {
             installerNotes:     product.selectedOptions?.installerNotes     || '',
             installStatus:      product.selectedOptions?.installStatus      || '',
             installId:          shared('installId')                         || '',
+            installInstruction: shared('installInstruction')                || '',
             installDate:        product.selectedOptions?.installDate        || '',
             leadTime:           product.selectedOptions?.leadTime           || '',
             room:                     product.selectedOptions?.room                     || '',
@@ -4097,12 +4098,12 @@ const generateBulkExport = async (req, res) => {
       'Vendor Description', 'Specs / Description', 'Color / Finish', 'Fabric', 'Materials',
       'Dimensions', 'Lead Time', 'Sidemark',
       'Image',
-      'Unit Cost', 'Total Cost', 'Sell Price',
+      'Unit Cost', 'Total Cost', 'Sell Price (Unit)', 'Sell Price (Total)',
     ];
-    const ALL_WIDTHS = [20, 8, 18, 22, 14, 10, 13, 14, 18, 28, 14, 6, 32, 30, 16, 16, 18, 14, 12, 20, 22, 13, 13, 14];
+    const ALL_WIDTHS = [20, 8, 18, 22, 14, 10, 13, 14, 18, 28, 14, 6, 32, 30, 16, 16, 18, 14, 12, 20, 22, 13, 13, 14, 14];
     // Columns shown in the Bulk Proposal export (the highlighted ones) + Sell Price; the PO export keeps every column except Sell Price
-    const PROPOSAL_COLS = ['Vendor', 'PO #', 'PO Status', 'Order Date', 'Account #', 'Rep Name', 'Product Name', 'SKU', 'Fabric', 'Materials', 'Sidemark', 'Sell Price'];
-    const SHOWN = ALL_COLS.filter(c => proposalMode ? PROPOSAL_COLS.includes(c) : c !== 'Sell Price');
+    const PROPOSAL_COLS = ['Vendor', 'PO #', 'PO Status', 'Order Date', 'Account #', 'Rep Name', 'Product Name', 'SKU', 'Qty', 'Fabric', 'Materials', 'Sidemark', 'Sell Price (Unit)', 'Sell Price (Total)'];
+    const SHOWN = ALL_COLS.filter(c => proposalMode ? PROPOSAL_COLS.includes(c) : !c.startsWith('Sell Price'));
     const SHOWN_IDX = SHOWN.map(c => ALL_COLS.indexOf(c));
     const DWIDTHS = SHOWN_IDX.map(i => ALL_WIDTHS[i]);
 
@@ -4231,7 +4232,7 @@ const generateBulkExport = async (req, res) => {
             opts.size || '',
             opts.leadTime || '', opts.sidemark || '',
             '', // Image column — image embedded separately below
-            money(unitCost), money(totalCost), money(sellUnit),
+            money(unitCost), money(totalCost), money(sellUnit), money(sellUnit * qty),
           ];
           SHOWN_IDX.forEach((src, i) => {
             const val = rowData[src];

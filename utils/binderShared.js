@@ -154,27 +154,48 @@ const buildRooms = (orders, plans, unit) => {
 };
 
 
-// ── Install instructions come from Product Config (SKU level): matched by the item's library product, else by an exact,
-// unique SKU. No match → empty (printed as a dash). Nothing is inferred from the item name.
-const attachInstallInstructions = async (rooms) => {
+// ── Install instructions come from Product Config (master product), matched by the item's library product, else by its exact SKU.
+// Several master products may share one SKU (one per vendor): they count as a match only when every filled instruction is the
+// same text; otherwise it is ambiguous → no match. Nothing is inferred from the item name.
+// entries: [{ key, libraryProductId, product_id }] → { [key]: { found: boolean, text: string } }
+const lookupMasterInstructions = async (entries) => {
   const mongoose = require('mongoose');
   const Product = require('../models/Product');
-  const items = rooms.flatMap(r => r.items);
-  const libIds = [...new Set(items.map(i => String(i.raw.libraryProductId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
-  const skus = [...new Set(items.map(i => String(i.raw.product_id || '').trim()).filter(Boolean))];
+  const libIds = [...new Set(entries.map(e => String(e.libraryProductId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
+  const skus = [...new Set(entries.map(e => String(e.product_id || '').trim()).filter(Boolean))];
   const pick = 'product_id installInstruction';
   const [byLib, bySku] = await Promise.all([
     libIds.length ? Product.find({ _id: { $in: libIds } }).select(pick).lean() : [],
     skus.length ? Product.find({ product_id: { $in: skus } }).select(pick).lean() : [],
   ]);
+  const flat = (t) => String(t || '').replace(/\s+/g, ' ').trim();
   const libMap = {}; byLib.forEach(p => { libMap[String(p._id)] = p; });
-  const skuCount = {}, skuMap = {};
-  bySku.forEach(p => { skuCount[p.product_id] = (skuCount[p.product_id] || 0) + 1; skuMap[p.product_id] = p; });
+  const skuGroups = {}; bySku.forEach(p => { (skuGroups[String(p.product_id).trim()] = skuGroups[String(p.product_id).trim()] || []).push(p); });
+  const out = {};
+  entries.forEach(e => {
+    const sku = String(e.product_id || '').trim();
+    const lib = libMap[String(e.libraryProductId || '')];
+    if (lib) { out[e.key] = { found: true, text: flat(lib.installInstruction) }; return; }
+    const group = skuGroups[sku] || [];
+    if (group.length === 1) { out[e.key] = { found: true, text: flat(group[0].installInstruction) }; return; }
+    if (group.length > 1) {
+      const texts = [...new Set(group.map(g => flat(g.installInstruction)).filter(Boolean))];
+      if (texts.length <= 1) { out[e.key] = { found: true, text: texts[0] || '' }; return; }
+    }
+    out[e.key] = { found: false, text: '' };
+  });
+  return out;
+};
+
+// Instruction printed for an item: the master product's text when the item has a master; otherwise (custom item) the text
+// typed on the item itself. A master without text falls back to the item's own text, so nothing typed is lost.
+const attachInstallInstructions = async (rooms) => {
+  const items = rooms.flatMap(r => r.items);
+  const map = await lookupMasterInstructions(items.map(it => ({ key: it.productId || it.id, libraryProductId: it.raw.libraryProductId, product_id: it.raw.product_id })));
   items.forEach(it => {
-    const sku = String(it.raw.product_id || '').trim();
-    const prod = libMap[String(it.raw.libraryProductId || '')] || (skuCount[sku] === 1 ? skuMap[sku] : null);
-    // one plain line of text from Product Config (any line breaks are flattened to spaces)
-    it.installInstruction = String(prod?.installInstruction || '').replace(/\s+/g, ' ').trim();
+    const m = map[it.productId || it.id] || { found: false, text: '' };
+    const own = String(it.raw.selectedOptions?.installInstruction || '').replace(/\s+/g, ' ').trim();
+    it.installInstruction = m.text || own;
   });
 };
 
@@ -201,5 +222,5 @@ module.exports = {
   MARKER_COLORS, CONFIRMED_MARKERS, UNASSIGNED_HEX, unitMarker, drawMarker,
   ROOM_CODES, lc, sentenceCase, titleCase, stripHtml, isService, qtyText, imageUrlOf,
   fetchImage, runPool, buildRooms,
-  statusStyle, STATUS_LEGEND, attachInstallInstructions,
+  statusStyle, STATUS_LEGEND, attachInstallInstructions, lookupMasterInstructions,
 };
