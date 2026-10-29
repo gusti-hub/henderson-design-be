@@ -127,17 +127,32 @@ const buildRooms = (orders, plans, unit) => {
 
   return names.map(name => {
     const code = ROOM_CODES[name.toUpperCase()] || DASH;
-    const items = (byRoom.get(name) || []).map(({ p, orderId }) => {
+    const entries = byRoom.get(name) || [];
+    const pad = (n) => String(n).padStart(3, '0');
+    const unitPart = unit || DASH;
+    // Install IDs typed on the items win. A plain number (12) is completed as unit-room-number (711-LIV-012);
+    // a full code typed by hand is kept as typed.
+    const typed = entries.map(({ p }) => String(p.selectedOptions?.installId || '').trim());
+    // Numbers already taken in this room (typed as 12 or as the full 711-LIV-012) — the automatic numbering skips them,
+    // so an automatic ID never repeats a typed one, across all orders of the client
+    const used = new Set();
+    const prefix = `${unitPart}-${code}-`;
+    typed.forEach(t => {
+      if (/^\d+$/.test(t)) used.add(parseInt(t, 10));
+      else if (t.startsWith(prefix) && /^\d+$/.test(t.slice(prefix.length))) used.add(parseInt(t.slice(prefix.length), 10));
+    });
+    // Items without an ID get the next free number in the order the rows come (not saved; follows the list if it changes)
+    let next = 0;
+    const takeNext = () => { do { next++; } while (used.has(next)); return next; };
+    const items = entries.map(({ p, orderId }, i) => {
       const sku = String(p.product_id || '').trim();
-      // Install ID comes only from the item (CPM → Install Binder); not entered yet → dash, nothing is numbered automatically.
-      // A plain number (12) is completed with the unit and the room code → 711-LIV-012; a full code typed by hand is kept as typed.
-      const stored = String(p.selectedOptions?.installId || '').trim();
-      const plain = /^\d+$/.test(stored);
-      const numPart = plain ? stored.padStart(3, '0') : (stored.split('-').pop() || stored);
-      const id = !stored ? DASH : plain ? `${unit || DASH}-${code}-${numPart}` : stored;
-      const num = stored ? numPart : DASH;     // short number shown in circles / "ITEM 012"
+      const t = typed[i];
+      const plain = /^\d+$/.test(t);
+      const numPart = !t ? pad(takeNext()) : plain ? pad(parseInt(t, 10)) : (t.split('-').pop() || t);
+      const id = !t || plain ? `${prefix}${numPart}` : t;
+      const num = numPart;     // short number shown in circles / "ITEM 012"
       return {
-        num, id, name: stripHtml(p.name) || DASH,
+        num, id, autoId: !t, name: stripHtml(p.name) || DASH,
         qty: qtyText(p), qtyNum: Number(p.quantity) || 1,
         size: stripHtml(p.selectedOptions?.size),
         sku: sku ? (code !== DASH ? `${code}-${sku}` : sku) : '',
